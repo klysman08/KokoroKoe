@@ -1,5 +1,12 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { vi } from "vitest"
+
+import appSettingsFixture from "../../fixtures/contracts/app-settings-v1.json"
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue(appSettingsFixture),
+}))
 
 import App from "@/App"
 import { useNavigationStore } from "@/stores/navigation-store"
@@ -28,6 +35,7 @@ describe("application routing", () => {
     expect(
       await screen.findByRole("heading", { name: "Settings" }),
     ).toBeInTheDocument()
+    expect(await screen.findByText("Read-only defaults")).toBeInTheDocument()
     expect(screen.getByText("No persisted settings")).toBeInTheDocument()
   })
 

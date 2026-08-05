@@ -1,0 +1,12 @@
+{
+  "revision": 0,
+  "workspacePath": "C:\\Users\\Example\\Documents\\KokoroKoe",
+  "defaultPresetId": "00000000-0000-4000-8000-000000000001",
+  "defaultTranscriptionModelId": "whisper-base-multilingual",
+  "llmEnabled": false,
+  "retainAudioByDefault": false,
+  "requireZeroDataRetention": true,
+  "denyProviderDataCollection": true,
+  "maxTokensPerRequest": 2048,
+  "defaultSessionBudgetUsd": "0.00"
+}

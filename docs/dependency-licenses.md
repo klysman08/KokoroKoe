@@ -1,6 +1,6 @@
 # Dependency and License Baseline
 
-Status: Phase 1 candidate assessment plus the P2-001 resolved foundation inventory, updated on 2026-08-05. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` now pin the scaffold dependencies. Future candidates remain unresolved until the phase that first adds them.
+Status: Phase 1 candidate assessment plus the P2-001/P2-002 resolved foundation inventory, updated on 2026-08-05. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` pin the resolved dependencies. Future candidates remain unresolved until the phase that first adds them.
 
 ## P2-001 resolved foundation inventory
 
@@ -15,6 +15,24 @@ Status: Phase 1 candidate assessment plus the P2-001 resolved foundation invento
 | Icons/font | Lucide React 1.28.0, Inter variable 5.3.0 | ISC; OFL-1.1 | Inter is self-hosted in the bundle |
 | Frontend build | Vite 7.3.6, TypeScript 5.8.3 | MIT; Apache-2.0 | Node 24-compatible versions resolved from the official scaffold |
 | Frontend tests | Vitest 4.1.10, Testing Library React 16.3.2 | MIT | jsdom-based route and shell tests |
+
+## P2-002 resolved foundation-services inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Frontend IPC | `@tauri-apps/api` 2.11.1 | MIT OR Apache-2.0 | Only `invoke("get_settings")`; no generic plugin capability |
+| Async command cache | TanStack Query 5.101.4 | MIT | Used only for the read-only settings command; no persistence or devtools |
+| Boundary validation | Zod 4.4.3 | MIT | Strict settings and command-error transport schemas |
+| Rust serialization | Serde 1.0.229; `serde_json` 1.0.151 for tests | MIT OR Apache-2.0 | Camel-case DTOs and shared golden-fixture verification |
+| Rust IDs | UUID 1.24.0 | MIT OR Apache-2.0 | UUID v4 correlation IDs and typed preset ID |
+| Rust tracing | `tracing` 0.1.44; `tracing-subscriber` 0.3.23 | MIT | Fixed crate-only filters; safe categorical fields; no file sink |
+
+P2-002 audit evidence:
+
+- `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.
+- `pnpm licenses list --prod --json`: completed successfully; new production packages are MIT or MIT/Apache dual-licensed.
+- `cargo deny --manifest-path src-tauri/Cargo.toml check licenses bans sources`: licenses, bans, and sources passed; duplicate transitive crates remain warnings.
+- `cargo audit --file src-tauri/Cargo.lock`: returned success with the same 17 allowed transitive maintenance/non-Windows GTK warnings documented for P2-001.
 
 React Router was evaluated and removed. The available 7.18.2 release was affected by GHSA-qwww-vcr4-c8h2, while the patched 8.3.0 release reported by the advisory was not available from npm. The two-route foundation instead uses a typed local hash store with no routing dependency.
 
@@ -45,9 +63,9 @@ P2-001 audit evidence:
 | YAML | `serde_yaml_ng` | 0.10.0 | MIT | Markdown front matter |
 | Audio files | `hound` | Resolve in Phase 3 | Apache-2.0 | Optional WAV retention |
 | Integrity | `sha2`, `crc32fast` | Resolve in implementation phase | MIT OR Apache-2.0 | Downloads and recovery journal |
-| Serialization | `serde`, `serde_json` | Resolve in Phase 2 | MIT OR Apache-2.0 | Rust contracts and JSON boundaries |
-| IDs and time | `uuid`, `time` or `chrono` | Resolve in Phase 2 | MIT OR Apache-2.0 | Stable IDs and RFC 3339 UTC values |
-| Logging/errors | `tracing`, `thiserror` | Resolve in Phase 2 | MIT; MIT OR Apache-2.0 | Sanitized structured logs and errors |
+| Serialization | `serde` 1.0.229, `serde_json` 1.0.151 | Resolved in P2-002 | MIT OR Apache-2.0 | Rust contracts and JSON boundaries; `serde_json` is currently test-only |
+| IDs and time | `uuid` 1.24.0; time library unresolved | UUID resolved in P2-002 | MIT OR Apache-2.0 | Correlation and preset IDs now; RFC 3339 time support remains future work |
+| Logging/errors | `tracing` 0.1.44, `tracing-subscriber` 0.3.23; `thiserror` unresolved | Tracing resolved in P2-002 | MIT; MIT OR Apache-2.0 | Sanitized structured logs and typed errors |
 | Safe files/secrets | `tempfile`, `zeroize` | Resolve in implementation phase | MIT OR Apache-2.0 | Atomic staging and secret zeroization |
 
 `whisper-rs` uses the Unlicense while `whisper.cpp` is MIT. Before accepting `whisper-rs` for distribution, record explicit project/license approval. If rejected, implement a minimal adapter to the MIT `whisper.cpp` C API without copying Handy.
@@ -63,7 +81,7 @@ The initial catalog contains multilingual Tiny and Base. Base is only the provis
 | React 19.2.8, Vite 8.2.0 | React resolved; Vite candidate superseded by locked 7.3.6 for the scaffold | MIT |
 | TypeScript 7.0.2 | Candidate superseded by locked 5.8.3 for the scaffold | Apache-2.0 |
 | Tailwind CSS 4.3.3, shadcn 4.16.1 | Resolved in P2-001; generated component code remains repository source | MIT |
-| Zustand 5.0.14, TanStack Query 5.101.4, Zod 4.4.3 | Candidate; resolve in Phase 2 | MIT |
+| Zustand 5.0.14, TanStack Query 5.101.4, Zod 4.4.3 | Resolved through P2-002 | MIT |
 | React Router 8.3.0 | Candidate; resolve Vite/Tauri compatibility in Phase 2 | MIT |
 | `react-markdown` 10.1.0, `remark-gfm` 4.0.1, `rehype-sanitize` 6.0.0 | Candidate; raw HTML remains disabled | MIT |
 | Vitest 4.1.10 and Testing Library React 16.3.2 | Candidate; resolve in Phase 2 | MIT |

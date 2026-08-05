@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "settings_unavailable",
+    "userMessage": "KokoroKoe could not load the foundation settings.",
+    "technicalDetail": "The Windows Documents directory could not be resolved.",
+    "severity": "error",
+    "retryable": true,
+    "correlationId": "1a5986f2-4647-440e-a125-87a8f46fa80a"
+  }
+}

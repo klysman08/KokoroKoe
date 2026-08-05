@@ -384,6 +384,10 @@ type AppError = {
   retryable: boolean
   correlationId: string
 }
+
+type CommandError = {
+  error: AppError
+}
 ```
 
 Validate UUIDs, BCP-47 language tags, finite confidence values in `0..1`, nonnegative millisecond ranges, bounded strings/collections, fixed decimal cost strings, and session-relative audio paths at the Rust boundary.
@@ -698,7 +702,7 @@ Commands use these exact transport names and typed request/result forms:
 | `set_window_click_through` | `{ windowLabel; enabled: boolean }` | `WindowStatus` |
 | `set_global_shortcuts` | `Versioned<GlobalShortcutSettings>` | `GlobalShortcutSettings` |
 
-Commands return `Result<T, CommandError>`, where `CommandError` contains a sanitized `AppError` and never includes a secret or raw provider response. Collection limits, string bounds, UUIDs, BCP-47 tags, revisions, paths, and finite numeric ranges are validated in Rust even if Zod already rejected them in React.
+Commands return `Result<T, CommandError>`, serialized as `{ error: AppError }`. The envelope contains only a sanitized `AppError` and never includes a secret, raw source error, path where unnecessary, or raw provider response. Collection limits, string bounds, UUIDs, BCP-47 tags, revisions, paths, and finite numeric ranges are validated in Rust even if Zod already rejected them in React.
 
 All named semantic events use:
 

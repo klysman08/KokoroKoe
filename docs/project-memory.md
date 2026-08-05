@@ -23,6 +23,7 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | ID | Owner | Status | Scope | Dependencies | Acceptance | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | P2-001 | Coordinator + review agents | Completed | Windows Tauri/React scaffold, strict frontend toolchain, shadcn/Tailwind shell, UI-only state/routing, least-privilege capability, audits, package build, and smoke launch | P1-004; Node 24; MSVC/SDK; CMake; WebView2 | Clean locked install and frontend/Rust checks; explicit main capability with no permissions; x64 bundles and launch smoke pass | Node 24/pnpm 10 checks; 2 Vitest tests; Vite build; Rust fmt/Clippy/test; clean pnpm audit; cargo audit; cargo-deny; MSI/NSIS build; responding-process smoke; two independent read-only reviews |
+| P2-002 | Coordinator + review agents | Completed | Sanitized tracing/errors, strict Rust/Zod settings boundary, read-only `get_settings`, TanStack Query integration, root/query error UI, and least-privilege command ACL | P2-001 | Shared fixtures parse in Rust/TypeScript; semantic validation matches; raw errors/tokens/paths do not reach logs or reports; only `main` can invoke the command; builds/audits/package smoke pass | 15 Rust tests; 27 Vitest tests; Node 24 format/lint/type/build; generated ACL/static capability checks; secret/path canaries; cargo-deny/audit and pnpm audit; MSI/NSIS rebuild; responding-process smoke; two independent reviews with blockers fixed and rechecked |
 
 ## Confirmed decisions
 
@@ -45,6 +46,10 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | 2026-08-05 | Use a typed local hash-navigation store for the two foundation routes | Removes React Router while its available releases are covered by unresolved advisories; revisit only when a patched version is published and needed |
 | 2026-08-05 | Keep TanStack Query and Zod out of P2-001 | No asynchronous command/cache or external contract exists yet; add them with the first typed Rust command boundary where they provide value |
 | 2026-08-05 | Install Graphify globally as a Codex skill | User-requested local codebase graph tooling; installed through the official `graphifyy` CLI at version 0.9.33 |
+| 2026-08-05 | Serialize command failures as `{ error: AppError }` | Freezes one strict Rust/Zod rejection envelope without exposing raw exceptions or provider/source errors |
+| 2026-08-05 | Restrict `get_settings` through both Tauri ACL and an exact Rust `main` window-label check | Tauri application commands are otherwise available to local windows by default; defense in depth prevents future windows from inheriting access accidentally |
+| 2026-08-05 | Keep foundation settings read-only and query-cached only while the Settings view is mounted | P2-002 validates the asynchronous boundary without inventing persistence, copying settings into Zustand, or retaining the workspace path in a persistent cache |
+| 2026-08-05 | Use fixed crate-filtered stderr tracing with safe categorical fields only | Prevent dependency/payload tracing and raw source details from entering logs; file logging remains unimplemented |
 
 ## Prototype and risk register
 
@@ -98,6 +103,23 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 - Process note: the generator's `--force` option removed clean tracked planning files despite its narrow description. Git status detected the deletion immediately and the unchanged files were restored from `HEAD` before work continued. Future scaffolds must run in a staging directory and merge intentionally.
 - Known limitations: P2-001 does not implement settings persistence, sanitized logging, error boundaries/reports, Zod/Tauri contracts, TanStack Query, Markdown rendering, CI, audio, transcription, projects, sessions, persistence, LLMs, or advanced windows. The application icon is a foundation asset, not an approved final brand. The built MSI/NSIS files are ignored verification artifacts, not release candidates.
 
+### P2-002 - Typed settings and sanitized error boundary
+
+- Completed: 2026-08-05
+- Deliverables: Rust `AppSettings`, `AppError`, and `{ error: AppError }` command contracts; exact semantic Rust deserialization checks matching strict Zod schemas; synthetic shared settings/error fixtures; read-only `get_settings`; Tauri app-command manifest and generated permission; exact `main` capability plus Rust-side window authorization; fixed-filter sanitized tracing; React 19 root error callbacks; root and query error surfaces with explicit sanitized-report copying; TanStack Query used only for the settings command; and a read-only privacy-default preview that does not render the machine-specific workspace path.
+- Privacy defaults verified: LLM analysis and audio retention are off; zero-data-retention providers are required; data-collecting providers are denied. No settings persistence, filesystem mutation, HTTP, credential, audio, project/session, or additional-window behavior was added.
+- Graphify evidence: Graphify 0.9.33 generated an ignored 262-node/309-edge local code graph and identified the existing settings/shell/Tauri bootstrap change surface. No semantic API key was configured, so `--code-only` was used and checked-in architecture/memory remained the documentation source.
+- Verification:
+  - Node 24.19.0: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (27 passed), and `pnpm build` passed.
+  - Rust 1.88.0: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` passed (12 unit plus 3 capability tests).
+  - Shared fixtures are parsed and round-tripped by Rust and strict Zod tests; adversarial cases cover unsafe revisions, empty/bounded strings, invalid UUIDs, zero token limits, malformed fixed decimals, unknown keys, enum casing, and nullable optional detail.
+  - Secret/path tests cover Rust technical-detail sanitization, captured tracing output, malformed IPC success/rejection data, React render exceptions, copied reports, and clipboard denial.
+  - Tauri tests assert only `main`, only `allow-get-settings`, no remote capability, the generated command mapping, and Rust denial for transcript/insights/unknown labels.
+  - `pnpm audit --prod --audit-level moderate` found no known vulnerabilities; production license inventory completed; Cargo deny passed; Cargo audit returned success with the same 17 documented transitive warnings.
+  - `pnpm tauri build --target x86_64-pc-windows-msvc` rebuilt MSI and NSIS packages; the release executable remained alive and responsive for the five-second hidden launch smoke.
+  - Independent frontend/security reviews found Rust/Zod semantic and React 19 default-console blockers; both were fixed with mirrored validation and explicit root callbacks, then rechecked.
+- Known limitations: settings are defaults only and are not persisted or editable; the actual workspace path is returned only to the trusted main window and held in a non-persisted query while mounted; capability denial is unit/static tested rather than invoked from a second real WebView because no second window exists yet; technical-detail redaction is defense in depth rather than permission to pass raw source errors; the packaged smoke does not automate Settings navigation or clipboard interaction; sanitized Markdown rendering and CI are still absent.
+
 ## Known environment facts
 
 - The machine-wide shell still defaults to Node 26.5.1; P2 verification initializes `fnm` and uses the repository-pinned Node 24.19.0.
@@ -108,4 +130,4 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 
 ## Next handoff
 
-Begin `P2-002`, a bounded foundation-services task. Add sanitized Rust tracing and typed `AppError` handling, an error boundary and sanitized copy-report UI, the first narrow read-only bootstrap/settings Tauri command, mirrored strict Zod validation with a shared golden JSON fixture, and TanStack Query only for that asynchronous command. Keep workspace mutation, production settings persistence, audio, transcription, projects/sessions, OpenRouter, credentials, and additional native windows out of `P2-002`. Require Rust/TypeScript fixture tests and a per-window capability/authorization review before acceptance.
+Begin `P2-003`, a bounded non-secret settings-persistence and workspace-onboarding task. Add versioned Rust-owned settings storage, validated/canonical workspace selection, an explicit write-health check, optimistic revision handling for `update_settings`, and the backend-controlled `choose_workspace` flow. Keep project/session content, Markdown persistence, audio/transcription, models, OpenRouter/credentials, external HTTP, and additional native windows out of `P2-003`. Require path traversal/reparse-point tests, denied-window tests, recovery from a corrupted settings record, strict Rust/Zod mutation fixtures, capability review, audits, package build, and a Windows onboarding smoke before acceptance.

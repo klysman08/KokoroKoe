@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P2-001 - Windows Tauri/React application scaffold
+- Task: P2-002 - Typed settings and sanitized error boundary
 - Date: 2026-08-05
-- Outcome: Node 24/pnpm 10/Rust 1.88 Windows toolchain established; Tauri 2, React, strict TypeScript, Tailwind v4, shadcn `b0`, routed shell, UI-only Zustand state, zero-permission capability, audits, Windows bundles, and smoke launch completed.
-- Verification: frozen pnpm install; Prettier, ESLint, typecheck, 2 Vitest tests, Vite build and clean production audit; Rust fmt, Clippy with warnings denied, 1 Rust test, cargo audit and cargo-deny; Tauri x64 MSI/NSIS build; five-second responding-process smoke; independent frontend/security reviews.
-- Memory: [P2-001 checkpoint](docs/project-memory.md#p2-001---windows-taurireact-application-scaffold)
+- Outcome: read-only Rust `get_settings`, strict mirrored Rust/Zod contracts and fixtures, fixed-filter sanitized tracing, typed error envelope and reports, React root/error-boundary containment, TanStack Query integration, and exact main-window ACL/authorization completed without adding persistence or sensitive-service access.
+- Verification: Node 24 Prettier/ESLint/typecheck, 27 Vitest tests and Vite build; Rust fmt, Clippy with warnings denied, 15 tests; generated ACL/capability and secret/path canaries; pnpm/Cargo audits and license checks; x64 MSI/NSIS rebuild; five-second responding-process smoke; independent frontend/security reviews with both blockers fixed and rechecked.
+- Memory: [P2-002 checkpoint](docs/project-memory.md#p2-002---typed-settings-and-sanitized-error-boundary)

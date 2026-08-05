@@ -1,96 +1,102 @@
-# Desenvolvimento de aplicativo Windows para transcrição e assistência em reuniões
+# Development of a Windows Application for Real-Time Transcription and Meeting Assistance
 
-Atue como arquiteto de software e desenvolvedor sênior especializado em Rust, Tauri, React e aplicações de áudio para Windows.
+Act as a senior software architect and developer specialized in Rust, Tauri, React, and Windows audio applications.
 
-Vamos criar um aplicativo desktop para Windows capaz de:
+We are going to build a Windows desktop application capable of:
 
-* Capturar simultaneamente o áudio do microfone do usuário e o áudio reproduzido pelo sistema.
-* Transcrever localmente esses dois canais em tempo real.
-* Organizar reuniões e transcrições por projetos e sessões.
-* Gerar resumos, destaques, respostas e insights em tempo real usando modelos de linguagem acessados pelo OpenRouter.
-* Manter os dados de áudio e transcrição sob controle do usuário, priorizando privacidade e processamento local.
+* Capturing the user's microphone audio and the system audio output simultaneously.
+* Transcribing both audio channels locally and in real time.
+* Organizing meetings and transcriptions by projects and sessions.
+* Generating summaries, highlights, answers, and real-time insights using language models accessed through OpenRouter.
+* Keeping audio and transcription data under the user's control, prioritizing privacy and local processing.
 
-Antes de implementar, analise as referências técnicas:
+Before implementing anything, review the following technical references:
 
-* Handy, como referência para gerenciamento e execução local de modelos de transcrição:
+* Handy, as a reference for managing and running local transcription models:
   https://github.com/cjpais/handy
 * OpenRouter:
   https://openrouter.ai/docs/quickstart
 * Tauri:
   https://github.com/tauri-apps/tauri
-* shadcn/ui com Vite:
+* shadcn/ui with Vite:
   https://ui.shadcn.com/docs/installation/vite
 
-Não copie diretamente a arquitetura ou o código do Handy. Use-o apenas como referência técnica e de experiência do usuário, respeitando sua licença.
+Do not directly copy Handy's architecture or source code. Use it only as a technical and user-experience reference, while respecting its license.
 
-## 1. Objetivo do produto
+## 1. Product Objective
 
-O aplicativo será um assistente de reuniões em tempo real.
+The application will function as a real-time meeting assistant.
 
-Durante uma sessão, ele deverá:
+During a session, it must:
 
-1. Capturar o áudio do microfone.
-2. Capturar separadamente o áudio de saída do Windows.
-3. Transcrever os dois fluxos localmente.
-4. Exibir visualmente quem está falando com base na origem do áudio:
+1. Capture microphone audio.
+2. Capture Windows system output audio separately.
+3. Transcribe both streams locally.
+4. Visually identify the speaker based on the audio source:
 
-   * “Você”, para o microfone.
-   * “Sistema” ou “Participante”, para o áudio de saída.
-5. Enviar apenas o texto transcrito, e não o áudio, ao OpenRouter.
-6. Gerar resumos parciais, possíveis respostas, pontos importantes, perguntas pendentes e outros insights.
-7. Salvar todos os resultados localmente em arquivos Markdown.
+   * “You” for microphone input.
+   * “System” or “Participant” for system output.
+5. Send only transcribed text, never audio, to OpenRouter.
+6. Generate partial summaries, suggested answers, important points, pending questions, and other insights.
+7. Save all generated content locally as Markdown files.
 
-O MVP será direcionado exclusivamente ao Windows. Não implemente suporte a macOS ou Linux nesta primeira versão, mas evite decisões arquiteturais que impeçam futura expansão.
+The MVP will target Windows only.
 
-## 2. Stack tecnológica obrigatória
+Do not implement macOS or Linux support in the first version, but avoid architectural decisions that would prevent future cross-platform support.
 
-Utilize:
+## 2. Required Technology Stack
+
+Use the following technologies:
 
 * Tauri 2.
-* Rust no backend.
+* Rust for the backend.
 * Vite.
 * React.
-* TypeScript com modo estrito.
+* TypeScript in strict mode.
 * shadcn/ui.
 * Tailwind CSS.
 * pnpm.
-* Zustand ou outra solução leve para estado global.
-* TanStack Query somente quando trouxer benefícios reais para operações assíncronas.
-* Zod para validação dos dados e configurações.
-* OpenRouter para acesso aos modelos LLM.
-* Whisper ou implementação compatível para transcrição local.
-* Armazenamento local de configurações e metadados.
-* Markdown com front matter YAML para documentos gerados.
+* Zustand or another lightweight global state management solution.
+* TanStack Query only where it provides clear value for asynchronous operations.
+* Zod for configuration and data validation.
+* OpenRouter for LLM access.
+* Whisper or a compatible local transcription implementation.
+* Local storage for settings and metadata.
+* Markdown with YAML front matter for generated documents.
 
-Para inicializar o frontend, valide a sintaxe atual do shadcn antes de executar. A intenção inicial é usar um preset visual semelhante a:
+For frontend initialization, verify the current shadcn CLI syntax before running commands.
+
+The intended command is similar to:
 
 ```bash
 pnpm dlx shadcn@latest init --preset b0 --template vite
 ```
 
-Caso esse preset ou argumento não seja mais válido, utilize o comando equivalente atualmente recomendado e documente a alteração.
+If this preset or argument is no longer valid, use the currently recommended equivalent and document the change.
 
-## 3. Princípios de arquitetura
+## 3. Architectural Principles
 
-Organize o projeto em módulos independentes:
+Organize the application into independent modules:
 
-* Captura de áudio.
-* Processamento e normalização de áudio.
-* Detecção de voz.
-* Transcrição local.
-* Gerenciamento e download de modelos.
-* Gerenciamento de projetos e sessões.
-* Persistência de documentos.
-* Integração com OpenRouter.
-* Construção de prompts.
-* Geração de insights.
-* Interface desktop e gerenciamento de janelas.
-* Configurações e armazenamento seguro de credenciais.
-* Métricas locais de uso.
+* Audio capture.
+* Audio processing and normalization.
+* Voice activity detection.
+* Local transcription.
+* Model management and downloads.
+* Project and session management.
+* Document persistence.
+* OpenRouter integration.
+* Prompt construction.
+* Insight generation.
+* Desktop UI and window management.
+* Settings and secure credential storage.
+* Local usage metrics.
 
-O frontend não deve acessar diretamente arquivos sensíveis, credenciais ou APIs externas. Essas operações devem passar por comandos Rust do Tauri com permissões mínimas.
+The frontend must not directly access sensitive files, credentials, or external APIs.
 
-Defina contratos TypeScript e Rust claros para eventos como:
+Sensitive operations must be handled through Rust commands exposed by Tauri, using the minimum required permissions.
+
+Define clear Rust and TypeScript contracts for events such as:
 
 * `audio-level-updated`
 * `transcription-partial`
@@ -101,314 +107,331 @@ Defina contratos TypeScript e Rust claros para eventos como:
 * `model-download-progress`
 * `application-error`
 
-Evite concentrar toda a lógica em um único arquivo, componente React ou comando Tauri.
+Do not place all application logic in a single file, React component, or Tauri command.
 
-## 4. Captura de áudio
+## 4. Audio Capture
 
-O aplicativo deve detectar e listar:
+The application must detect and list:
 
-* Microfones disponíveis.
-* Dispositivos de saída disponíveis.
-* Dispositivo padrão de entrada.
-* Dispositivo padrão de saída.
+* Available microphones.
+* Available output devices.
+* The default input device.
+* The default output device.
 
-A captura deverá manter dois canais lógicos independentes:
+Audio capture must maintain two independent logical channels:
 
 ```text
 microphone
 system_output
 ```
 
-Requisitos:
+Requirements:
 
-* Permitir selecionar o dispositivo de entrada.
-* Permitir selecionar o dispositivo de saída que será monitorado.
-* Exibir medidor de nível para cada canal.
-* Permitir testar os dispositivos antes da sessão.
-* Detectar silêncio e evitar transcrever trechos vazios.
-* Manter timestamps consistentes entre os dois fluxos.
-* Informar claramente quando um dispositivo for desconectado.
-* Tentar recuperar a captura quando o dispositivo padrão mudar.
-* Não gravar arquivos de áudio permanentemente por padrão.
-* Oferecer uma configuração opcional para manter o áudio original da sessão.
-* Documentar claramente qualquer limitação técnica da captura do áudio do sistema no Windows.
+* Allow the user to select the input device.
+* Allow the user to select the output device to monitor.
+* Display an audio-level meter for each channel.
+* Allow devices to be tested before starting a session.
+* Detect silence and avoid transcribing empty segments.
+* Maintain consistent timestamps between both audio streams.
+* Clearly notify the user when a device is disconnected.
+* Attempt to recover capture when the default device changes.
+* Do not permanently store audio files by default.
+* Provide an optional setting to retain the original session audio.
+* Clearly document any technical limitations related to Windows system-audio capture.
 
-Não tente fazer diarização completa no MVP. A separação inicial dos interlocutores será baseada na origem do áudio.
+Do not implement full speaker diarization in the MVP.
 
-## 5. Transcrição local
+The initial separation between speakers will be based on the audio source.
 
-O usuário poderá baixar e gerenciar diferentes modelos locais de transcrição.
+## 5. Local Transcription
 
-A tela de modelos deverá apresentar:
+The user must be able to download and manage different local transcription models.
 
-* Nome do modelo.
-* Tamanho do download.
-* Espaço ocupado em disco.
-* Idiomas suportados.
-* Desempenho estimado.
-* Requisitos aproximados de memória.
-* Status do download.
-* Status de instalação.
-* Possibilidade de excluir o modelo.
-* Modelo selecionado como padrão.
+The model management interface must display:
 
-Suporte inicialmente modelos Whisper compatíveis e projetados para execução local. A arquitetura deverá permitir adicionar outros mecanismos no futuro.
+* Model name.
+* Download size.
+* Disk space used.
+* Supported languages.
+* Estimated performance.
+* Approximate memory requirements.
+* Download status.
+* Installation status.
+* An option to delete the model.
+* The default selected model.
 
-O usuário poderá escolher o modelo:
+Initially support Whisper-compatible models designed for local execution.
 
-* Nas configurações globais.
-* Ao criar ou iniciar uma sessão.
+The architecture must allow additional transcription engines to be added in the future.
 
-A transcrição deve possuir:
+The user must be able to select the transcription model:
 
-* Resultados parciais.
-* Resultados finais.
-* Identificação do canal de origem.
-* Timestamp inicial e final.
-* Idioma detectado ou configurado.
-* Indicador de confiança quando disponível.
-* Tratamento de falhas sem interromper toda a sessão.
-* Fila de processamento com controle de pressão caso a transcrição fique mais lenta que o áudio recebido.
+* In global settings.
+* When creating or starting a session.
 
-Considere aceleração de hardware quando disponível, mas mantenha fallback para CPU.
+Transcription output must include:
 
-## 6. OpenRouter e modelos LLM
+* Partial results.
+* Final results.
+* Audio-source identification.
+* Start and end timestamps.
+* Detected or configured language.
+* Confidence indicator when available.
+* Error recovery without terminating the entire session.
+* A processing queue with backpressure control if transcription becomes slower than incoming audio.
 
-O OpenRouter será utilizado apenas para analisar texto.
+Use hardware acceleration when available, while maintaining a CPU fallback.
 
-A aplicação deverá permitir:
+## 6. OpenRouter and LLM Models
 
-* Informar e validar uma API key.
-* Armazenar a API key de forma segura no Windows.
-* Listar ou pesquisar modelos disponíveis.
-* Escolher modelos diferentes para:
+OpenRouter will be used only to analyze text.
 
-  * Insights rápidos.
-  * Resumo da sessão.
-  * Perguntas manuais.
-* Exibir informações relevantes, quando disponíveis:
+The application must allow the user to:
 
-  * Provedor.
-  * Nome do modelo.
+* Enter and validate an API key.
+* Store the API key securely on Windows.
+* Search or list available models.
+* Select different models for:
+
+  * Fast real-time insights.
+  * Session summaries.
+  * Manual questions.
+* Display relevant model information when available:
+
+  * Provider.
+  * Model name.
   * Context window.
-  * Preço aproximado.
-  * Suporte a streaming.
-* Definir limite de gastos por sessão.
-* Definir limite máximo de tokens.
-* Utilizar streaming nas respostas em que ele melhorar a experiência.
-* Cancelar requisições em andamento.
-* Tratar timeout, rate limit, saldo insuficiente e falhas de provedor.
-* Implementar retry limitado com backoff.
-* Não registrar a API key em logs.
-* Nunca salvar a API key em arquivos Markdown ou em texto simples.
+  * Approximate price.
+  * Streaming support.
+* Define a spending limit per session.
+* Define a maximum token limit.
+* Use response streaming where it improves the user experience.
+* Cancel active requests.
+* Handle timeouts, rate limits, insufficient balance, and provider failures.
+* Implement limited retries with exponential backoff.
+* Never include the API key in logs.
+* Never store the API key in Markdown files or plain text.
 
-Utilize a API compatível com OpenAI disponibilizada pelo OpenRouter.
+Use OpenRouter's OpenAI-compatible API.
 
-A integração deverá permitir a troca de modelo sem alterações no restante da aplicação.
+The integration must allow models to be changed without affecting the rest of the application architecture.
 
-## 7. Projetos, sessões e contexto
+## 7. Projects, Sessions, and Context
 
-Toda sessão deverá pertencer a um projeto.
+Every session must belong to a project.
 
-### Projeto
+### Project
 
-Um projeto deverá possuir:
+A project must include:
 
 * ID.
-* Nome.
-* Descrição.
-* Contexto global.
-* Participantes opcionais.
+* Name.
+* Description.
+* Global context.
+* Optional participants.
 * Tags.
-* Data de criação.
-* Data de atualização.
-* Pasta local.
-* Preset padrão.
-* Modelo de transcrição padrão.
-* Modelos LLM preferenciais.
+* Creation date.
+* Last updated date.
+* Local folder.
+* Default preset.
+* Default transcription model.
+* Preferred LLM models.
 
-Exemplos de projetos:
+Example projects:
 
-* Processo seletivo para engenheiro backend.
-* Reuniões semanais da empresa.
-* Descoberta de produto.
-* Pesquisa acadêmica.
-* Atendimento a cliente.
+* Backend engineer hiring process.
+* Weekly company meetings.
+* Product discovery.
+* Academic research.
+* Customer support.
 
-### Sessão
+### Session
 
-Antes de iniciar uma sessão, o usuário deverá definir:
+Before starting a session, the user must define:
 
-* Título.
-* Projeto.
-* Objetivo.
-* Contexto específico.
+* Title.
+* Project.
+* Objective.
+* Session-specific context.
 * Preset.
-* Idioma.
-* Dispositivos de áudio.
-* Modelo local de transcrição.
-* Modelo LLM para insights.
-* Modelo LLM para resumo.
-* Preferência sobre armazenamento do áudio.
+* Language.
+* Audio devices.
+* Local transcription model.
+* LLM model for insights.
+* LLM model for summaries.
+* Audio-retention preference.
 
-O contexto final enviado ao LLM será formado por:
+The final context sent to the LLM must be composed of:
 
-1. Contexto global do projeto.
-2. Contexto específico da sessão.
-3. Instruções do preset.
-4. Trecho relevante da transcrição.
-5. Histórico resumido da sessão.
-6. Tipo de saída solicitado.
+1. Global project context.
+2. Session-specific context.
+3. Preset instructions.
+4. Relevant transcript excerpts.
+5. The accumulated session summary.
+6. The requested output type.
 
-Não envie toda a transcrição novamente a cada chamada. Implemente uma estratégia de janela móvel, resumo acumulado e seleção de trechos relevantes para controlar custo e contexto.
+Do not resend the complete transcript with every request.
+
+Implement a strategy based on:
+
+* A sliding context window.
+* An accumulated summary.
+* Retrieval of relevant transcript segments.
+* Token and cost controls.
 
 ## 8. Presets
 
-Inclua inicialmente os seguintes presets:
+Initially include the following presets:
 
-* Entrevista técnica.
-* Entrevista comportamental.
-* Reunião de negócios.
-* Reunião de vendas.
-* Reunião de produto.
+* Technical interview.
+* Behavioral interview.
+* Business meeting.
+* Sales meeting.
+* Product meeting.
 * Brainstorming.
-* Aula ou palestra.
-* Atendimento ao cliente.
-* Preset personalizado.
+* Class or lecture.
+* Customer support.
+* Custom preset.
 
-Cada preset deve definir:
+Each preset must define:
 
-* Papel esperado do assistente.
-* Objetivos da análise.
-* Tipos de insights.
-* Tom das respostas.
-* Estrutura do resumo final.
-* Itens que devem ser destacados.
-* Itens que devem ser evitados.
+* The assistant's expected role.
+* Analysis objectives.
+* Insight types.
+* Response tone.
+* Final summary structure.
+* Information that should be highlighted.
+* Information or behaviors that should be avoided.
 
-Permita criar, editar, duplicar, exportar e excluir presets personalizados.
+Allow users to create, edit, duplicate, export, and delete custom presets.
 
-## 9. Interfaces principais
+## 9. Main User Interfaces
 
-A aplicação terá três áreas principais, podendo utilizar múltiplas janelas nativas do Tauri quando apropriado.
+The application will have three primary areas.
 
-### 9.1. Home e configurações
+Native Tauri windows may be used where appropriate.
 
-A Home deverá incluir:
+### 9.1. Home and Settings
 
-* Lista de projetos.
-* Sessões recentes.
-* Botão para iniciar nova sessão.
-* Acesso aos modelos locais.
-* Configuração do OpenRouter.
-* Configuração dos dispositivos de áudio.
-* Configuração da pasta de armazenamento.
-* Gerenciamento de presets.
-* Preferências gerais.
+The Home view must include:
 
-O dashboard deverá apresentar dados locais como:
+* Project list.
+* Recent sessions.
+* A button to start a new session.
+* Access to local model management.
+* OpenRouter configuration.
+* Audio-device configuration.
+* Storage-folder configuration.
+* Preset management.
+* General preferences.
 
-* Número de sessões.
-* Tempo total transcrito.
-* Projetos mais utilizados.
-* Modelo Whisper mais utilizado.
-* Modelos LLM mais utilizados.
-* Tokens enviados e recebidos.
-* Custo estimado por período.
-* Quantidade de insights gerados.
-* Espaço em disco utilizado.
-* Erros recentes.
+The dashboard must display local metrics such as:
 
-Não implemente telemetria externa no MVP. Essas métricas devem permanecer locais.
+* Number of sessions.
+* Total transcribed time.
+* Most frequently used projects.
+* Most frequently used Whisper model.
+* Most frequently used LLM models.
+* Input and output token usage.
+* Estimated cost by period.
+* Number of generated insights.
+* Disk space used.
+* Recent errors.
 
-### 9.2. Janela de transcrição
+Do not implement external telemetry in the MVP.
 
-A janela de transcrição deverá:
+All metrics must remain local.
 
-* Exibir a conversa em ordem cronológica.
-* Diferenciar claramente microfone e saída do sistema.
-* Mostrar timestamps.
-* Destacar resultados ainda parciais.
-* Substituir resultados parciais pela versão final.
-* Fazer auto-scroll enquanto o usuário estiver no final.
-* Interromper o auto-scroll quando o usuário navegar para mensagens anteriores.
-* Oferecer um botão para retornar ao trecho mais recente.
-* Permitir pausar e retomar a transcrição.
-* Permitir inserir marcadores manualmente.
-* Permitir editar trechos depois de finalizados.
-* Permitir copiar trechos.
-* Permitir pesquisar na sessão.
-* Permitir perguntar ao LLM sobre um trecho específico.
+### 9.2. Real-Time Transcription Window
 
-Cada bloco de transcrição deverá possuir ações como:
+The transcription window must:
 
-* Perguntar sobre este trecho.
-* Sugerir uma resposta.
-* Explicar.
-* Resumir.
-* Marcar como importante.
-* Copiar.
-* Corrigir texto.
+* Display the conversation in chronological order.
+* Clearly differentiate microphone input from system output.
+* Display timestamps.
+* Visually identify partial transcription results.
+* Replace partial results with final results.
+* Auto-scroll while the user is viewing the latest content.
+* Stop auto-scrolling when the user navigates to older messages.
+* Provide a button to return to the latest transcript segment.
+* Allow transcription to be paused and resumed.
+* Allow manual bookmarks.
+* Allow finalized segments to be edited.
+* Allow transcript segments to be copied.
+* Allow searching within the session.
+* Allow the user to ask the LLM about a specific segment.
 
-Ao perguntar sobre um trecho, envie ao LLM:
+Each transcript block must provide actions such as:
 
-* O trecho selecionado.
-* Algumas mensagens anteriores e posteriores.
-* O contexto da sessão.
-* O contexto resumido da conversa.
+* Ask about this segment.
+* Suggest a response.
+* Explain.
+* Summarize.
+* Mark as important.
+* Copy.
+* Correct text.
 
-### 9.3. Janela de insights
+When asking about a segment, send the LLM:
 
-A janela de insights deverá gerar recomendações com base nos trechos mais recentes.
+* The selected segment.
+* A limited number of previous and following segments.
+* Session context.
+* A summarized version of the conversation.
 
-Tipos iniciais:
+### 9.3. Insights Window
 
-* Sugestão do que responder.
-* Perguntas de acompanhamento.
-* Pontos que precisam ser esclarecidos.
-* Fatos ou números mencionados.
-* Riscos e objeções.
-* Decisões tomadas.
-* Tarefas e responsáveis.
-* Contradições ou inconsistências.
-* Tópicos ainda não abordados.
+The insights window must generate recommendations based on the latest transcript segments.
 
-A interface deverá:
+Initial insight types:
 
-* Exibir um insight por vez ou em cartões.
-* Permitir navegar entre insights anteriores e seguintes.
-* Permitir fixar um insight.
-* Permitir descartar.
-* Permitir copiar.
-* Permitir gerar uma alternativa.
-* Informar a qual trecho da transcrição o insight está relacionado.
-* Diferenciar insights provisórios de insights confirmados.
-* Evitar gerar repetidamente o mesmo insight.
+* Suggested response.
+* Follow-up questions.
+* Points requiring clarification.
+* Facts or numbers mentioned.
+* Risks and objections.
+* Decisions made.
+* Tasks and owners.
+* Contradictions or inconsistencies.
+* Topics not yet addressed.
 
-Os insights devem ser úteis, objetivos e breves. Não devem interromper o usuário com atualizações irrelevantes a cada frase.
+The interface must:
 
-## 10. Controle das janelas
+* Display one insight at a time or use insight cards.
+* Allow navigation between previous and next insights.
+* Allow an insight to be pinned.
+* Allow an insight to be dismissed.
+* Allow an insight to be copied.
+* Allow an alternative version to be generated.
+* Show which transcript segment the insight is related to.
+* Differentiate provisional insights from confirmed insights.
+* Avoid repeatedly generating the same insight.
 
-As janelas de transcrição e insights deverão possuir:
+Insights must be useful, concise, and relevant.
 
-* Controle independente de opacidade.
-* Opção “sempre visível”.
-* Redimensionamento.
-* Posição persistida.
-* Tamanho persistido.
-* Modo compacto.
-* Possibilidade de ocultar rapidamente.
-* Atalho configurável para mostrar ou ocultar.
-* Opção de bloquear interação do mouse, caso seja tecnicamente viável e segura.
-* Preferência de monitor em configurações com múltiplas telas.
+They must not interrupt the user with unnecessary updates after every sentence.
 
-A opacidade deve afetar o fundo da janela sem comprometer excessivamente a legibilidade do texto.
+## 10. Window Controls
 
-## 11. Persistência em Markdown
+The transcription and insights windows must support:
 
-Todos os documentos gerados deverão ser armazenados localmente em Markdown.
+* Independent opacity controls.
+* An “always on top” option.
+* Resizing.
+* Persistent position.
+* Persistent dimensions.
+* Compact mode.
+* A quick-hide option.
+* Configurable keyboard shortcuts to show or hide the windows.
+* An optional click-through mode, if technically viable and safe.
+* Monitor preference for multi-display environments.
 
-Estrutura sugerida:
+Opacity should affect the window background without significantly reducing text readability.
+
+## 11. Markdown Persistence
+
+All generated documents must be stored locally as Markdown files.
+
+Suggested structure:
 
 ```text
 workspace/
@@ -427,9 +450,9 @@ workspace/
           audio/
 ```
 
-Cada documento deverá possuir front matter YAML.
+Each document must include YAML front matter.
 
-Exemplo para `transcript.md`:
+Example for `transcript.md`:
 
 ```yaml
 ---
@@ -437,38 +460,38 @@ schema_version: 1
 document_type: transcript
 project_id: "project-uuid"
 session_id: "session-uuid"
-title: "Reunião semanal de produto"
+title: "Weekly product meeting"
 created_at: "2026-08-05T14:00:00Z"
 updated_at: "2026-08-05T15:20:00Z"
-language: "pt-BR"
+language: "en-US"
 transcription_engine: "whisper"
 transcription_model: "model-id"
 microphone_device: "device-id"
 output_device: "device-id"
 participants:
-  - "Usuário"
+  - "User"
 tags:
-  - produto
-  - planejamento
+  - product
+  - planning
 ---
 ```
 
-Cada entrada da transcrição deverá preservar:
+Each transcript entry must preserve:
 
 * ID.
-* Canal.
+* Channel.
 * Timestamp.
-* Texto.
-* Status parcial ou final.
-* Data da última edição.
-* Referência opcional ao arquivo de áudio.
+* Text.
+* Partial or final status.
+* Last edited date.
+* Optional reference to the original audio file.
 
-Exemplo:
+Example:
 
 ```markdown
-## 00:03:14 — Participante
+## 00:03:14 — Participant
 
-Precisamos finalizar a primeira versão até sexta-feira.
+We need to finish the first version by Friday.
 
 <!--
 segment_id: segment-uuid
@@ -479,65 +502,67 @@ status: final
 -->
 ```
 
-O `summary.md` deverá conter:
+The `summary.md` document must include:
 
-* Resumo executivo.
-* Principais temas.
-* Decisões.
-* Tarefas.
-* Responsáveis.
-* Prazos.
-* Riscos.
-* Perguntas em aberto.
-* Próximos passos.
+* Executive summary.
+* Main topics.
+* Decisions.
+* Action items.
+* Owners.
+* Deadlines.
+* Risks.
+* Open questions.
+* Next steps.
 
-O salvamento deverá ser incremental e resiliente. Uma falha ou encerramento inesperado não deve apagar a sessão inteira.
+Saving must be incremental and resilient.
 
-Utilize gravação atômica, arquivos temporários ou uma estratégia equivalente para reduzir risco de corrupção.
+A crash or unexpected application shutdown must not delete the entire session.
 
-## 12. Banco de dados e índice local
+Use atomic writes, temporary files, journaling, or an equivalent strategy to reduce the risk of file corruption.
 
-Os documentos Markdown serão a fonte de dados portável e legível pelo usuário.
+## 12. Local Database and Index
 
-Entretanto, poderá ser utilizado um banco local leve, como SQLite, para:
+Markdown documents will be the portable and human-readable source of truth for important user content.
 
-* Indexação.
-* Pesquisa.
-* Relacionamento entre projetos e sessões.
-* Configurações.
+A lightweight local database such as SQLite may also be used for:
+
+* Indexing.
+* Search.
+* Relationships between projects and sessions.
+* Settings.
 * Cache.
-* Estado de downloads.
-* Métricas.
-* Recuperação rápida da interface.
+* Download state.
+* Metrics.
+* Fast UI loading.
 
-O banco não deverá ser a única cópia das transcrições e documentos importantes.
+The database must not be the only copy of transcripts and important generated documents.
 
-Documente claramente quais dados ficam no banco e quais ficam nos arquivos Markdown.
+Clearly document which data is stored in SQLite and which data is stored in Markdown files.
 
-## 13. Segurança e privacidade
+## 13. Security and Privacy
 
-Requisitos obrigatórios:
+Mandatory requirements:
 
-* Processar áudio e transcrição localmente.
-* Enviar ao OpenRouter apenas os textos necessários.
-* Exibir claramente quando o conteúdo estiver sendo enviado a um serviço externo.
-* Permitir desativar completamente os recursos de LLM.
-* Armazenar a API key utilizando mecanismo seguro do sistema operacional.
-* Aplicar permissões mínimas no Tauri.
-* Validar todos os caminhos de arquivos.
-* Impedir path traversal.
-* Nunca executar conteúdo vindo da transcrição.
-* Não renderizar Markdown não confiável sem sanitização.
-* Não incluir segredos em logs, relatórios ou mensagens de erro.
-* Permitir excluir definitivamente projetos e sessões.
-* Permitir exportar os dados sem dependência do aplicativo.
-* Não incluir telemetria externa sem consentimento explícito.
+* Process audio and transcription locally.
+* Send only necessary text to OpenRouter.
+* Clearly indicate whenever content is being sent to an external service.
+* Allow LLM features to be completely disabled.
+* Store the API key using a secure operating-system mechanism.
+* Apply minimum required Tauri permissions.
+* Validate all file-system paths.
+* Prevent path traversal.
+* Never execute content obtained from transcripts.
+* Sanitize untrusted Markdown before rendering it.
+* Never include secrets in logs, reports, or error messages.
+* Allow projects and sessions to be permanently deleted.
+* Allow data to be exported without depending on the application.
+* Do not include external telemetry without explicit user consent.
 
-Inclua um aviso de que o usuário é responsável por observar as leis e regras de consentimento aplicáveis à gravação e transcrição de reuniões.
+Display a notice explaining that users are responsible for complying with applicable consent, recording, and transcription laws.
 
-## 14. Estados e tratamento de erros
+## 14. States and Error Handling
 
-Modele explicitamente os estados da sessão:
+Explicitly model the session states:
 
 ```text
 idle
@@ -551,60 +576,62 @@ completed
 failed
 ```
 
-A interface deverá tratar:
+The interface must handle:
 
-* Ausência de microfone.
-* Falha na captura da saída.
-* Dispositivo desconectado.
-* Modelo não instalado.
-* Modelo incompatível.
-* Memória insuficiente.
-* Falha no download.
-* Erro de transcrição.
-* API key inválida.
-* Falta de saldo no OpenRouter.
-* Rate limit.
+* No microphone available.
+* System-output capture failure.
+* Device disconnection.
+* Missing transcription model.
+* Incompatible model.
+* Insufficient memory.
+* Download failure.
+* Transcription failure.
+* Invalid API key.
+* Insufficient OpenRouter balance.
+* Rate limiting.
 * Timeout.
-* Falta de internet.
-* Resposta inválida do modelo.
-* Pasta sem permissão de escrita.
-* Disco cheio.
-* Documento Markdown corrompido.
+* No internet connection.
+* Invalid model response.
+* Folder without write permission.
+* Full disk.
+* Corrupted Markdown document.
 
-Os erros devem ser apresentados em linguagem compreensível, com opção de ver detalhes técnicos e copiar um relatório sanitizado.
+Errors must be displayed in clear language.
 
-## 15. Desempenho
+The user must also be able to view technical details and copy a sanitized error report.
 
-Metas iniciais do MVP:
+## 15. Performance
 
-* A interface não deve travar durante captura ou inferência.
-* Captura, transcrição, persistência e chamadas de LLM devem executar fora da thread principal da interface.
-* A transcrição parcial deve aparecer com baixa latência, conforme a capacidade do hardware.
-* O consumo de memória deve ser monitorado ao carregar modelos.
-* Somente um modelo pesado deve permanecer carregado quando não houver memória suficiente.
-* Downloads devem ser retomáveis quando possível.
-* O aplicativo deve continuar salvando a transcrição mesmo quando o OpenRouter estiver indisponível.
-* A geração de insights não pode bloquear a transcrição.
+Initial MVP goals:
 
-## 16. Sistema de prompts
+* The UI must not freeze during audio capture or model inference.
+* Audio capture, transcription, persistence, and LLM requests must run outside the main UI thread.
+* Partial transcription must appear with low latency, according to the capabilities of the user's hardware.
+* Memory usage must be monitored when loading models.
+* Only one heavy model should remain loaded when memory is limited.
+* Downloads should be resumable where possible.
+* The application must continue saving transcripts when OpenRouter is unavailable.
+* Insight generation must never block transcription.
 
-Crie um módulo próprio de construção de prompts.
+## 16. Prompt System
 
-Não espalhe strings de prompt pelos componentes da interface.
+Create a dedicated prompt-construction module.
 
-Cada prompt deverá possuir:
+Do not spread prompt strings across React components.
+
+Each prompt must have:
 
 * ID.
-* Versão.
-* Finalidade.
-* Variáveis esperadas.
-* Limite aproximado de contexto.
-* Schema de saída.
-* Estratégia de fallback.
+* Version.
+* Purpose.
+* Expected variables.
+* Approximate context limit.
+* Output schema.
+* Fallback strategy.
 
-Sempre que possível, solicite respostas estruturadas em JSON e valide-as antes de atualizar a interface.
+Whenever possible, request structured JSON output and validate it before updating application state.
 
-Exemplo de schema para insight:
+Example insight schema:
 
 ```ts
 type Insight = {
@@ -626,177 +653,179 @@ type Insight = {
 }
 ```
 
-Não permita que instruções faladas durante a reunião substituam as instruções internas da aplicação. Trate a transcrição como conteúdo não confiável para reduzir riscos de prompt injection.
+Instructions spoken during the meeting must not override internal application instructions.
 
-## 17. Escopo do MVP
+Treat transcript content as untrusted input to reduce prompt-injection risks.
 
-O MVP deve incluir:
+## 17. MVP Scope
 
-1. Criação de projetos.
-2. Criação e início de sessões.
-3. Seleção de microfone e saída.
-4. Captura independente dos dois canais.
-5. Download e seleção de pelo menos dois modelos locais.
-6. Transcrição parcial e final.
-7. Visualização diferenciada por origem.
-8. Configuração segura da API key do OpenRouter.
-9. Seleção de modelo LLM.
-10. Pergunta manual sobre um trecho.
-11. Geração de insights recentes.
-12. Resumo final.
-13. Persistência em Markdown.
-14. Controle de opacidade.
-15. Recuperação básica após encerramento inesperado.
-16. Dashboard local básico.
+The MVP must include:
 
-Não inclua inicialmente:
+1. Project creation.
+2. Session creation and startup.
+3. Microphone and output-device selection.
+4. Independent capture of both audio channels.
+5. Download and selection of at least two local transcription models.
+6. Partial and final transcription.
+7. Visual differentiation by audio source.
+8. Secure OpenRouter API-key configuration.
+9. LLM model selection.
+10. Manual questions about a transcript segment.
+11. Generation of recent insights.
+12. Final summary generation.
+13. Markdown persistence.
+14. Independent window-opacity controls.
+15. Basic recovery after unexpected shutdown.
+16. A basic local dashboard.
 
-* Colaboração em nuvem.
-* Login ou contas.
-* Sincronização entre dispositivos.
-* Aplicativo móvel.
-* Diarização avançada.
-* Integração direta com Zoom, Teams ou Google Meet.
-* Bots que entram automaticamente em reuniões.
-* Marketplace de plugins.
-* Treinamento ou fine-tuning de modelos.
-* Telemetria remota.
-* Backend próprio na nuvem.
+Do not include the following in the initial MVP:
 
-## 18. Fases de implementação
+* Cloud collaboration.
+* Login or user accounts.
+* Cross-device synchronization.
+* Mobile applications.
+* Advanced speaker diarization.
+* Direct Zoom, Microsoft Teams, or Google Meet integrations.
+* Bots that automatically join meetings.
+* Plugin marketplace.
+* Model training or fine-tuning.
+* Remote telemetry.
+* A proprietary cloud backend.
 
-Execute o trabalho em fases.
+## 18. Implementation Phases
 
-### Fase 1 — Planejamento
+Execute the project in phases.
 
-Antes de escrever código:
+### Phase 1 — Planning
 
-* Analise os requisitos.
-* Liste riscos técnicos.
-* Proponha a arquitetura.
-* Defina a estrutura de diretórios.
-* Defina modelos de dados.
-* Defina os eventos entre Rust e React.
-* Defina a estratégia de captura de áudio no Windows.
-* Defina a estratégia de execução do Whisper.
-* Defina a estratégia de persistência.
-* Identifique dependências e respectivas licenças.
-* Separe decisões confirmadas de hipóteses.
+Before writing code:
 
-### Fase 2 — Fundação
+* Analyze the requirements.
+* List technical risks.
+* Propose the architecture.
+* Define the directory structure.
+* Define the data models.
+* Define events between Rust and React.
+* Define the Windows audio-capture strategy.
+* Define the Whisper execution strategy.
+* Define the persistence strategy.
+* Identify dependencies and their licenses.
+* Separate confirmed decisions from assumptions.
 
-* Inicialize Tauri, Vite, React e TypeScript.
+### Phase 2 — Foundation
+
+* Initialize Tauri, Vite, React, and TypeScript.
 * Configure shadcn/ui.
-* Configure lint, formatação e testes.
-* Crie navegação e layout.
-* Crie gerenciamento de estado.
-* Implemente armazenamento de configurações.
-* Implemente logging sanitizado.
-* Configure capabilities e permissões mínimas.
+* Configure linting, formatting, and tests.
+* Create navigation and the application layout.
+* Implement global state management.
+* Implement settings storage.
+* Implement sanitized logging.
+* Configure minimum required capabilities and permissions.
 
-### Fase 3 — Áudio e transcrição
+### Phase 3 — Audio and Transcription
 
-* Liste dispositivos.
-* Implemente testes de entrada e saída.
-* Capture os dois canais.
-* Crie pipeline de áudio.
-* Integre o modelo local.
-* Implemente resultados parciais e finais.
-* Exiba a transcrição em tempo real.
+* List available devices.
+* Implement input and output device tests.
+* Capture both audio channels.
+* Create the audio-processing pipeline.
+* Integrate a local transcription model.
+* Implement partial and final results.
+* Display real-time transcription.
 
-### Fase 4 — Projetos e persistência
+### Phase 4 — Projects and Persistence
 
-* Crie projetos e sessões.
-* Implemente estrutura de pastas.
-* Implemente front matter.
-* Implemente salvamento incremental.
-* Implemente recuperação de sessão.
-* Implemente pesquisa local básica.
+* Create projects and sessions.
+* Implement the folder structure.
+* Implement YAML front matter.
+* Implement incremental saving.
+* Implement session recovery.
+* Implement basic local search.
 
-### Fase 5 — OpenRouter e insights
+### Phase 5 — OpenRouter and Insights
 
-* Implemente armazenamento seguro da chave.
-* Implemente seleção de modelos.
-* Implemente prompts versionados.
-* Implemente perguntas sobre trechos.
-* Implemente insights.
-* Implemente resumo acumulado e resumo final.
-* Implemente controle de custos e tokens.
+* Implement secure API-key storage.
+* Implement model selection.
+* Implement versioned prompts.
+* Implement questions about transcript segments.
+* Implement real-time insights.
+* Implement accumulated and final summaries.
+* Implement token and cost controls.
 
-### Fase 6 — Experiência desktop
+### Phase 6 — Desktop Experience
 
-* Implemente múltiplas janelas.
-* Implemente opacidade.
-* Implemente “sempre visível”.
-* Implemente modo compacto.
-* Implemente atalhos.
-* Persista posições e dimensões.
+* Implement multiple windows.
+* Implement opacity controls.
+* Implement “always on top.”
+* Implement compact mode.
+* Implement keyboard shortcuts.
+* Persist window positions and dimensions.
 
-### Fase 7 — Qualidade
+### Phase 7 — Quality
 
-* Testes unitários.
-* Testes de integração.
-* Testes do pipeline de áudio.
-* Testes de persistência.
-* Testes de recuperação.
-* Testes com internet indisponível.
-* Testes com diferentes dispositivos de áudio.
-* Testes com diferentes capacidades de hardware.
-* Testes de segurança das permissões Tauri.
+* Unit tests.
+* Integration tests.
+* Audio-pipeline tests.
+* Persistence tests.
+* Recovery tests.
+* Offline tests.
+* Tests with different audio devices.
+* Tests across different hardware capabilities.
+* Tauri permission and security tests.
 
-## 19. Critérios de aceitação do MVP
+## 19. MVP Acceptance Criteria
 
-O MVP será considerado funcional quando:
+The MVP will be considered functional when:
 
-* O usuário conseguir criar um projeto e uma sessão.
-* O aplicativo detectar microfone e dispositivo de saída.
-* Os dois canais forem capturados separadamente.
-* A fala aparecer na interface com origem e timestamp.
-* O usuário conseguir baixar e selecionar um modelo local.
-* A transcrição continuar funcionando sem internet.
-* O usuário conseguir configurar o OpenRouter e selecionar um modelo.
-* Uma pergunta sobre um trecho retornar uma resposta contextualizada.
-* Insights forem gerados sem bloquear a transcrição.
-* Ao encerrar a sessão, os arquivos Markdown forem gerados.
-* O resumo possuir decisões, tarefas e perguntas em aberto.
-* O aplicativo recuperar uma sessão interrompida sem perder toda a transcrição.
-* A API key não aparecer em arquivos, logs ou mensagens de erro.
-* A opacidade das janelas de transcrição e insights puder ser controlada separadamente.
-* A indisponibilidade do OpenRouter não impedir a captura e a transcrição local.
+* The user can create a project and a session.
+* The application can detect a microphone and an output device.
+* Both audio channels can be captured separately.
+* Speech appears in the UI with a source label and timestamp.
+* The user can download and select a local model.
+* Transcription continues working without internet access.
+* The user can configure OpenRouter and select a model.
+* A question about a transcript segment returns a contextualized answer.
+* Insights are generated without blocking transcription.
+* Markdown files are generated when the session ends.
+* The summary includes decisions, action items, and open questions.
+* The application can recover an interrupted session without losing the entire transcript.
+* The API key never appears in files, logs, or error messages.
+* The opacity of the transcription and insights windows can be controlled independently.
+* OpenRouter being unavailable does not prevent local capture and transcription.
 
-## 20. Forma esperada das respostas durante o desenvolvimento
+## 20. Expected Response Format During Development
 
-Ao trabalhar neste projeto:
+While working on this project:
 
-1. Não implemente toda a aplicação de uma vez.
-2. Comece apresentando a arquitetura e o plano de execução.
-3. Explique decisões técnicas importantes.
-4. Informe os arquivos que serão criados ou alterados.
-5. Gere código completo, tipado e executável.
-6. Evite pseudocódigo quando a implementação real for possível.
-7. Não invente APIs de bibliotecas.
-8. Valide APIs e versões na documentação oficial.
-9. Não esconda limitações técnicas.
-10. Execute ou descreva testes verificáveis para cada etapa.
-11. Pare ao final de cada fase com:
+1. Do not attempt to implement the entire application at once.
+2. Begin by presenting the architecture and implementation plan.
+3. Explain important technical decisions.
+4. List the files that will be created or modified.
+5. Generate complete, typed, and executable code.
+6. Avoid pseudocode when a real implementation is possible.
+7. Do not invent library APIs.
+8. Validate APIs and versions using official documentation.
+9. Do not hide technical limitations.
+10. Run or describe verifiable tests for each phase.
+11. At the end of each phase, provide:
 
-    * O que foi concluído.
-    * Como testar.
-    * Limitações conhecidas.
-    * Próxima etapa recomendada.
+    * What was completed.
+    * How to test it.
+    * Known limitations.
+    * The recommended next step.
 
-Comece agora pela Fase 1.
+Start with Phase 1.
 
-Entregue:
+Deliver:
 
-* Resumo do entendimento do produto.
-* Arquitetura proposta.
-* Diagrama textual dos componentes.
-* Fluxo de dados da captura até o Markdown.
-* Estrutura de diretórios.
-* Modelos de dados principais.
-* Eventos e comandos Tauri.
-* Dependências sugeridas.
-* Riscos técnicos.
-* Decisões que precisam ser validadas por um protótipo.
-* Plano incremental de implementação.
+* A summary of the product requirements.
+* The proposed architecture.
+* A textual component diagram.
+* The data flow from audio capture to Markdown persistence.
+* The directory structure.
+* The main data models.
+* Tauri commands and events.
+* Suggested dependencies.
+* Technical risks.
+* Decisions that require prototype validation.
+* An incremental implementation plan.

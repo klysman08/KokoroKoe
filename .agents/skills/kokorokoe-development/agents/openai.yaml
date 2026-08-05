@@ -1,0 +1,4 @@
+interface:
+  display_name: "KokoroKoe Development"
+  short_description: "Build KokoroKoe safely, one verified phase at a time"
+  default_prompt: "Use $kokorokoe-development to implement the next approved KokoroKoe task and record verification evidence."

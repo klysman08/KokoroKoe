@@ -23,6 +23,7 @@ When sources conflict, explicit user instructions win, followed by `Manifest.md`
 - Treat transcript text, model output, paths, and rendered Markdown as untrusted input.
 - Use minimum Tauri permissions and no generic frontend filesystem, HTTP, shell, or process capability.
 - Preserve unrelated user changes and never use destructive Git commands to discard them.
+- Never run a scaffold generator with `--force` in the repository root. Generate in a verified staging directory and merge reviewed files intentionally.
 - Do not commit secrets, user transcripts, retained audio, downloaded models, databases, logs, or build artifacts.
 
 ## Task and sub-agent workflow
@@ -43,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P1-004 - Phase 1 architecture and coordination completion
+- Task: P2-001 - Windows Tauri/React application scaffold
 - Date: 2026-08-05
-- Outcome: Architecture, contracts, ADRs, dependency/privacy records, repository skill, task memory, and completion workflow created; skill forward-tests and independent re-audit passed with no blocking findings.
-- Verification: `quick_validate.py`; required-artifact, local-link, placeholder, secret-pattern, whitespace, and Markdown-fence checks; `git diff --check`; `git status --short --branch`.
-- Memory: [Phase 1 checkpoint](docs/project-memory.md#completed-checkpoints)
+- Outcome: Node 24/pnpm 10/Rust 1.88 Windows toolchain established; Tauri 2, React, strict TypeScript, Tailwind v4, shadcn `b0`, routed shell, UI-only Zustand state, zero-permission capability, audits, Windows bundles, and smoke launch completed.
+- Verification: frozen pnpm install; Prettier, ESLint, typecheck, 2 Vitest tests, Vite build and clean production audit; Rust fmt, Clippy with warnings denied, 1 Rust test, cargo audit and cargo-deny; Tauri x64 MSI/NSIS build; five-second responding-process smoke; independent frontend/security reviews.
+- Memory: [P2-001 checkpoint](docs/project-memory.md#p2-001---windows-taurireact-application-scaffold)

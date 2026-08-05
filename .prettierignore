@@ -1,0 +1,11 @@
+.agents
+.git
+.vscode
+dist
+docs
+graphify-out
+node_modules
+src-tauri
+AGENTS.md
+Manifest.md
+pnpm-lock.yaml

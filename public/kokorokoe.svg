@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">KokoroKoe</title>
+  <rect width="512" height="512" rx="116" fill="#171717" />
+  <path
+    d="M104 256h44l24-72 43 144 39-208 45 272 38-208 30 72h41"
+    fill="none"
+    stroke="#fafafa"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="28"
+  />
+</svg>

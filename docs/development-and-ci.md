@@ -1,0 +1,58 @@
+# Development and CI
+
+KokoroKoe's foundation is verified on Windows 10 22H2 or Windows 11 x64. The checked-in CI workflow uses the Windows Server 2022 runner family, Node 24.19.0, pnpm 10.30.2, and Rust 1.88.0 with the MSVC x64 target.
+
+## Local prerequisites
+
+- Node.js 24.19.0
+- pnpm 10.30.2
+- Rust 1.88.0 with `x86_64-pc-windows-msvc`, Clippy, and rustfmt
+- Visual Studio 2022 Build Tools with the MSVC workload
+- Windows SDK and WebView2 Runtime
+- `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 for dependency gates
+
+Install the Rust audit tools once:
+
+```powershell
+cargo install cargo-deny --locked --version 0.20.2
+cargo install cargo-audit --locked --version 0.22.2
+```
+
+## Reproducible verification
+
+Start from a clean checkout and use the lockfiles:
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm verify:frontend
+pnpm verify:rust
+pnpm audit:frontend
+pnpm licenses:frontend
+pnpm audit:rust
+```
+
+Build the Windows x64 installers after the checks pass:
+
+```powershell
+pnpm tauri build --ci --bundles msi,nsis --target x86_64-pc-windows-msvc -- --locked
+```
+
+The generated MSI and NSIS packages are ignored verification artifacts. Do not commit them.
+
+## What the gates cover
+
+- `verify:frontend`: Prettier, ESLint, strict TypeScript, Vitest, the Vite production build, tracked-file policy, immutable GitHub Action pins, and unsafe frontend DOM-injection checks.
+- `verify:rust`: rustfmt, Clippy with warnings denied, Rust unit tests, and the Tauri capability tests under `src-tauri/tests`.
+- `audit:frontend`: production npm advisory gate at moderate severity or higher.
+- `licenses:frontend`: parsed resolved production JavaScript license inventory.
+- `audit:rust`: Windows-targeted Cargo license/source/bans policy followed by the RustSec advisory scan.
+
+CI requests read-only repository contents, persists no checkout credential, references no application secret, and publishes no installer. Actions are pinned to full commit SHAs; the adjacent comments record the reviewed release tags. The hosted workflow builds the locked Windows release executable without bundling; the local closeout additionally rebuilds MSI and NSIS installers.
+
+## Secrets and integration tests
+
+`.env` and `.env.*` are ignored except for a future secret-free `.env.example`. Phase 2 requires no OpenRouter key, and CI must never load or print one. OpenRouter work belongs to Phase 5: automated tests should use mock servers by default, while any live provider check must be an explicit local opt-in with secret-canary inspection.
+
+## Sanitized Markdown boundary
+
+All future Markdown-derived UI must use `SanitizedMarkdown`. The component disables raw HTML, applies an explicit sanitize schema, blocks images and unsafe URL schemes, and renders even allowed external links inertly. A later external-link feature must cross a separately authorized Rust command and must not weaken this renderer.

@@ -2,7 +2,7 @@
 
 KokoroKoe is a privacy-first Windows meeting assistant under active development. The current repository checkpoint contains the Tauri 2, React, strict TypeScript, Tailwind CSS, and shadcn/ui foundation only.
 
-Audio capture, local transcription, Markdown persistence, OpenRouter integration, and advanced desktop windows are not implemented yet.
+Audio capture, local transcription, Markdown persistence, OpenRouter integration, and advanced desktop windows are not implemented yet. The foundation includes a reusable inert renderer for future untrusted Markdown content; it does not read project or session files yet.
 
 ## Prerequisites
 
@@ -29,15 +29,10 @@ pnpm tauri dev
 ## Verification
 
 ```powershell
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features
+pnpm verify:frontend
+pnpm verify:rust
 ```
+
+Dependency audits, production-license inventory, installer builds, CI parity, and the secret-handling policy are documented in [Development and CI](docs/development-and-ci.md).
 
 See [the architecture](docs/architecture.md) and [project memory](docs/project-memory.md) for scope, decisions, and the active handoff.

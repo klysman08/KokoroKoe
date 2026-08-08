@@ -5,8 +5,9 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 ## Current phase
 
 - Phase: 2 - Foundation
-- Status: In progress
+- Status: Completed
 - Started: 2026-08-05
+- Completed: 2026-08-08
 - Objective: Establish the secure, typed, tested Windows desktop foundation before adding sensitive services or product data.
 
 ## Completed task table - Phase 1
@@ -25,6 +26,7 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | P2-001 | Coordinator + review agents | Completed | Windows Tauri/React scaffold, strict frontend toolchain, shadcn/Tailwind shell, UI-only state/routing, least-privilege capability, audits, package build, and smoke launch | P1-004; Node 24; MSVC/SDK; CMake; WebView2 | Clean locked install and frontend/Rust checks; explicit main capability with no permissions; x64 bundles and launch smoke pass | Node 24/pnpm 10 checks; 2 Vitest tests; Vite build; Rust fmt/Clippy/test; clean pnpm audit; cargo audit; cargo-deny; MSI/NSIS build; responding-process smoke; two independent read-only reviews |
 | P2-002 | Coordinator + review agents | Completed | Sanitized tracing/errors, strict Rust/Zod settings boundary, read-only `get_settings`, TanStack Query integration, root/query error UI, and least-privilege command ACL | P2-001 | Shared fixtures parse in Rust/TypeScript; semantic validation matches; raw errors/tokens/paths do not reach logs or reports; only `main` can invoke the command; builds/audits/package smoke pass | 15 Rust tests; 27 Vitest tests; Node 24 format/lint/type/build; generated ACL/static capability checks; secret/path canaries; cargo-deny/audit and pnpm audit; MSI/NSIS rebuild; responding-process smoke; two independent reviews with blockers fixed and rechecked |
 | P2-003 | Coordinator + review agents | Completed | Versioned non-secret SQLite settings persistence, validated workspace selection/write-health probe, optimistic settings updates, strict mutation contracts, onboarding UI, and least-privilege commands | P2-002 | Corrupt-record recovery, traversal/ADS/reparse denial, optimistic-revision conflicts, Rust/Zod fixture parity, denied-window checks, audits, package build, and Windows onboarding smoke pass | 37 Rust tests; 51 Vitest tests; Node/Rust quality gates and audits; MSI/NSIS rebuild; packaged picker/update/restart smoke; three independent reviews with no remaining blockers |
+| P2-004 | Coordinator + review agents | Completed | Sanitized raw-HTML-disabled Markdown rendering boundary, locked Windows CI, reproducible verification commands, and Phase 2 acceptance/handoff | P2-003 | Untrusted Markdown cannot execute HTML/script, load images, or navigate through unsafe links; Windows CI covers locked frontend/Rust format, lint, type, unit, capability, audit, and desktop build checks; Phase 2 evidence and limitations are independently reviewed | 55 Vitest tests; 37 Rust/capability tests; Node/Rust format/lint/type/build; clean production audit; license inventory; Cargo deny/audit; actionlint; locked MSI/NSIS build; packaged Settings smoke; three independent reviews with no remaining blockers |
 
 ## Confirmed decisions
 
@@ -56,6 +58,8 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | 2026-08-08 | Quarantine and rebuild the non-secret settings database only for SQLite corruption/not-a-database failures | Preserve damaged files for diagnosis while keeping future-schema, busy, permission, and ordinary I/O failures fail-closed without destructive recovery |
 | 2026-08-08 | Restrict Windows MVP workspaces to existing fixed local drive-letter directories without reparse points | Establish a conservative Rust-owned boundary; ADR 0005 records the deliberate rejection of network, removable, redirected, and reparse-backed folders |
 | 2026-08-08 | Keep workspace selection in a single-flight Rust native picker with no frontend path or dialog capability | React cannot submit an arbitrary path, and cancellation or concurrent selection leaves settings unchanged |
+| 2026-08-08 | Route all future Markdown-derived React UI through the fixed `SanitizedMarkdown` boundary | Raw HTML, images, unsafe schemes, and active navigation remain unavailable; ADR 0006 records the policy and Phase 4 input-size responsibility |
+| 2026-08-08 | Use one read-only, full-SHA-pinned Windows 2022 CI workflow for the Phase 2 gates | Match the Windows/MSVC product boundary without adding secrets, publishing, signing, or non-Windows claims; local MSI/NSIS smoke remains separate evidence |
 
 ## Prototype and risk register
 
@@ -144,6 +148,28 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
   - Independent frontend/contracts, persistence/concurrency, and security reviews reported no remaining blockers after migration-race, future-schema, corruption-routing, workspace validation, optimistic-cache, cancellation, and ACL findings were corrected.
 - Known limitations: this database contains only non-secret application settings; important project/session content remains future Markdown work. The fixed-local-volume policy intentionally rejects network, removable, redirected, OneDrive/reparse-backed, and some enterprise folders. A successful probe is point-in-time evidence, so Phase 4 must pin/revalidate directory identity and containment for every sensitive write. Physical settings corruption is quarantined and rebuilt rather than repaired or exposed through a recovery UI. Denied-window behavior is still static/unit tested because no second product WebView exists. Sanitized Markdown rendering and CI are not yet implemented.
 
+### P2-004 - Sanitized Markdown, Windows CI, and Phase 2 closeout
+
+- Completed: 2026-08-08
+- Deliverables: fixed `SanitizedMarkdown` React boundary; CommonMark/GFM parsing; raw-HTML suppression; explicit sanitize schema; image, embedded-content, DOM-injection, and unsafe-scheme denial; inert external links; adversarial tests; exact Markdown dependency locks and license record; read-only Windows 2022 GitHub Actions workflow with full commit-SHA pins; locked Node/pnpm/Rust/audit/build commands; repository policy and parsed frontend license scripts; development/CI guide; ADR 0006; architecture and privacy updates; Phase 2 acceptance handoff.
+- Security behavior: the renderer accepts an in-memory string and presentation class only. Feature code cannot replace parser plugins, element policy, sanitizer, or URL transform. Raw HTML, script/style/SVG/object/iframe/form/input, event-handler attributes, raw and Markdown images, relative/protocol-relative links, and JavaScript/data/VBScript/file schemes are excluded. Even allowed `http`, `https`, and `mailto` links render as inert text. No Tauri command, capability, filesystem read, external HTTP client, credential access, OpenRouter feature, project/session schema, audio code, model code, or additional window was added.
+- Graphify evidence: the ignored code graph was refreshed after implementation and contains 770 nodes, 1,258 edges, and 46 communities. Graphify reported five JSON fixtures with no structural nodes, the existing missing optional SQL parser, and community-label drift after the incremental rebuild; checked-in fixtures and migration tests remain the authoritative evidence for those files, and graph labels are non-product local tooling output.
+- Verification:
+  - Node 24.19.0 and pnpm 10.30.2: `pnpm install --frozen-lockfile`, `pnpm verify:frontend`, `pnpm audit:frontend`, and `pnpm licenses:frontend` passed. Prettier, ESLint, strict TypeScript, 10 Vitest files/55 tests, Vite production build, repository policy, a clean production audit, and a parsed 159-package production license inventory passed.
+  - Renderer tests cover supported headings/emphasis/lists/tables/task-list handling, raw executable and embedded elements, raw/Markdown images, inert navigation, mixed-case JavaScript, VBScript, file, data, protocol-relative, relative, and control-character addresses.
+  - Rust 1.88.0: `pnpm verify:rust` passed locked MSVC Clippy with warnings denied and 34 unit plus 3 capability tests. `pnpm audit:rust` passed Cargo licenses, bans, and sources; RustSec returned success with the same 17 documented allowed transitive maintenance/non-Windows GTK warnings.
+  - `actionlint` 1.7.12 passed after its release archive matched SHA-256 `cdc8643b2c8dc890c76ad16095da97e75f86572805cc3573cc13f31ea0f19127`. Action tag mappings were independently checked; the annotated pnpm v6.0.9 tag was corrected to peeled commit `0ebf47130e4866e96fce0953f49152a61190b271`.
+  - `pnpm tauri build --ci --bundles msi,nsis --target x86_64-pc-windows-msvc -- --locked` rebuilt `KokoroKoe_0.1.0_x64_en-US.msi` and `KokoroKoe_0.1.0_x64-setup.exe` from final source.
+  - Packaged Windows smoke launched the release executable, confirmed the process was responsive, opened Settings through UI Automation, observed workspace onboarding and local privacy defaults, and closed cleanly.
+  - Frozen-lockfile reinstall, local Markdown-link resolution, ignored/untracked `.env` verification without reading it, secret-pattern scan, `git diff --check`, scope review, and three independent final reviews passed with no remaining blockers.
+- Known limitations: the GitHub workflow is checked, actionlint-clean, and locally mirrored but has not been observed on a hosted runner because the branch has not been pushed. The hosted image is mutable, and a cold run under the 60-minute timeout remains unproven. CI builds the locked release executable; the installer build and UI smoke are local closeout gates. Frontend license automation proves a nonempty parsed inventory but does not yet enforce an SPDX allowlist or generate distribution notices. Markdown parsing is synchronous, so Phase 4 must bound and paginate document input before React receives it. Raw HTML, images, active links, relative links, and task-list checkboxes remain deliberately unavailable. No project/session Markdown loading or persistence exists yet.
+
+### Phase 2 - Foundation completion
+
+- Completed: 2026-08-08
+- Result: the Windows x64 Tauri/React foundation now has a strict typed shell, shadcn/Tailwind UI, local UI state and routing, sanitized error/log boundaries, least-privilege commands/capabilities, versioned non-secret settings persistence, conservative native workspace onboarding, a sanitized Markdown rendering boundary, reproducible local gates, Windows CI configuration, audits, and verified MSI/NSIS packaging.
+- Deferred by design: all WASAPI capture, audio processing, VAD, local transcription, model management/downloads, project/session schemas and Markdown persistence, FTS/search, Credential Manager/OpenRouter, insights/summaries, extra windows, opacity/shortcuts, and release signing/telemetry remain in their assigned later phases.
+
 ## Known environment facts
 
 - The machine-wide shell still defaults to Node 26.5.1; P2 verification initializes `fnm` and uses the repository-pinned Node 24.19.0.
@@ -154,4 +180,4 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 
 ## Next handoff
 
-Begin `P2-004`, a bounded Phase 2 closeout task. Add a sanitized, raw-HTML-disabled Markdown rendering boundary for future local content; add Windows CI for locked frontend/Rust formatting, linting, type, unit, capability, audit, and build checks; document reproducible local/CI commands; and complete the Phase 2 acceptance/handoff review. Keep project/session schemas and persistence, audio/transcription, models, OpenRouter/credentials, external HTTP, and additional native windows out of `P2-004`.
+Begin `P3-001`, a bounded Windows audio-capture prototype. Prove endpoint enumeration plus simultaneous shared-mode microphone and WASAPI render-loopback capture with QPC-derived session timestamps, independent channel health/recovery, bounded packet queues, and native-format diagnostics. Keep Whisper/VAD/model downloads, retained audio, project/session persistence, OpenRouter, product transcript UI, and additional native windows out of `P3-001`. Record hardware/driver coverage honestly; the full device matrix remains a Phase 3 prototype gate rather than a single-machine claim.

@@ -759,6 +759,8 @@ The per-session writer appends checksummed sequenced journal entries and syncs f
 
 Startup validates journal records, tolerates only a torn final record, replays after the Markdown checkpoint, and exposes interrupted work as paused with `recovery_required`. SQLite corruption is handled by preserving and rebuilding the projection. An external Markdown hash conflict pauses snapshot replacement while journaling continues.
 
+Markdown-derived React UI uses the fixed `SanitizedMarkdown` boundary defined by [ADR 0006](adr/0006-untrusted-markdown-rendering-boundary.md). It ignores raw HTML, applies an explicit sanitization schema, excludes images and embedded content, rejects unsafe address schemes, and keeps allowed external links inert. Reading files and validating YAML front matter remain Rust-owned persistence responsibilities.
+
 ## OpenRouter and prompts
 
 OpenRouter integration is Rust-only and text-only. LLM features start disabled. Enabling them shows an external-service indicator. Zero-data-retention/provider data-collection restrictions are enabled by default; relaxing them requires explicit confirmation.

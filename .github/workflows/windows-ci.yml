@@ -1,0 +1,92 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phase-2-foundation:
+    name: Phase 2 foundation
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CI: true
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.30.2
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.88.0-x86_64-pc-windows-msvc --profile minimal --component clippy,rustfmt
+          rustup default 1.88.0-x86_64-pc-windows-msvc
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Report pinned environment
+        shell: pwsh
+        run: |
+          Write-Host "ImageOS=$env:ImageOS"
+          Write-Host "ImageVersion=$env:ImageVersion"
+          node --version
+          pnpm --version
+          rustc --version
+          cargo --version
+
+      - name: Verify frontend and repository policy
+        run: pnpm verify:frontend
+
+      - name: Verify Rust and Tauri capabilities
+        run: pnpm verify:rust
+
+      - name: Install pinned Rust audit tools
+        shell: pwsh
+        run: |
+          cargo install cargo-deny --locked --version 0.20.2
+          cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Audit frontend dependencies
+        run: pnpm audit:frontend
+
+      - name: Inventory frontend production licenses
+        run: pnpm licenses:frontend
+
+      - name: Audit Rust dependencies and licenses
+        run: pnpm audit:rust
+
+      - name: Confirm lockfiles stayed unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml src-tauri/Cargo.lock
+
+      - name: Build locked Windows x64 executable
+        run: pnpm tauri build --ci --no-bundle --target x86_64-pc-windows-msvc -- --locked
+
+      - name: Confirm checks did not mutate tracked files
+        run: git diff --exit-code

@@ -1,6 +1,6 @@
 # Dependency and License Baseline
 
-Status: Phase 1 candidate assessment plus the P2-001/P2-002/P2-003 resolved foundation inventory, updated on 2026-08-08. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` pin the resolved dependencies. Future candidates remain unresolved until the phase that first adds them.
+Status: Phase 1 candidate assessment plus the resolved Phase 2 foundation inventory, updated on 2026-08-08. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` pin the resolved dependencies. Future candidates remain unresolved until the phase that first adds them.
 
 ## P2-001 resolved foundation inventory
 
@@ -36,6 +36,16 @@ Status: Phase 1 candidate assessment plus the P2-001/P2-002/P2-003 resolved foun
 | Workspace probe | `tempfile` 3.27.0; `fs2` 0.4.3 | MIT OR Apache-2.0 | Create/write/sync/delete health probe and available-space query |
 | Windows volume policy | `windows-sys` 0.61.2 | MIT OR Apache-2.0 | Fixed-volume classification with the minimum FileSystem feature |
 | Windows security tests | `junction` 2.0.0 (development only) | MIT OR Apache-2.0 | Creates an unprivileged NTFS junction to verify ancestor rejection |
+
+## P2-004 resolved rendering inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Markdown-to-React | `react-markdown` 10.1.0 | MIT | Raw HTML is skipped; no DOM injection API is used |
+| GFM parsing | `remark-gfm` 4.0.1 | MIT | Tables, strikethrough, autolinks, and task-list syntax are parsed before sanitization |
+| Render-tree sanitization | `rehype-sanitize` 6.0.0 | MIT | Explicit tag, attribute, and protocol schema; images are excluded and links remain inert |
+
+These packages are pure JavaScript and add no native library, DLL, Tauri command, external-network client, or frontend capability. The renderer accepts an in-memory string only; reading Markdown files remains Rust-owned Phase 4 work.
 
 P2-003 audit evidence:
 

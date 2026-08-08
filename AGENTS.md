@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P2-003 - Versioned settings persistence and workspace onboarding
+- Task: P2-004 - Sanitized Markdown, Windows CI, and Phase 2 closeout
 - Date: 2026-08-08
-- Outcome: lazy bundled-SQLite settings history, optimistic mutations, corruption quarantine/rebuild, Rust-owned native workspace selection, conservative fixed-volume/reparse-safe validation and write probe, strict Rust/Zod mutation contracts, onboarding UI, and exact main-window ACL/authorization completed without adding project/session content or external services.
-- Verification: Node 24 Prettier/ESLint/typecheck, 51 Vitest tests and Vite build; Rust fmt, Clippy with warnings denied, 37 tests; migration/concurrency/corruption/path/ACL suites; pnpm/Cargo audits and license checks; final x64 MSI/NSIS rebuild; packaged picker/update/restart persistence smoke; three independent reviews with no remaining blockers.
-- Memory: [P2-003 checkpoint](docs/project-memory.md#p2-003---versioned-settings-persistence-and-workspace-onboarding)
+- Outcome: fixed raw-HTML-disabled and image-free Markdown renderer with explicit sanitization and inert links, adversarial tests, locked Windows CI and repository policy, reproducible verification/audit documentation, ADR 0006, and the Phase 2 acceptance handoff completed without adding content persistence, audio, models, external services, or new capabilities.
+- Verification: Node 24 frozen install, Prettier/ESLint/typecheck, 55 Vitest tests, Vite build, policy, clean production audit, and parsed license inventory; Rust 1.88 locked fmt/Clippy and 37 tests; Cargo deny/audit; actionlint 1.7.12; final locked x64 MSI/NSIS rebuild; packaged Settings smoke; secret/link/diff checks; three independent reviews with no remaining blockers. Hosted GitHub CI is configured but remains unobserved until pushed.
+- Memory: [P2-004 checkpoint](docs/project-memory.md#p2-004---sanitized-markdown-windows-ci-and-phase-2-closeout)

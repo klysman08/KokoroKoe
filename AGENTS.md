@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-002 - Bounded audio-processing prototype
-- Date: 2026-08-08
-- Outcome: added strict PCM/float decoding, non-finite sanitization, equal-weight mono downmix, source-local anti-aliased 16 kHz sinc resampling, exact bounded 10 ms normalized queues, 10 Hz RMS/peak/clipping diagnostics, strict Rust/Zod status parity, and no retained or frontend-delivered samples.
-- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 54 ordinary tests plus 3 capability tests; deterministic format/rate/anti-alias/level/queue matrix; explicit concurrent normalization probe with zero processing errors or queue drops; clean production audit; Cargo deny/audit with the existing allowed warnings; final locked x64 release build; link/secret/artifact/diff checks. The broader device/recovery matrix and two-hour clock gate remain open.
-- Memory: [P3-002 checkpoint](docs/project-memory.md#p3-002---bounded-audio-processing-prototype)
+- Task: P3-003 - Source-local VAD and bounded utterance segmentation
+- Date: 2026-08-09
+- Outcome: selected Earshot 1.2.1 through a pre-frozen generated-corpus comparison with Silero VAD v6; added independent bounded per-source detection, 300 ms pre-roll, 500 ms trailing silence, 160 ms minimum speech, 30 s forced splitting, reset/finish handling, strict aggregate diagnostics, and no retained or frontend-delivered samples.
+- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 60 ordinary tests plus 3 capability tests; exact ignored bake-off (Earshot 0.40% miss, 1.07% false positive, 0.9901 F1); explicit concurrent live VAD probe with zero processing errors or queue drops; clean frontend/Cargo audits; final locked x64 release build excluded the development-only Silero/ONNX comparator; final link/secret/artifact/diff checks. Synthetic-corpus generalization, the broader device/recovery matrix, and the two-hour clock gate remain open.
+- Memory: [P3-003 checkpoint](docs/project-memory.md#p3-003---source-local-vad-and-bounded-utterance-segmentation)

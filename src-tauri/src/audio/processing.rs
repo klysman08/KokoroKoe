@@ -3,7 +3,10 @@ use rubato::{
     audioadapter_buffers::direct::InterleavedSlice,
 };
 
-use super::{AudioPacket, AudioSource, LevelDiagnostics, NativeAudioFormat, NativeSampleType};
+use super::{
+    AudioPacket, AudioSource, DetectedUtterance, LevelDiagnostics, NativeAudioFormat,
+    NativeSampleType, VadProcessOutcome, VadSegmenter,
+};
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 const NORMALIZED_CHUNK_SAMPLES: usize = 160;
@@ -39,11 +42,65 @@ pub(crate) struct ProcessingOutcome {
     pub(crate) pending_native_frames: u64,
     pub(crate) pending_normalized_samples: u64,
     pub(crate) level_updates: Vec<LevelDiagnostics>,
+    pub(crate) utterances: Vec<DetectedUtterance>,
+    pub(crate) vad_frames_analyzed: u64,
+    pub(crate) vad_speech_frames: u64,
+    pub(crate) vad_silence_frames: u64,
+    pub(crate) short_utterances_rejected: u64,
+    pub(crate) forced_splits: u64,
+    pub(crate) vad_resets: u64,
+    pub(crate) vad_pending_samples: u64,
+    pub(crate) vad_buffered_samples: u64,
+}
+
+impl ProcessingOutcome {
+    fn merge_vad(&mut self, outcome: VadProcessOutcome) {
+        self.utterances.extend(outcome.utterances);
+        self.vad_frames_analyzed = self
+            .vad_frames_analyzed
+            .saturating_add(outcome.frames_analyzed);
+        self.vad_speech_frames = self.vad_speech_frames.saturating_add(outcome.speech_frames);
+        self.vad_silence_frames = self
+            .vad_silence_frames
+            .saturating_add(outcome.silence_frames);
+        self.short_utterances_rejected = self
+            .short_utterances_rejected
+            .saturating_add(outcome.short_utterances_rejected);
+        self.forced_splits = self.forced_splits.saturating_add(outcome.forced_splits);
+        self.vad_resets = self.vad_resets.saturating_add(outcome.resets);
+        self.vad_pending_samples = outcome.pending_samples;
+        self.vad_buffered_samples = outcome.buffered_samples;
+    }
+
+    fn vad_only(outcome: VadProcessOutcome) -> Self {
+        let mut processing = Self {
+            chunks: Vec::new(),
+            native_frames_decoded: 0,
+            non_finite_samples_sanitized: 0,
+            format_changed: false,
+            resampler_delay_frames: 0,
+            pending_native_frames: 0,
+            pending_normalized_samples: 0,
+            level_updates: Vec::new(),
+            utterances: Vec::new(),
+            vad_frames_analyzed: 0,
+            vad_speech_frames: 0,
+            vad_silence_frames: 0,
+            short_utterances_rejected: 0,
+            forced_splits: 0,
+            vad_resets: 0,
+            vad_pending_samples: 0,
+            vad_buffered_samples: 0,
+        };
+        processing.merge_vad(outcome);
+        processing
+    }
 }
 
 pub(crate) struct SourceProcessor {
     source: AudioSource,
     pipeline: Option<FormatPipeline>,
+    vad: VadSegmenter,
 }
 
 impl SourceProcessor {
@@ -51,6 +108,7 @@ impl SourceProcessor {
         Self {
             source,
             pipeline: None,
+            vad: VadSegmenter::new(source),
         }
     }
 
@@ -66,6 +124,7 @@ impl SourceProcessor {
             .pipeline
             .as_ref()
             .is_some_and(|pipeline| pipeline.format != packet.format);
+        let reset_outcome = format_changed.then(|| self.vad.format_changed());
         if self
             .pipeline
             .as_ref()
@@ -86,7 +145,7 @@ impl SourceProcessor {
         let processed = pipeline.push(&mono)?;
         sanitized = sanitized.saturating_add(processed.non_finite_samples_sanitized);
 
-        Ok(ProcessingOutcome {
+        let mut outcome = ProcessingOutcome {
             chunks: processed.chunks,
             native_frames_decoded: packet.frames as u64,
             non_finite_samples_sanitized: sanitized,
@@ -95,7 +154,41 @@ impl SourceProcessor {
             pending_native_frames: pipeline.native_buffer.len() as u64,
             pending_normalized_samples: pipeline.normalized_buffer.len() as u64,
             level_updates: processed.level_updates,
-        })
+            utterances: Vec::new(),
+            vad_frames_analyzed: 0,
+            vad_speech_frames: 0,
+            vad_silence_frames: 0,
+            short_utterances_rejected: 0,
+            forced_splits: 0,
+            vad_resets: 0,
+            vad_pending_samples: 0,
+            vad_buffered_samples: 0,
+        };
+        if let Some(reset) = reset_outcome {
+            outcome.merge_vad(reset);
+        }
+        let vad_outcomes: Vec<_> = outcome
+            .chunks
+            .iter()
+            .map(|chunk| self.vad.push(chunk.source, chunk.start_ms, &chunk.samples))
+            .collect();
+        if vad_outcomes.is_empty() {
+            outcome.merge_vad(self.vad.snapshot());
+        }
+        for vad_outcome in vad_outcomes {
+            outcome.merge_vad(vad_outcome);
+        }
+        Ok(outcome)
+    }
+
+    pub(crate) fn finish(&mut self) -> ProcessingOutcome {
+        let mut outcome = ProcessingOutcome::vad_only(self.vad.finish());
+        if let Some(pipeline) = self.pipeline.as_ref() {
+            outcome.resampler_delay_frames = pipeline.resampler_delay_frames;
+            outcome.pending_native_frames = pipeline.native_buffer.len() as u64;
+            outcome.pending_normalized_samples = pipeline.normalized_buffer.len() as u64;
+        }
+        outcome
     }
 }
 

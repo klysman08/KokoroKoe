@@ -107,6 +107,30 @@ const channelDiagnosticsSchema = z.strictObject({
       atMs: safeCounterSchema,
     })
     .nullable(),
+  vadFramesAnalyzed: safeCounterSchema,
+  vadSpeechFrames: safeCounterSchema,
+  vadSilenceFrames: safeCounterSchema,
+  utterancesFinalized: safeCounterSchema,
+  utteranceSamplesFinalized: safeCounterSchema,
+  shortUtterancesRejected: safeCounterSchema,
+  forcedSplits: safeCounterSchema,
+  vadResets: safeCounterSchema,
+  vadPendingSamples: safeCounterSchema.max(255),
+  vadBufferedSamples: safeCounterSchema.max(485055),
+  latestUtterance: z
+    .strictObject({
+      startMs: safeCounterSchema,
+      endMs: safeCounterSchema,
+      durationMs: safeCounterSchema.max(30_000),
+      endReason: z.enum([
+        "trailing_silence",
+        "forced_split",
+        "format_change",
+        "timeline_discontinuity",
+        "end_of_stream",
+      ]),
+    })
+    .nullable(),
   dataDiscontinuities: safeCounterSchema,
   timestampErrors: safeCounterSchema,
   timestampRegressions: safeCounterSchema,

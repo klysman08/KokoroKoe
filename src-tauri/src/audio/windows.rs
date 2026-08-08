@@ -19,7 +19,8 @@ use super::{
     AudioPrototypeStartRequest, AudioPrototypeStatus, AudioSource, BoundedReceiver, BoundedSender,
     ChannelStatus, DeviceRole, DeviceSelection, EnqueueResult, NativeAudioFormat, NativeSampleType,
     PacketReceiver, PacketSender, ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState,
-    QpcEpoch, SourceProcessor, bounded_queue, packet_queue, qpc_ticks_to_100ns,
+    QpcEpoch, SourceProcessor, UtteranceDiagnostics, bounded_queue, packet_queue,
+    qpc_ticks_to_100ns,
 };
 
 const EVENT_WAIT_MS: u32 = 100;
@@ -628,7 +629,10 @@ fn process_packets(
                 }
             }
             Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(2)),
-            Err(TryRecvError::Disconnected) => break,
+            Err(TryRecvError::Disconnected) => {
+                record_processing_outcome(&status, source, processor.finish(), &processed);
+                break;
+            }
         }
     }
 }
@@ -645,6 +649,21 @@ fn record_processing_outcome(
         .iter()
         .map(|chunk| chunk.samples.len() as u64)
         .sum::<u64>();
+    let utterances_finalized = outcome.utterances.len() as u64;
+    let utterance_samples_finalized = outcome
+        .utterances
+        .iter()
+        .map(|utterance| utterance.samples.len() as u64)
+        .sum::<u64>();
+    let latest_utterance = outcome.utterances.last().map(|utterance| {
+        debug_assert_eq!(utterance.source, source);
+        UtteranceDiagnostics {
+            start_ms: utterance.start_ms,
+            end_ms: utterance.end_ms,
+            duration_ms: utterance.end_ms.saturating_sub(utterance.start_ms),
+            end_reason: utterance.reason,
+        }
+    });
     let mut queue_drops = 0_u64;
     let mut queue_disconnected = false;
     for chunk in outcome.chunks.drain(..) {
@@ -681,6 +700,31 @@ fn record_processing_outcome(
         .saturating_add(outcome.level_updates.len() as u64);
     if let Some(latest) = outcome.level_updates.pop() {
         channel.latest_level = Some(latest);
+    }
+    channel.vad_frames_analyzed = channel
+        .vad_frames_analyzed
+        .saturating_add(outcome.vad_frames_analyzed);
+    channel.vad_speech_frames = channel
+        .vad_speech_frames
+        .saturating_add(outcome.vad_speech_frames);
+    channel.vad_silence_frames = channel
+        .vad_silence_frames
+        .saturating_add(outcome.vad_silence_frames);
+    channel.utterances_finalized = channel
+        .utterances_finalized
+        .saturating_add(utterances_finalized);
+    channel.utterance_samples_finalized = channel
+        .utterance_samples_finalized
+        .saturating_add(utterance_samples_finalized);
+    channel.short_utterances_rejected = channel
+        .short_utterances_rejected
+        .saturating_add(outcome.short_utterances_rejected);
+    channel.forced_splits = channel.forced_splits.saturating_add(outcome.forced_splits);
+    channel.vad_resets = channel.vad_resets.saturating_add(outcome.vad_resets);
+    channel.vad_pending_samples = outcome.vad_pending_samples;
+    channel.vad_buffered_samples = outcome.vad_buffered_samples;
+    if latest_utterance.is_some() {
+        channel.latest_utterance = latest_utterance;
     }
     if queue_disconnected {
         channel.processing_errors = channel.processing_errors.saturating_add(1);
@@ -1051,6 +1095,13 @@ mod tests {
             assert_eq!(channel.non_finite_samples_sanitized, 0);
             assert_eq!(channel.last_processing_error_code, None);
             assert!(channel.level_updates > 0);
+            assert!(channel.vad_frames_analyzed > 0);
+            assert_eq!(
+                channel.vad_frames_analyzed,
+                channel.vad_speech_frames + channel.vad_silence_frames
+            );
+            assert!(channel.vad_pending_samples < 256);
+            assert!(channel.vad_buffered_samples <= 485_055);
             let level = channel.latest_level.as_ref().expect("latest level");
             assert!(level.rms_dbfs.is_finite());
             assert!((-120.0..=0.0).contains(&level.rms_dbfs));

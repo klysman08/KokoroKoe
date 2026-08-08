@@ -21,6 +21,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 crossbeam-channel = "0.5.15"
+earshot = "=1.2.1"
 fs2 = "0.4"
 rfd = { version = "0.17", default-features = false }
 rubato = { version = "4.0.0", default-features = false }
@@ -44,3 +45,4 @@ wasapi = "0.23.0"
 
 [dev-dependencies]
 junction = "2"
+silero = "=0.6.0"

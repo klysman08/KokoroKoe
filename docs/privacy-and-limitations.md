@@ -37,6 +37,8 @@ The P3-001 transport requires explicit consent acknowledgement before its protot
 
 P3-002 processes those packets only in Rust. Each source is decoded, downmixed, and resampled to bounded 16 kHz mono chunks in memory; the prototype sink immediately discards them. The frontend receives only aggregate counts and throttled RMS/peak/clipping metadata. Samples never enter Tauri events, React state, logs, SQLite, Markdown, or external requests, and neither captured nor normalized audio is retained.
 
+P3-003 runs an independent local Earshot detector and bounded utterance segmenter for each normalized source. Active samples are held only in Rust memory, hard-split at 30 seconds, counted, and immediately discarded; neither VAD frames nor utterance samples cross a command/event boundary or enter persistence. The frontend status receives only aggregate classifications, reset/rejection/split counts, bounded buffer occupancy, and the latest finalized timing/end reason. The Silero comparison model is development-only and is not packaged or downloaded by the application.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.
@@ -47,6 +49,7 @@ P3-002 processes those packets only in Rust. Each source is decoded, downmixed, 
 - The MVP does not include acoustic echo cancellation, per-person diarization, or per-application capture.
 - Physical speaker-to-microphone latency is not corrected; timestamps describe capture time.
 - P3-002 uses equal-weight channel averaging rather than speaker-mask weighting, reports but does not compensate sinc startup delay, and discards partial/tail buffers on format change or prototype stop.
+- P3-003's generated bake-off corpus is synthetic and favors Earshot; it does not establish performance across real speakers, languages, rooms, noise, music, echo, overlapping speech, or devices. VAD can still miss speech or classify non-speech as speech.
 
 ## Transcription limitations
 

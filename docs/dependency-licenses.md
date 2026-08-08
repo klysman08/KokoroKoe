@@ -68,6 +68,16 @@ These packages are pure JavaScript and add no native library, DLL, Tauri command
 
 P3-002 adds seven locked Rust packages and no frontend package, native DLL, network client, model, codec, or persistence library. The processing path remains in Rust and sends no audio to the frontend or an external service. Cargo license/source/bans and RustSec results are recorded in the P3-002 checkpoint.
 
+## P3-003 resolved VAD prototype inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Production VAD | `earshot` 1.2.1 | MIT OR Apache-2.0 | Pure Rust source-local detector; exact 256-sample frames at 16 kHz; declared Rust 1.87; detector weights are embedded in crate source and no separately distributed model or DLL is added |
+| Comparison VAD | `silero` 0.6.0 (development only) | MIT OR Apache-2.0 | Explicit ignored bake-off only; bundles Silero VAD v6 ONNX bytes and retains upstream's MIT model notice; declared Rust 1.88 |
+| Comparison runtime | `ort`/`ort-sys` 2.0.0-rc.13 and supporting crates (transitive development only) | MIT OR Apache-2.0 and compatible permissive licenses | Used only to execute the ignored Silero comparison; excluded from normal production dependency/build output |
+
+The bundled comparison model is 2,327,524 bytes and originates from the MIT-licensed [Silero VAD upstream](https://github.com/snakers4/silero-vad). It is fetched as part of the development crate source cache, is not a KokoroKoe catalog/download, and is not committed or packaged. Earshot passed the frozen generated-corpus gates and is the only new production dependency. P3-003 adds no frontend package, external request, persisted audio, or release DLL.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.

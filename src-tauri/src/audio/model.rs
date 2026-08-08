@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::UtteranceEndReason;
+
 pub(crate) const DEFAULT_PACKET_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -103,6 +105,15 @@ pub(crate) struct LevelDiagnostics {
     pub(crate) at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UtteranceDiagnostics {
+    pub(crate) start_ms: u64,
+    pub(crate) end_ms: u64,
+    pub(crate) duration_ms: u64,
+    pub(crate) end_reason: UtteranceEndReason,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ChannelDiagnostics {
@@ -131,6 +142,17 @@ pub(crate) struct ChannelDiagnostics {
     pub(crate) pending_normalized_samples: u64,
     pub(crate) level_updates: u64,
     pub(crate) latest_level: Option<LevelDiagnostics>,
+    pub(crate) vad_frames_analyzed: u64,
+    pub(crate) vad_speech_frames: u64,
+    pub(crate) vad_silence_frames: u64,
+    pub(crate) utterances_finalized: u64,
+    pub(crate) utterance_samples_finalized: u64,
+    pub(crate) short_utterances_rejected: u64,
+    pub(crate) forced_splits: u64,
+    pub(crate) vad_resets: u64,
+    pub(crate) vad_pending_samples: u64,
+    pub(crate) vad_buffered_samples: u64,
+    pub(crate) latest_utterance: Option<UtteranceDiagnostics>,
     pub(crate) data_discontinuities: u64,
     pub(crate) timestamp_errors: u64,
     pub(crate) timestamp_regressions: u64,
@@ -168,6 +190,17 @@ impl ChannelDiagnostics {
             pending_normalized_samples: 0,
             level_updates: 0,
             latest_level: None,
+            vad_frames_analyzed: 0,
+            vad_speech_frames: 0,
+            vad_silence_frames: 0,
+            utterances_finalized: 0,
+            utterance_samples_finalized: 0,
+            short_utterances_rejected: 0,
+            forced_splits: 0,
+            vad_resets: 0,
+            vad_pending_samples: 0,
+            vad_buffered_samples: 0,
+            latest_utterance: None,
             data_discontinuities: 0,
             timestamp_errors: 0,
             timestamp_regressions: 0,

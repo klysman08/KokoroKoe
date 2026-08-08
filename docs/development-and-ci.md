@@ -73,4 +73,12 @@ Run the P3-002 processing probe separately to assert that both live sources deco
 cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib audio::windows::tests::hardware_probe_processes_both_default_sources_to_16khz_mono -- --ignored --exact --nocapture
 ```
 
-It likewise retains no audio. See [P3-002 bounded audio-processing prototype](audio-processing-prototype.md) for supported native formats and processing limitations.
+It likewise retains no audio. The same probe now also asserts source-local VAD frame accounting and bounded detector/segmenter memory. See [P3-002 bounded audio-processing prototype](audio-processing-prototype.md) for supported native formats and [P3-003 source-local VAD and segmentation prototype](vad-segmentation-prototype.md) for the segmentation contract.
+
+The ordinary suite skips the development-only P3-003 Earshot/Silero comparison. Run the frozen deterministic in-memory bake-off explicitly:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib audio::vad::tests::earshot_meets_frozen_quality_gates_against_silero_v6 -- --ignored --exact --nocapture
+```
+
+This command loads Silero's bundled comparison model from the Cargo development dependency and writes no model or audio file to the repository. Its synthetic corpus is a regression gate, not a substitute for the broader consented/licensed real-speech matrix.

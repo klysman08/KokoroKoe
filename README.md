@@ -1,8 +1,8 @@
 # KokoroKoe
 
-KokoroKoe is a privacy-first Windows meeting assistant under active development. The current repository checkpoint contains the Tauri 2, React, strict TypeScript, Tailwind CSS, and shadcn/ui foundation only.
+KokoroKoe is a privacy-first Windows meeting assistant under active development. The current repository checkpoint contains the Tauri 2/React foundation plus bounded Rust-only Windows audio capture, normalization, VAD, and utterance-segmentation prototypes.
 
-Audio capture, local transcription, Markdown persistence, OpenRouter integration, and advanced desktop windows are not implemented yet. The foundation includes a reusable inert renderer for future untrusted Markdown content; it does not read project or session files yet.
+Product capture controls, local transcription, retained audio, Markdown persistence, OpenRouter integration, and advanced desktop windows are not implemented yet. Prototype audio samples remain in bounded Rust memory and are discarded; the frontend receives only aggregate diagnostics. The foundation includes a reusable inert renderer for future untrusted Markdown content; it does not read project or session files yet.
 
 ## Prerequisites
 

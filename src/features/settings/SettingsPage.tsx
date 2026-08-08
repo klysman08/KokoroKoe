@@ -1,76 +1,121 @@
-import { Database, KeyRound, MonitorCog, RadioTower } from "lucide-react"
+import { useState, type FormEvent } from "react"
+import { Database, HardDrive, ShieldCheck } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import {
+  useChooseWorkspaceMutation,
+  useUpdateSettingsMutation,
+} from "@/features/settings/use-settings-mutations"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
-
-const settingsSections = [
-  {
-    title: "Workspace",
-    description:
-      "Local folder selection and validated settings storage are scheduled for a later Phase 2 task.",
-    icon: Database,
-  },
-  {
-    title: "Audio devices",
-    description:
-      "Microphone and system-output enumeration begin after the Windows audio prototype gates.",
-    icon: RadioTower,
-  },
-  {
-    title: "OpenRouter",
-    description:
-      "Credential Manager and text-only LLM access remain disabled and unimplemented.",
-    icon: KeyRound,
-  },
-  {
-    title: "Windows",
-    description:
-      "Independent transcript and insight window controls are planned for Phase 6.",
-    icon: MonitorCog,
-  },
-] as const
 
 export function SettingsPage() {
   const settingsQuery = useSettingsQuery()
+  const workspaceMutation = useChooseWorkspaceMutation()
+  const workspaceCancelled =
+    workspaceMutation.error?.details.code === "workspace_selection_cancelled"
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-muted-foreground text-sm font-medium">
-            Configuration
+            Local configuration
           </p>
           <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
           <p className="text-muted-foreground mt-2 max-w-2xl text-sm leading-6">
-            Rust provides a validated, privacy-safe default snapshot. Editing
-            remains unavailable until the persistent settings service is
-            implemented.
+            Choose where KokoroKoe keeps local meeting data and configure
+            privacy-safe defaults. Secrets are not stored in this settings
+            database.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">No persisted settings</Badge>
-          {settingsQuery.isSuccess && (
-            <Badge variant="secondary">Read-only defaults</Badge>
-          )}
+          <Badge variant="outline">Local SQLite settings</Badge>
+          <Badge variant="secondary">No external telemetry</Badge>
         </div>
       </div>
 
       <Separator />
 
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <span className="bg-muted grid size-9 place-items-center rounded-lg">
+              <Database aria-hidden="true" className="size-4" />
+            </span>
+            <div>
+              <CardTitle>Workspace onboarding</CardTitle>
+              <CardDescription>
+                Only an existing, writable local Windows folder without links or
+                reparse points can be selected.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <p className="text-sm font-medium">Current workspace</p>
+            <p className="text-muted-foreground mt-1 text-sm break-all">
+              {settingsQuery.data?.workspacePath ?? "Workspace not loaded"}
+            </p>
+          </div>
+          <Button
+            type="button"
+            disabled={workspaceMutation.isPending}
+            onClick={() => workspaceMutation.mutate()}
+          >
+            <HardDrive aria-hidden="true" className="size-4" />
+            {workspaceMutation.isPending
+              ? "Waiting for folder selection…"
+              : "Choose workspace folder"}
+          </Button>
+          {workspaceMutation.isSuccess && (
+            <div role="status" aria-live="polite" className="text-sm">
+              <p className="font-medium">Workspace is writable and saved.</p>
+              <p className="text-muted-foreground mt-1">
+                Approximately{" "}
+                {formatFreeSpace(workspaceMutation.data.freeBytes)}
+                available.
+              </p>
+              {workspaceMutation.data.warning && (
+                <p className="text-amber-700 dark:text-amber-300">
+                  {workspaceMutation.data.warning}
+                </p>
+              )}
+            </div>
+          )}
+          {workspaceCancelled && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-muted-foreground text-sm"
+            >
+              Folder selection was cancelled; the current workspace was not
+              changed.
+            </p>
+          )}
+          {workspaceMutation.isError && !workspaceCancelled && (
+            <SanitizedErrorPanel error={workspaceMutation.error} />
+          )}
+        </CardContent>
+      </Card>
+
       {settingsQuery.isPending && (
         <Card aria-live="polite">
           <CardHeader>
-            <CardTitle>Loading local defaults</CardTitle>
+            <CardTitle>Loading local settings</CardTitle>
             <CardDescription>
-              Reading the non-secret foundation settings from Rust.
+              Reading the versioned non-secret settings record from Rust.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -81,86 +126,229 @@ export function SettingsPage() {
       )}
 
       {settingsQuery.isSuccess && (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle>Foundation defaults</CardTitle>
-              <Badge variant="secondary">
-                Revision {settingsQuery.data.revision}
-              </Badge>
-            </div>
-            <CardDescription>
-              Read-only preview. Persistence and editing are intentionally out
-              of scope for this checkpoint.
-            </CardDescription>
-            <dl className="text-muted-foreground grid gap-3 pt-3 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-foreground font-medium">Workspace</dt>
-                <dd className="mt-1">Windows Documents / KokoroKoe</dd>
-              </div>
-              <div>
-                <dt className="text-foreground font-medium">
-                  Provisional model identifier
-                </dt>
-                <dd className="mt-1">
-                  {settingsQuery.data.defaultTranscriptionModelId}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-foreground font-medium">
-                  Zero-data-retention providers
-                </dt>
-                <dd className="mt-1">
-                  {settingsQuery.data.requireZeroDataRetention
-                    ? "Required"
-                    : "Not required"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-foreground font-medium">
-                  Data-collecting providers
-                </dt>
-                <dd className="mt-1">
-                  {settingsQuery.data.denyProviderDataCollection
-                    ? "Denied"
-                    : "Allowed"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-foreground font-medium">LLM analysis</dt>
-                <dd className="mt-1">
-                  {settingsQuery.data.llmEnabled ? "Enabled" : "Disabled"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-foreground font-medium">Audio retention</dt>
-                <dd className="mt-1">
-                  {settingsQuery.data.retainAudioByDefault
-                    ? "Enabled"
-                    : "Disabled"}
-                </dd>
-              </div>
-            </dl>
-          </CardHeader>
-        </Card>
+        <PreferencesForm settings={settingsQuery.data} />
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {settingsSections.map(({ title, description, icon: Icon }) => (
-          <Card key={title} className="opacity-80">
-            <CardHeader>
-              <div className="flex items-center justify-between gap-3">
-                <span className="bg-muted grid size-9 place-items-center rounded-lg">
-                  <Icon aria-hidden="true" className="size-4" />
-                </span>
-                <Badge variant="secondary">Planned</Badge>
-              </div>
-              <CardTitle>{title}</CardTitle>
-              <CardDescription>{description}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <ShieldCheck aria-hidden="true" className="size-5" />
+            <CardTitle>Recording and transcription notice</CardTitle>
+          </div>
+          <CardDescription className="leading-6">
+            You are responsible for obtaining any consent required by local
+            recording, privacy, employment, and transcription laws before
+            starting a meeting session. A folder synchronized by Windows or a
+            third party may copy local meeting data outside this device.
+          </CardDescription>
+        </CardHeader>
+      </Card>
     </div>
   )
+}
+
+function PreferencesForm({ settings }: { settings: AppSettings }) {
+  const mutation = useUpdateSettingsMutation()
+  const [retainAudio, setRetainAudio] = useState(settings.retainAudioByDefault)
+  const [requireZdr, setRequireZdr] = useState(
+    settings.requireZeroDataRetention,
+  )
+  const [denyCollection, setDenyCollection] = useState(
+    settings.denyProviderDataCollection,
+  )
+  const [maxTokens, setMaxTokens] = useState(
+    String(settings.maxTokensPerRequest),
+  )
+  const [budget, setBudget] = useState(settings.defaultSessionBudgetUsd)
+  const [retentionConfirmed, setRetentionConfirmed] = useState(false)
+  const [privacyRelaxationConfirmed, setPrivacyRelaxationConfirmed] =
+    useState(false)
+
+  const parsedTokens = Number(maxTokens)
+  const tokensValid =
+    Number.isInteger(parsedTokens) &&
+    parsedTokens >= 1 &&
+    parsedTokens <= 1_000_000
+  const budgetValid = budget.length <= 18 && /^\d+(?:\.\d{2})$/.test(budget)
+  const retentionNeedsConfirmation =
+    retainAudio && !settings.retainAudioByDefault
+  const privacyNeedsConfirmation =
+    (!requireZdr && settings.requireZeroDataRetention) ||
+    (!denyCollection && settings.denyProviderDataCollection)
+  const patch: AppSettingsUpdate = {
+    ...(retainAudio !== settings.retainAudioByDefault && {
+      retainAudioByDefault: retainAudio,
+    }),
+    ...(requireZdr !== settings.requireZeroDataRetention && {
+      requireZeroDataRetention: requireZdr,
+    }),
+    ...(denyCollection !== settings.denyProviderDataCollection && {
+      denyProviderDataCollection: denyCollection,
+    }),
+    ...(tokensValid &&
+      parsedTokens !== settings.maxTokensPerRequest && {
+        maxTokensPerRequest: parsedTokens,
+      }),
+    ...(budgetValid &&
+      budget !== settings.defaultSessionBudgetUsd && {
+        defaultSessionBudgetUsd: budget,
+      }),
+  }
+  const dirty = Object.keys(patch).length > 0
+  const confirmationsValid =
+    (!retentionNeedsConfirmation || retentionConfirmed) &&
+    (!privacyNeedsConfirmation || privacyRelaxationConfirmed)
+  const canSave =
+    dirty &&
+    tokensValid &&
+    budgetValid &&
+    confirmationsValid &&
+    !mutation.isPending
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canSave) return
+    mutation.mutate({ expectedRevision: settings.revision, value: patch })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle>Privacy and usage defaults</CardTitle>
+          <Badge variant="secondary">Revision {settings.revision}</Badge>
+        </div>
+        <CardDescription>
+          These settings remain local. OpenRouter and audio capture are not
+          enabled by this screen.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="space-y-5" onSubmit={submit}>
+          <CheckboxField
+            id="retain-audio"
+            checked={retainAudio}
+            onChange={setRetainAudio}
+            label="Retain original session audio by default"
+            description="Disabled is the privacy-safe default."
+          />
+          {retentionNeedsConfirmation && (
+            <CheckboxField
+              id="confirm-retention"
+              checked={retentionConfirmed}
+              onChange={setRetentionConfirmed}
+              label="I understand retained audio increases sensitive local data"
+              description="This confirmation is required before saving."
+            />
+          )}
+          <CheckboxField
+            id="require-zdr"
+            checked={requireZdr}
+            onChange={setRequireZdr}
+            label="Require zero-data-retention providers"
+            description="Keep enabled unless you explicitly accept provider retention."
+          />
+          <CheckboxField
+            id="deny-collection"
+            checked={denyCollection}
+            onChange={setDenyCollection}
+            label="Deny providers that collect request data"
+            description="Only applies after optional OpenRouter features are configured."
+          />
+          {privacyNeedsConfirmation && (
+            <CheckboxField
+              id="confirm-privacy-relaxation"
+              checked={privacyRelaxationConfirmed}
+              onChange={setPrivacyRelaxationConfirmed}
+              label="I understand this relaxes the external-provider privacy policy"
+              description="This confirmation is required before saving."
+            />
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-2 text-sm" htmlFor="max-tokens">
+              <span className="font-medium">Maximum tokens per request</span>
+              <input
+                id="max-tokens"
+                className="border-input bg-background w-full rounded-md border px-3 py-2"
+                inputMode="numeric"
+                value={maxTokens}
+                aria-invalid={!tokensValid}
+                aria-describedby="max-tokens-help"
+                onChange={(event) => setMaxTokens(event.currentTarget.value)}
+              />
+              <span
+                id="max-tokens-help"
+                className="text-muted-foreground block"
+              >
+                Enter a whole number from 1 to 1,000,000.
+              </span>
+            </label>
+            <label className="space-y-2 text-sm" htmlFor="session-budget">
+              <span className="font-medium">Default session budget (USD)</span>
+              <input
+                id="session-budget"
+                className="border-input bg-background w-full rounded-md border px-3 py-2"
+                inputMode="decimal"
+                value={budget}
+                aria-invalid={!budgetValid}
+                aria-describedby="session-budget-help"
+                onChange={(event) => setBudget(event.currentTarget.value)}
+              />
+              <span
+                id="session-budget-help"
+                className="text-muted-foreground block"
+              >
+                Use a fixed amount such as 0.00 or 5.00.
+              </span>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" disabled={!canSave}>
+              {mutation.isPending ? "Saving…" : "Save settings"}
+            </Button>
+            {mutation.isSuccess && (
+              <p role="status" aria-live="polite" className="text-sm">
+                Settings saved at revision {mutation.data.revision}.
+              </p>
+            )}
+          </div>
+          {mutation.isError && <SanitizedErrorPanel error={mutation.error} />}
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CheckboxField({
+  id,
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  id: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+  label: string
+  description: string
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <input
+        id={id}
+        type="checkbox"
+        className="mt-1 size-4"
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <label htmlFor={id} className="text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="text-muted-foreground mt-1 block">{description}</span>
+      </label>
+    </div>
+  )
+}
+
+function formatFreeSpace(bytes: number) {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`
 }

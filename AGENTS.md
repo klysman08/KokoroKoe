@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P2-002 - Typed settings and sanitized error boundary
-- Date: 2026-08-05
-- Outcome: read-only Rust `get_settings`, strict mirrored Rust/Zod contracts and fixtures, fixed-filter sanitized tracing, typed error envelope and reports, React root/error-boundary containment, TanStack Query integration, and exact main-window ACL/authorization completed without adding persistence or sensitive-service access.
-- Verification: Node 24 Prettier/ESLint/typecheck, 27 Vitest tests and Vite build; Rust fmt, Clippy with warnings denied, 15 tests; generated ACL/capability and secret/path canaries; pnpm/Cargo audits and license checks; x64 MSI/NSIS rebuild; five-second responding-process smoke; independent frontend/security reviews with both blockers fixed and rechecked.
-- Memory: [P2-002 checkpoint](docs/project-memory.md#p2-002---typed-settings-and-sanitized-error-boundary)
+- Task: P2-003 - Versioned settings persistence and workspace onboarding
+- Date: 2026-08-08
+- Outcome: lazy bundled-SQLite settings history, optimistic mutations, corruption quarantine/rebuild, Rust-owned native workspace selection, conservative fixed-volume/reparse-safe validation and write probe, strict Rust/Zod mutation contracts, onboarding UI, and exact main-window ACL/authorization completed without adding project/session content or external services.
+- Verification: Node 24 Prettier/ESLint/typecheck, 51 Vitest tests and Vite build; Rust fmt, Clippy with warnings denied, 37 tests; migration/concurrency/corruption/path/ACL suites; pnpm/Cargo audits and license checks; final x64 MSI/NSIS rebuild; packaged picker/update/restart persistence smoke; three independent reviews with no remaining blockers.
+- Memory: [P2-003 checkpoint](docs/project-memory.md#p2-003---versioned-settings-persistence-and-workspace-onboarding)

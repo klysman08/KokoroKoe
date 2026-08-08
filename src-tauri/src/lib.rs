@@ -1,7 +1,14 @@
 mod commands;
 mod domain;
 mod logging;
+mod persistence;
 mod security;
+
+use std::io;
+
+use tauri::Manager;
+
+use persistence::SettingsService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
 
@@ -10,7 +17,26 @@ pub fn run() {
     logging::init();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![commands::settings::get_settings])
+        .setup(|app| {
+            let app_data_directory = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|_| io::Error::other("application settings directory is unavailable"))?;
+            let documents_directory = app
+                .path()
+                .document_dir()
+                .map_err(|_| io::Error::other("Windows Documents directory is unavailable"))?;
+            let settings = SettingsService::open(app_data_directory, documents_directory)
+                .map_err(|_| io::Error::other("application settings initialization failed"))?;
+
+            app.manage(settings);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::settings::get_settings,
+            commands::settings::update_settings,
+            commands::settings::choose_workspace
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

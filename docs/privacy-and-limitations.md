@@ -17,6 +17,8 @@ Important project and session content remains readable Markdown with YAML front 
 
 The application validates paths beneath the configured workspace and rejects traversal, alternate data streams, unexpected absolute paths, and reparse-point escapes. Transcript content and generated Markdown are treated as untrusted data and are never executed.
 
+For the Windows MVP, native workspace selection accepts only existing folders on fixed local drive-letter volumes. Network shares, device/verbatim paths, drive roots, removable volumes, reserved Windows names, and paths whose ancestor chain contains a symbolic link or reparse point are rejected. This can exclude redirected or OneDrive-backed Documents folders. A successful write probe is only a point-in-time health result; later persistence must revalidate directory identity and containment before every sensitive write. Windows or third-party folder synchronization may still copy data from an otherwise local folder.
+
 Sanitized error reports contain stable error codes, application/component versions, non-secret configuration categories, and opaque correlation IDs. They exclude API keys, authorization headers, prompts, transcript text, raw provider bodies, and user paths where unnecessary.
 
 ## Consent notice

@@ -1,6 +1,6 @@
 # Dependency and License Baseline
 
-Status: Phase 1 candidate assessment plus the P2-001/P2-002 resolved foundation inventory, updated on 2026-08-05. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` pin the resolved dependencies. Future candidates remain unresolved until the phase that first adds them.
+Status: Phase 1 candidate assessment plus the P2-001/P2-002/P2-003 resolved foundation inventory, updated on 2026-08-08. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` pin the resolved dependencies. Future candidates remain unresolved until the phase that first adds them.
 
 ## P2-001 resolved foundation inventory
 
@@ -27,7 +27,17 @@ Status: Phase 1 candidate assessment plus the P2-001/P2-002 resolved foundation 
 | Rust IDs | UUID 1.24.0 | MIT OR Apache-2.0 | UUID v4 correlation IDs and typed preset ID |
 | Rust tracing | `tracing` 0.1.44; `tracing-subscriber` 0.3.23 | MIT | Fixed crate-only filters; safe categorical fields; no file sink |
 
-P2-002 audit evidence:
+## P2-003 resolved settings-persistence inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Settings database | `rusqlite` 0.40.2 with bundled SQLite | MIT; SQLite public domain | Rust-only append-only settings revisions; no external SQLite DLL |
+| Native folder picker | `rfd` 0.17.2 | MIT | Called only from Rust; no frontend dialog API or capability |
+| Workspace probe | `tempfile` 3.27.0; `fs2` 0.4.3 | MIT OR Apache-2.0 | Create/write/sync/delete health probe and available-space query |
+| Windows volume policy | `windows-sys` 0.61.2 | MIT OR Apache-2.0 | Fixed-volume classification with the minimum FileSystem feature |
+| Windows security tests | `junction` 2.0.0 (development only) | MIT OR Apache-2.0 | Creates an unprivileged NTFS junction to verify ancestor rejection |
+
+P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.
 - `pnpm licenses list --prod --json`: completed successfully; new production packages are MIT or MIT/Apache dual-licensed.
@@ -56,7 +66,7 @@ P2-001 audit evidence:
 | VAD | `earshot` | 1.2.1 | MIT OR Apache-2.0 | Initial candidate; compare with Silero |
 | Runtime | `tokio`, `tokio-util` | Resolve in Phase 2 | MIT | Required asynchronous services/cancellation |
 | Worker queues | `crossbeam-channel` | Resolve in Phase 3 | MIT OR Apache-2.0 | Bounded native worker queues |
-| Database | `rusqlite` | 0.40.1 | MIT | Bundled SQLite/FTS5 projection |
+| Database | `rusqlite` | 0.40.2 | MIT | Resolved with bundled SQLite for settings in P2-003; future FTS5 projection uses the same Rust-only boundary |
 | HTTP | `reqwest` | 0.13.4 | MIT OR Apache-2.0 | Rust-only OpenRouter/download client |
 | SSE | `eventsource-stream` | 0.2.3 | MIT OR Apache-2.0 | OpenRouter streaming parser |
 | Credentials | `keyring` Windows backend | 4.1.x | MIT OR Apache-2.0 | Windows Credential Manager adapter |
@@ -66,7 +76,7 @@ P2-001 audit evidence:
 | Serialization | `serde` 1.0.229, `serde_json` 1.0.151 | Resolved in P2-002 | MIT OR Apache-2.0 | Rust contracts and JSON boundaries; `serde_json` is currently test-only |
 | IDs and time | `uuid` 1.24.0; time library unresolved | UUID resolved in P2-002 | MIT OR Apache-2.0 | Correlation and preset IDs now; RFC 3339 time support remains future work |
 | Logging/errors | `tracing` 0.1.44, `tracing-subscriber` 0.3.23; `thiserror` unresolved | Tracing resolved in P2-002 | MIT; MIT OR Apache-2.0 | Sanitized structured logs and typed errors |
-| Safe files/secrets | `tempfile`, `zeroize` | Resolve in implementation phase | MIT OR Apache-2.0 | Atomic staging and secret zeroization |
+| Safe files/secrets | `tempfile` 3.27.0; `zeroize` unresolved | `tempfile` resolved in P2-003 | MIT OR Apache-2.0 | Workspace health probe now; atomic staging and secret zeroization remain phase-specific |
 
 `whisper-rs` uses the Unlicense while `whisper.cpp` is MIT. Before accepting `whisper-rs` for distribution, record explicit project/license approval. If rejected, implement a minimal adapter to the MIT `whisper.cpp` C API without copying Handy.
 

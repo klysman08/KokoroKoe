@@ -4,7 +4,7 @@ import { ApplicationError } from "@/contracts/app-error"
 import { type AppSettings } from "@/contracts/settings"
 import { getSettings } from "@/lib/tauri/settings"
 
-const settingsQueryKey = ["app-settings"] as const
+export const settingsQueryKey = ["app-settings"] as const
 
 export function useSettingsQuery() {
   return useQuery<AppSettings, ApplicationError>({

@@ -1,0 +1,13 @@
+{
+  "expectedRevision": 0,
+  "value": {
+    "defaultPresetId": "00000000-0000-4000-8000-000000000001",
+    "defaultTranscriptionModelId": "whisper-base-multilingual",
+    "llmEnabled": false,
+    "retainAudioByDefault": false,
+    "requireZeroDataRetention": true,
+    "denyProviderDataCollection": true,
+    "maxTokensPerRequest": 4096,
+    "defaultSessionBudgetUsd": "5.00"
+  }
+}

@@ -120,6 +120,106 @@ impl AppError {
         )
     }
 
+    pub(crate) fn settings_update_invalid(technical_detail: &str) -> Self {
+        Self::new(
+            "settings_update_invalid",
+            "The settings change is not valid.",
+            Some(technical_detail),
+            ErrorSeverity::Warning,
+            false,
+        )
+    }
+
+    pub(crate) fn settings_revision_conflict() -> Self {
+        Self::new(
+            "settings_revision_conflict",
+            "Settings changed since this screen was loaded. Reload and try again.",
+            Some("The expected settings revision did not match the stored revision."),
+            ErrorSeverity::Warning,
+            false,
+        )
+    }
+
+    pub(crate) fn settings_revision_exhausted() -> Self {
+        Self::new(
+            "settings_revision_exhausted",
+            "KokoroKoe cannot save another settings revision.",
+            Some("The settings revision reached the supported transport limit."),
+            ErrorSeverity::Critical,
+            false,
+        )
+    }
+
+    pub(crate) fn settings_save_failed() -> Self {
+        Self::new(
+            "settings_save_failed",
+            "KokoroKoe could not save the settings change.",
+            Some("The local settings transaction did not complete."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn settings_database_corrupt() -> Self {
+        Self::new(
+            "settings_database_corrupt",
+            "The local settings database is damaged and must be rebuilt.",
+            Some("SQLite reported physical corruption in the non-secret settings database."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn workspace_selection_cancelled() -> Self {
+        Self::new(
+            "workspace_selection_cancelled",
+            "Workspace selection was cancelled.",
+            Some("The native folder picker closed without a selection."),
+            ErrorSeverity::Info,
+            false,
+        )
+    }
+
+    pub(crate) fn workspace_selection_in_progress() -> Self {
+        Self::new(
+            "workspace_selection_in_progress",
+            "A workspace folder picker is already open.",
+            Some("Only one workspace selection can run at a time."),
+            ErrorSeverity::Info,
+            false,
+        )
+    }
+
+    pub(crate) fn workspace_invalid(technical_detail: &str) -> Self {
+        Self::new(
+            "workspace_invalid",
+            "That folder cannot be used as a KokoroKoe workspace.",
+            Some(technical_detail),
+            ErrorSeverity::Warning,
+            false,
+        )
+    }
+
+    pub(crate) fn workspace_unwritable() -> Self {
+        Self::new(
+            "workspace_unwritable",
+            "KokoroKoe cannot write to that workspace folder.",
+            Some("The temporary write and synchronization probe failed."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn settings_worker_failed() -> Self {
+        Self::new(
+            "settings_worker_failed",
+            "The local settings service stopped unexpectedly.",
+            Some("The background settings operation did not complete."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
     fn new(
         code: &str,
         user_message: &str,

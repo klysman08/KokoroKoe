@@ -1,0 +1,5 @@
+CREATE TABLE app_settings_versions (
+  revision INTEGER PRIMARY KEY AUTOINCREMENT
+    CHECK (revision BETWEEN 0 AND 9007199254740991),
+  settings_json TEXT NOT NULL
+) STRICT;

@@ -1,3 +1,11 @@
+mod authorization;
+mod workspace;
+
+pub(crate) use authorization::authorize_main_window;
+pub(crate) use workspace::{
+    prepare_foundation_workspace, probe_workspace, validate_workspace_path_syntax,
+};
+
 const MAX_TECHNICAL_DETAIL_CHARS: usize = 512;
 
 pub(crate) fn sanitize_technical_detail(value: &str) -> String {

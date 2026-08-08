@@ -55,6 +55,18 @@ export function createContractApplicationError(): ApplicationError {
   })
 }
 
+export function createRequestContractApplicationError(): ApplicationError {
+  return new ApplicationError({
+    code: "invalid_request_contract",
+    userMessage: "The settings change is not valid.",
+    technicalDetail:
+      "The request did not match the expected local settings contract.",
+    severity: "warning",
+    retryable: false,
+    correlationId: createCorrelationId(),
+  })
+}
+
 export function createUnexpectedApplicationError(): ApplicationError {
   return new ApplicationError({
     code: "unexpected_application_error",

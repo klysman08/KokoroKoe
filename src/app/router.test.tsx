@@ -35,8 +35,8 @@ describe("application routing", () => {
     expect(
       await screen.findByRole("heading", { name: "Settings" }),
     ).toBeInTheDocument()
-    expect(await screen.findByText("Read-only defaults")).toBeInTheDocument()
-    expect(screen.getByText("No persisted settings")).toBeInTheDocument()
+    expect(await screen.findByText("Local SQLite settings")).toBeInTheDocument()
+    expect(screen.getByText("No external telemetry")).toBeInTheDocument()
   })
 
   it("collapses and expands primary navigation", async () => {

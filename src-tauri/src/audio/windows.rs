@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crossbeam_channel::TryRecvError;
 use wasapi::{
     Device, DeviceEnumerator, Direction, Role, SampleType, StreamMode, WasapiError, WaveFormat,
     deinitialize, initialize_mta,
@@ -15,9 +16,10 @@ use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerf
 
 use super::{
     AudioDevice, AudioDeviceList, AudioDirection, AudioPacket, AudioPrototypeConfig,
-    AudioPrototypeStartRequest, AudioPrototypeStatus, AudioSource, ChannelStatus, DeviceRole,
-    DeviceSelection, EnqueueResult, NativeAudioFormat, NativeSampleType, PacketReceiver,
-    PacketSender, PrototypeRunState, QpcEpoch, packet_queue, qpc_ticks_to_100ns,
+    AudioPrototypeStartRequest, AudioPrototypeStatus, AudioSource, BoundedReceiver, BoundedSender,
+    ChannelStatus, DeviceRole, DeviceSelection, EnqueueResult, NativeAudioFormat, NativeSampleType,
+    PacketReceiver, PacketSender, ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState,
+    QpcEpoch, SourceProcessor, bounded_queue, packet_queue, qpc_ticks_to_100ns,
 };
 
 const EVENT_WAIT_MS: u32 = 100;
@@ -125,13 +127,48 @@ impl RunningAudioPrototype {
             packet_queue(config.queue_capacity_packets_per_source);
         let (system_sender, system_receiver) =
             packet_queue(config.queue_capacity_packets_per_source);
+        let (microphone_processed_sender, microphone_processed_receiver) =
+            bounded_queue(config.queue_capacity_packets_per_source);
+        let (system_processed_sender, system_processed_receiver) =
+            bounded_queue(config.queue_capacity_packets_per_source);
 
-        let consumer = spawn_consumer(
-            Arc::clone(&stop),
+        let sink = spawn_processed_sink(
+            Arc::clone(&status),
+            microphone_processed_receiver,
+            system_processed_receiver,
+        )?;
+        let microphone_processor = match spawn_processor(
+            AudioSource::Microphone,
             Arc::clone(&status),
             microphone_receiver,
+            microphone_processed_sender,
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                stop.store(true, Ordering::Release);
+                drop(microphone_sender);
+                drop(system_sender);
+                drop(system_processed_sender);
+                let _ = sink.join();
+                return Err(error);
+            }
+        };
+        let system_processor = match spawn_processor(
+            AudioSource::SystemOutput,
+            Arc::clone(&status),
             system_receiver,
-        )?;
+            system_processed_sender,
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                stop.store(true, Ordering::Release);
+                drop(microphone_sender);
+                drop(system_sender);
+                let _ = microphone_processor.join();
+                let _ = sink.join();
+                return Err(error);
+            }
+        };
         let microphone = match spawn_supervisor(
             AudioSource::Microphone,
             config.microphone,
@@ -143,7 +180,10 @@ impl RunningAudioPrototype {
             Ok(handle) => handle,
             Err(error) => {
                 stop.store(true, Ordering::Release);
-                let _ = consumer.join();
+                drop(system_sender);
+                let _ = microphone_processor.join();
+                let _ = system_processor.join();
+                let _ = sink.join();
                 return Err(error);
             }
         };
@@ -159,7 +199,9 @@ impl RunningAudioPrototype {
             Err(error) => {
                 stop.store(true, Ordering::Release);
                 let _ = microphone.join();
-                let _ = consumer.join();
+                let _ = microphone_processor.join();
+                let _ = system_processor.join();
+                let _ = sink.join();
                 return Err(error);
             }
         };
@@ -170,7 +212,13 @@ impl RunningAudioPrototype {
             stop,
             status,
             started,
-            handles: vec![microphone, system_output, consumer],
+            handles: vec![
+                microphone,
+                system_output,
+                microphone_processor,
+                system_processor,
+                sink,
+            ],
         })
     }
 
@@ -418,7 +466,7 @@ fn capture_until_stopped(
     let result = capture_event_loop(
         source,
         epoch,
-        diagnostics_format.block_align as usize,
+        &diagnostics_format,
         &enumerator,
         direction,
         selection,
@@ -437,7 +485,7 @@ fn capture_until_stopped(
 fn capture_event_loop(
     source: AudioSource,
     epoch: QpcEpoch,
-    block_align: usize,
+    native_format: &NativeAudioFormat,
     enumerator: &DeviceEnumerator,
     direction: Direction,
     selection: &DeviceSelection,
@@ -448,6 +496,7 @@ fn capture_event_loop(
     event: &wasapi::Handle,
     capture: &wasapi::AudioCaptureClient,
 ) -> Result<(), AudioPrototypeError> {
+    let block_align = native_format.block_align as usize;
     let mut next_default_check = Instant::now() + Duration::from_secs(1);
     while !stop.load(Ordering::Acquire) {
         match event.wait_for_event(EVENT_WAIT_MS) {
@@ -493,6 +542,7 @@ fn capture_event_loop(
                 start_ms,
                 frames: frames_read,
                 bytes,
+                format: native_format.clone(),
             };
             let enqueue = sender.try_send(packet);
 
@@ -528,46 +578,162 @@ fn capture_event_loop(
     Ok(())
 }
 
-fn spawn_consumer(
-    stop: Arc<AtomicBool>,
+fn spawn_processor(
+    source: AudioSource,
     status: Arc<Mutex<AudioPrototypeStatus>>,
-    microphone: PacketReceiver,
-    system_output: PacketReceiver,
+    receiver: PacketReceiver,
+    processed: BoundedSender<ProcessedAudioChunk>,
 ) -> Result<JoinHandle<()>, AudioPrototypeError> {
     thread::Builder::new()
-        .name("audio-prototype-consumer".to_owned())
-        .spawn(move || consume_packets(stop, status, microphone, system_output))
-        .map_err(|_| AudioPrototypeError::new("audio_consumer_thread_unavailable"))
+        .name(
+            match source {
+                AudioSource::Microphone => "audio-microphone-processing",
+                AudioSource::SystemOutput => "audio-system-output-processing",
+            }
+            .to_owned(),
+        )
+        .spawn(move || process_packets(source, status, receiver, processed))
+        .map_err(|_| AudioPrototypeError::new("audio_processing_thread_unavailable"))
 }
 
-fn consume_packets(
-    stop: Arc<AtomicBool>,
+fn process_packets(
+    source: AudioSource,
     status: Arc<Mutex<AudioPrototypeStatus>>,
-    microphone: PacketReceiver,
-    system_output: PacketReceiver,
+    receiver: PacketReceiver,
+    processed: BoundedSender<ProcessedAudioChunk>,
 ) {
+    let mut processor = SourceProcessor::new(source);
     loop {
+        match receiver.receiver().try_recv() {
+            Ok(packet) => {
+                let frames = packet.frames as u64;
+                let bytes = packet.bytes.len() as u64;
+                let outcome = processor.process(packet);
+                {
+                    let mut current = status.lock().expect("audio status lock poisoned");
+                    let channel = current.channel_mut(source);
+                    channel.packets_consumed = channel.packets_consumed.saturating_add(1);
+                    channel.frames_consumed = channel.frames_consumed.saturating_add(frames);
+                    channel.bytes_consumed = channel.bytes_consumed.saturating_add(bytes);
+                }
+
+                match outcome {
+                    Ok(outcome) => record_processing_outcome(&status, source, outcome, &processed),
+                    Err(error) => {
+                        let mut current = status.lock().expect("audio status lock poisoned");
+                        let channel = current.channel_mut(source);
+                        channel.processing_errors = channel.processing_errors.saturating_add(1);
+                        channel.last_processing_error_code = Some(error.code.to_owned());
+                    }
+                }
+            }
+            Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(2)),
+            Err(TryRecvError::Disconnected) => break,
+        }
+    }
+}
+
+fn record_processing_outcome(
+    status: &Mutex<AudioPrototypeStatus>,
+    source: AudioSource,
+    mut outcome: ProcessingOutcome,
+    processed: &BoundedSender<ProcessedAudioChunk>,
+) {
+    let chunks_produced = outcome.chunks.len() as u64;
+    let samples_produced = outcome
+        .chunks
+        .iter()
+        .map(|chunk| chunk.samples.len() as u64)
+        .sum::<u64>();
+    let mut queue_drops = 0_u64;
+    let mut queue_disconnected = false;
+    for chunk in outcome.chunks.drain(..) {
+        match processed.try_send(chunk) {
+            EnqueueResult::Enqueued => {}
+            EnqueueResult::DroppedFull => queue_drops = queue_drops.saturating_add(1),
+            EnqueueResult::Disconnected => queue_disconnected = true,
+        }
+    }
+
+    let mut current = status.lock().expect("audio status lock poisoned");
+    let channel = current.channel_mut(source);
+    channel.native_frames_decoded = channel
+        .native_frames_decoded
+        .saturating_add(outcome.native_frames_decoded);
+    channel.normalized_chunks_produced = channel
+        .normalized_chunks_produced
+        .saturating_add(chunks_produced);
+    channel.normalized_samples_produced = channel
+        .normalized_samples_produced
+        .saturating_add(samples_produced);
+    channel.processing_queue_drops = channel.processing_queue_drops.saturating_add(queue_drops);
+    channel.non_finite_samples_sanitized = channel
+        .non_finite_samples_sanitized
+        .saturating_add(outcome.non_finite_samples_sanitized);
+    channel.format_changes = channel
+        .format_changes
+        .saturating_add(u64::from(outcome.format_changed));
+    channel.resampler_delay_frames = outcome.resampler_delay_frames;
+    channel.pending_native_frames = outcome.pending_native_frames;
+    channel.pending_normalized_samples = outcome.pending_normalized_samples;
+    channel.level_updates = channel
+        .level_updates
+        .saturating_add(outcome.level_updates.len() as u64);
+    if let Some(latest) = outcome.level_updates.pop() {
+        channel.latest_level = Some(latest);
+    }
+    if queue_disconnected {
+        channel.processing_errors = channel.processing_errors.saturating_add(1);
+        channel.last_processing_error_code = Some("audio_processing_consumer_stopped".to_owned());
+    } else {
+        channel.last_processing_error_code = None;
+    }
+}
+
+fn spawn_processed_sink(
+    status: Arc<Mutex<AudioPrototypeStatus>>,
+    microphone: BoundedReceiver<ProcessedAudioChunk>,
+    system_output: BoundedReceiver<ProcessedAudioChunk>,
+) -> Result<JoinHandle<()>, AudioPrototypeError> {
+    thread::Builder::new()
+        .name("audio-normalized-sink".to_owned())
+        .spawn(move || consume_processed_chunks(status, microphone, system_output))
+        .map_err(|_| AudioPrototypeError::new("audio_processing_sink_unavailable"))
+}
+
+fn consume_processed_chunks(
+    status: Arc<Mutex<AudioPrototypeStatus>>,
+    microphone: BoundedReceiver<ProcessedAudioChunk>,
+    system_output: BoundedReceiver<ProcessedAudioChunk>,
+) {
+    let mut microphone_disconnected = false;
+    let mut system_disconnected = false;
+    while !microphone_disconnected || !system_disconnected {
         let mut consumed_any = false;
-        for receiver in [microphone.receiver(), system_output.receiver()] {
-            while let Ok(packet) = receiver.try_recv() {
-                consumed_any = true;
-                let mut current = status.lock().expect("audio status lock poisoned");
-                let channel = current.channel_mut(packet.source);
-                channel.packets_consumed = channel.packets_consumed.saturating_add(1);
-                channel.frames_consumed =
-                    channel.frames_consumed.saturating_add(packet.frames as u64);
-                channel.bytes_consumed = channel
-                    .bytes_consumed
-                    .saturating_add(packet.bytes.len() as u64);
-                let _ = packet.start_ms;
+        for (receiver, disconnected) in [
+            (microphone.receiver(), &mut microphone_disconnected),
+            (system_output.receiver(), &mut system_disconnected),
+        ] {
+            match receiver.try_recv() {
+                Ok(chunk) => {
+                    consumed_any = true;
+                    let mut current = status.lock().expect("audio status lock poisoned");
+                    let channel = current.channel_mut(chunk.source);
+                    channel.normalized_chunks_consumed =
+                        channel.normalized_chunks_consumed.saturating_add(1);
+                    channel.normalized_samples_consumed = channel
+                        .normalized_samples_consumed
+                        .saturating_add(chunk.samples.len() as u64);
+                    let _ = chunk.start_ms;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    *disconnected = true;
+                }
             }
         }
 
-        let queues_empty = microphone.receiver().is_empty() && system_output.receiver().is_empty();
-        if stop.load(Ordering::Acquire) && queues_empty {
-            break;
-        }
-        if !consumed_any {
+        if !consumed_any && (!microphone_disconnected || !system_disconnected) {
             thread::sleep(Duration::from_millis(2));
         }
     }
@@ -844,6 +1010,56 @@ mod tests {
     #[test]
     #[ignore = "requires active Windows microphone and render endpoints"]
     fn hardware_probe_enumerates_and_captures_both_default_endpoints() {
+        let status = capture_hardware_status();
+
+        assert!(status.microphone.native_format.is_some());
+        assert!(status.system_output.native_format.is_some());
+        assert!(status.microphone.packets_captured > 0);
+        assert!(status.system_output.packets_captured > 0);
+        assert_eq!(status.microphone.timestamp_regressions, 0);
+        assert_eq!(status.system_output.timestamp_regressions, 0);
+        assert_eq!(status.microphone.queue_drops, 0);
+        assert_eq!(status.system_output.queue_drops, 0);
+        assert_eq!(
+            status.microphone.packets_captured,
+            status.microphone.packets_consumed
+        );
+        assert_eq!(
+            status.system_output.packets_captured,
+            status.system_output.packets_consumed
+        );
+    }
+
+    #[test]
+    #[ignore = "requires active Windows microphone and render endpoints"]
+    fn hardware_probe_processes_both_default_sources_to_16khz_mono() {
+        let status = capture_hardware_status();
+
+        for channel in [&status.microphone, &status.system_output] {
+            assert!(channel.native_frames_decoded > 0);
+            assert!(channel.normalized_chunks_produced > 0);
+            assert_eq!(
+                channel.normalized_samples_produced,
+                channel.normalized_chunks_produced * 160
+            );
+            assert_eq!(
+                channel.normalized_chunks_produced,
+                channel.normalized_chunks_consumed + channel.processing_queue_drops
+            );
+            assert_eq!(channel.processing_queue_drops, 0);
+            assert_eq!(channel.processing_errors, 0);
+            assert_eq!(channel.non_finite_samples_sanitized, 0);
+            assert_eq!(channel.last_processing_error_code, None);
+            assert!(channel.level_updates > 0);
+            let level = channel.latest_level.as_ref().expect("latest level");
+            assert!(level.rms_dbfs.is_finite());
+            assert!((-120.0..=0.0).contains(&level.rms_dbfs));
+            assert!(level.peak_dbfs.is_finite());
+            assert!((-120.0..=0.0).contains(&level.peak_dbfs));
+        }
+    }
+
+    fn capture_hardware_status() -> AudioPrototypeStatus {
         let devices = list_audio_devices().expect("active endpoints should enumerate");
         assert!(
             !devices.inputs.is_empty(),
@@ -877,22 +1093,6 @@ mod tests {
         assert_eq!(live_status.state, super::PrototypeRunState::Capturing);
         let status = running.stop();
         eprintln!("{}", serde_json::to_string_pretty(&status).unwrap());
-
-        assert!(status.microphone.native_format.is_some());
-        assert!(status.system_output.native_format.is_some());
-        assert!(status.microphone.packets_captured > 0);
-        assert!(status.system_output.packets_captured > 0);
-        assert_eq!(status.microphone.timestamp_regressions, 0);
-        assert_eq!(status.system_output.timestamp_regressions, 0);
-        assert_eq!(status.microphone.queue_drops, 0);
-        assert_eq!(status.system_output.queue_drops, 0);
-        assert_eq!(
-            status.microphone.packets_captured,
-            status.microphone.packets_consumed
-        );
-        assert_eq!(
-            status.system_output.packets_captured,
-            status.system_output.packets_consumed
-        );
+        status
     }
 }

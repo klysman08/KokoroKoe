@@ -1,6 +1,6 @@
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 
-use super::AudioSource;
+use super::{AudioSource, NativeAudioFormat};
 
 #[derive(Debug)]
 pub(crate) struct AudioPacket {
@@ -8,6 +8,7 @@ pub(crate) struct AudioPacket {
     pub(crate) start_ms: u64,
     pub(crate) frames: u32,
     pub(crate) bytes: Vec<u8>,
+    pub(crate) format: NativeAudioFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,18 +19,25 @@ pub(crate) enum EnqueueResult {
 }
 
 #[derive(Clone)]
-pub(crate) struct PacketSender(Sender<AudioPacket>);
+pub(crate) struct BoundedSender<T>(Sender<T>);
 
-pub(crate) struct PacketReceiver(Receiver<AudioPacket>);
+pub(crate) struct BoundedReceiver<T>(Receiver<T>);
+
+pub(crate) type PacketSender = BoundedSender<AudioPacket>;
+pub(crate) type PacketReceiver = BoundedReceiver<AudioPacket>;
 
 pub(crate) fn packet_queue(capacity: usize) -> (PacketSender, PacketReceiver) {
-    let (sender, receiver) = bounded(capacity);
-    (PacketSender(sender), PacketReceiver(receiver))
+    bounded_queue(capacity)
 }
 
-impl PacketSender {
-    pub(crate) fn try_send(&self, packet: AudioPacket) -> EnqueueResult {
-        match self.0.try_send(packet) {
+pub(crate) fn bounded_queue<T>(capacity: usize) -> (BoundedSender<T>, BoundedReceiver<T>) {
+    let (sender, receiver) = bounded(capacity);
+    (BoundedSender(sender), BoundedReceiver(receiver))
+}
+
+impl<T> BoundedSender<T> {
+    pub(crate) fn try_send(&self, value: T) -> EnqueueResult {
+        match self.0.try_send(value) {
             Ok(()) => EnqueueResult::Enqueued,
             Err(TrySendError::Full(_)) => EnqueueResult::DroppedFull,
             Err(TrySendError::Disconnected(_)) => EnqueueResult::Disconnected,
@@ -37,8 +45,8 @@ impl PacketSender {
     }
 }
 
-impl PacketReceiver {
-    pub(crate) fn receiver(&self) -> &Receiver<AudioPacket> {
+impl<T> BoundedReceiver<T> {
+    pub(crate) fn receiver(&self) -> &Receiver<T> {
         &self.0
     }
 }
@@ -46,7 +54,7 @@ impl PacketReceiver {
 #[cfg(test)]
 mod tests {
     use super::{AudioPacket, EnqueueResult, packet_queue};
-    use crate::audio::AudioSource;
+    use crate::audio::{AudioSource, NativeAudioFormat, NativeSampleType};
 
     fn packet(start_ms: u64) -> AudioPacket {
         AudioPacket {
@@ -54,6 +62,15 @@ mod tests {
             start_ms,
             frames: 1,
             bytes: vec![0; 4],
+            format: NativeAudioFormat {
+                sample_rate: 16_000,
+                channels: 1,
+                bits_per_sample: 32,
+                valid_bits_per_sample: 32,
+                block_align: 4,
+                channel_mask: 4,
+                sample_type: NativeSampleType::Float,
+            },
         }
     }
 

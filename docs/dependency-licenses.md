@@ -58,6 +58,16 @@ These packages are pure JavaScript and add no native library, DLL, Tauri command
 
 `cargo deny check licenses bans sources` passes with the new dependency graph. `cargo audit` returns success with the same 17 allowed maintenance/non-Windows GTK warnings; P3-001 introduced no new RustSec advisory. The lockfile's additional duplicate `windows` support crates are accepted prototype overhead from `wasapi` 0.23.0 and must be reconsidered if a later upgrade aligns with Tauri's projection version.
 
+## P3-002 resolved audio-processing inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Sample-rate conversion | `rubato` 4.0.0, default features disabled | MIT OR Apache-2.0 | Rust-only asynchronous sinc resampling; declared Rust 1.85; no FFT feature/dependency enabled |
+| Audio buffer adapters | `audioadapter`, `audioadapter-buffers`, and `audioadapter-sample` 4.0.0 (transitive) | MIT OR Apache-2.0 | Typed preallocated interleaved slice adapters used by `rubato` |
+| Window functions | `windowfunctions` 0.1.1 (transitive) | MIT OR Apache-2.0 | Sinc-window calculation; no DLL or external runtime |
+
+P3-002 adds seven locked Rust packages and no frontend package, native DLL, network client, model, codec, or persistence library. The processing path remains in Rust and sends no audio to the frontend or an external service. Cargo license/source/bans and RustSec results are recorded in the P3-002 checkpoint.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.

@@ -35,6 +35,8 @@ KokoroKoe does not determine whether recording or transcription is lawful for a 
 
 The P3-001 transport requires explicit consent acknowledgement before its prototype start command succeeds. Capture packets remain in separate bounded Rust memory queues and are consumed without persistence; only device metadata and aggregate health/format/timestamp/drop counters can cross to the authorized main window. This prototype guard does not replace the future first-capture consent UI.
 
+P3-002 processes those packets only in Rust. Each source is decoded, downmixed, and resampled to bounded 16 kHz mono chunks in memory; the prototype sink immediately discards them. The frontend receives only aggregate counts and throttled RMS/peak/clipping metadata. Samples never enter Tauri events, React state, logs, SQLite, Markdown, or external requests, and neither captured nor normalized audio is retained.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.
@@ -44,6 +46,7 @@ The P3-001 transport requires explicit consent acknowledgement before its protot
 - `microphone` and `system_output` identify capture origin, not verified human identity. The UI labels are “You” and “Participant” for convenience only.
 - The MVP does not include acoustic echo cancellation, per-person diarization, or per-application capture.
 - Physical speaker-to-microphone latency is not corrected; timestamps describe capture time.
+- P3-002 uses equal-weight channel averaging rather than speaker-mask weighting, reports but does not compensate sinc startup delay, and discards partial/tail buffers on format change or prototype stop.
 
 ## Transcription limitations
 

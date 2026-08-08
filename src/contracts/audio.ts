@@ -86,18 +86,41 @@ const channelDiagnosticsSchema = z.strictObject({
   framesConsumed: safeCounterSchema,
   bytesConsumed: safeCounterSchema,
   queueDrops: safeCounterSchema,
+  nativeFramesDecoded: safeCounterSchema,
+  normalizedChunksProduced: safeCounterSchema,
+  normalizedSamplesProduced: safeCounterSchema,
+  normalizedChunksConsumed: safeCounterSchema,
+  normalizedSamplesConsumed: safeCounterSchema,
+  processingQueueDrops: safeCounterSchema,
+  processingErrors: safeCounterSchema,
+  nonFiniteSamplesSanitized: safeCounterSchema,
+  formatChanges: safeCounterSchema,
+  resamplerDelayFrames: safeCounterSchema,
+  pendingNativeFrames: safeCounterSchema,
+  pendingNormalizedSamples: safeCounterSchema,
+  levelUpdates: safeCounterSchema,
+  latestLevel: z
+    .strictObject({
+      rmsDbfs: z.number().finite().min(-120).max(0),
+      peakDbfs: z.number().finite().min(-120).max(0),
+      clipping: z.boolean(),
+      atMs: safeCounterSchema,
+    })
+    .nullable(),
   dataDiscontinuities: safeCounterSchema,
   timestampErrors: safeCounterSchema,
   timestampRegressions: safeCounterSchema,
   firstPacketMs: safeCounterSchema.nullable(),
   lastPacketMs: safeCounterSchema.nullable(),
   lastErrorCode: z.string().min(1).max(128).nullable(),
+  lastProcessingErrorCode: z.string().min(1).max(128).nullable(),
 })
 
 export const audioPrototypeStatusSchema = z.strictObject({
   state: z.enum(["starting", "capturing", "stopping", "stopped"]),
   elapsedMs: safeCounterSchema,
   queueCapacityPacketsPerSource: z.number().int().min(4).max(256),
+  processingQueueCapacityChunksPerSource: z.number().int().min(4).max(256),
   microphone: channelDiagnosticsSchema.extend({
     source: z.literal("microphone"),
   }),

@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-001 - Bounded Windows WASAPI capture prototype
+- Task: P3-002 - Bounded audio-processing prototype
 - Date: 2026-08-08
-- Outcome: added least-privilege endpoint enumeration and simultaneous event-driven shared-mode microphone/render-loopback capture with native formats, one QPC-derived timeline, independent retry/default recovery, bounded per-source packet queues, aggregate diagnostics, explicit consent acknowledgement, and no retained or frontend-delivered audio.
-- Verification: Node 24 frontend format/lint/type/build/policy and 70 Vitest tests; Rust 1.88 locked fmt/Clippy, 45 ordinary tests plus 3 capability tests; explicit concurrent hardware probe with zero queue drops, timestamp errors, or regressions; clean production audit; Cargo deny/audit with the existing allowed warnings; final locked x64 release build; link/secret/artifact/diff checks. The broader device/recovery matrix and two-hour clock gate remain open.
-- Memory: [P3-001 checkpoint](docs/project-memory.md#p3-001---bounded-windows-wasapi-capture-prototype)
+- Outcome: added strict PCM/float decoding, non-finite sanitization, equal-weight mono downmix, source-local anti-aliased 16 kHz sinc resampling, exact bounded 10 ms normalized queues, 10 Hz RMS/peak/clipping diagnostics, strict Rust/Zod status parity, and no retained or frontend-delivered samples.
+- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 54 ordinary tests plus 3 capability tests; deterministic format/rate/anti-alias/level/queue matrix; explicit concurrent normalization probe with zero processing errors or queue drops; clean production audit; Cargo deny/audit with the existing allowed warnings; final locked x64 release build; link/secret/artifact/diff checks. The broader device/recovery matrix and two-hour clock gate remain open.
+- Memory: [P3-002 checkpoint](docs/project-memory.md#p3-002---bounded-audio-processing-prototype)

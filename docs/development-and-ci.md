@@ -66,3 +66,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-wind
 ```
 
 The test emits a short local tone and reports only endpoint-format and aggregate capture diagnostics. It writes no audio file. See [P3-001 Windows audio-capture prototype](audio-capture-prototype.md) for the evidence boundary and remaining hardware matrix.
+
+Run the P3-002 processing probe separately to assert that both live sources decode and produce finite exact 160-sample, 16 kHz mono chunks, bounded queue accounting, and throttled level diagnostics:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib audio::windows::tests::hardware_probe_processes_both_default_sources_to_16khz_mono -- --ignored --exact --nocapture
+```
+
+It likewise retains no audio. See [P3-002 bounded audio-processing prototype](audio-processing-prototype.md) for supported native formats and processing limitations.

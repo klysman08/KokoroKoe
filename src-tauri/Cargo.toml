@@ -20,6 +20,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+crossbeam-channel = "0.5.15"
 fs2 = "0.4"
 rfd = { version = "0.17", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -32,8 +33,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Performance",
   "Win32_System_WindowsProgramming",
 ] }
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.23.0"
 
 [dev-dependencies]
 junction = "2"

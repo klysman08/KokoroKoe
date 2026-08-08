@@ -33,6 +33,8 @@ KokoroKoe does not determine whether recording or transcription is lawful for a 
 
 ## Windows audio limitations
 
+The P3-001 transport requires explicit consent acknowledgement before its prototype start command succeeds. Capture packets remain in separate bounded Rust memory queues and are consumed without persistence; only device metadata and aggregate health/format/timestamp/drop counters can cross to the authorized main window. This prototype guard does not replace the future first-capture consent UI.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.

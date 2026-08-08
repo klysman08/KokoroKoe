@@ -103,11 +103,42 @@ impl AppError {
     pub(crate) fn command_not_authorized() -> Self {
         Self::new(
             "command_not_authorized",
-            "This window is not allowed to read application settings.",
-            Some("The settings command is restricted to the main application window."),
+            "This window is not allowed to perform that application operation.",
+            Some("The command is restricted to the main application window."),
             ErrorSeverity::Warning,
             false,
         )
+    }
+
+    pub(crate) fn audio_prototype_failed(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "audio_capture_consent_required" => (
+                "Confirm the recording and transcription consent notice before starting capture.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "audio_prototype_already_running" => (
+                "An audio capture prototype is already running.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "audio_prototype_not_started" | "audio_prototype_not_running" => (
+                "No audio capture prototype is currently running.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "audio_queue_capacity_invalid" | "audio_endpoint_id_invalid" => (
+                "The audio capture prototype configuration is not valid.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            _ => (
+                "The Windows audio capture prototype could not complete the operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
     }
 
     pub(crate) fn settings_unavailable(technical_detail: &str) -> Self {

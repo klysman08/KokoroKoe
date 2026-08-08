@@ -48,7 +48,7 @@ export function createContractApplicationError(): ApplicationError {
     userMessage:
       "KokoroKoe received an invalid response from its local service.",
     technicalDetail:
-      "The response did not match the expected settings contract.",
+      "The response did not match the expected local service contract.",
     severity: "error",
     retryable: false,
     correlationId: createCorrelationId(),
@@ -58,9 +58,9 @@ export function createContractApplicationError(): ApplicationError {
 export function createRequestContractApplicationError(): ApplicationError {
   return new ApplicationError({
     code: "invalid_request_contract",
-    userMessage: "The settings change is not valid.",
+    userMessage: "The local request is not valid.",
     technicalDetail:
-      "The request did not match the expected local settings contract.",
+      "The request did not match the expected local command contract.",
     severity: "warning",
     retryable: false,
     correlationId: createCorrelationId(),

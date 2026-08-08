@@ -1,0 +1,12 @@
+{
+  "acknowledgedCaptureConsent": true,
+  "microphone": {
+    "kind": "default",
+    "role": "communications"
+  },
+  "systemOutput": {
+    "kind": "fixed",
+    "endpointId": "synthetic-render-endpoint"
+  },
+  "queueCapacityPacketsPerSource": 64
+}

@@ -47,6 +47,17 @@ Status: Phase 1 candidate assessment plus the resolved Phase 2 foundation invent
 
 These packages are pure JavaScript and add no native library, DLL, Tauri command, external-network client, or frontend capability. The renderer accepts an in-memory string only; reading Markdown files remains Rust-owned Phase 4 work.
 
+## P3-001 resolved Windows audio-prototype inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| WASAPI wrapper | `wasapi` 0.23.0 | MIT | Windows-only safe wrapper over Core Audio; shared/event capture, render-loopback, endpoint enumeration, native formats, packet QPC timestamps |
+| Bounded packet queues | `crossbeam-channel` 0.5.15 | MIT OR Apache-2.0 | Separate fixed-capacity queue per audio source; capture uses nonblocking `try_send` and visible drops |
+| Windows API projection | `windows` 0.62.2 (transitive through `wasapi`) | MIT OR Apache-2.0 | Adds a second Windows projection version beside Tauri's 0.61 line; no extra DLL is distributed |
+| QPC/test-tone APIs | `windows-sys` 0.61.2 (existing direct dependency, expanded features) | MIT OR Apache-2.0 | Adds only performance-counter APIs and the test-only kernel `Beep` binding |
+
+`cargo deny check licenses bans sources` passes with the new dependency graph. `cargo audit` returns success with the same 17 allowed maintenance/non-Windows GTK warnings; P3-001 introduced no new RustSec advisory. The lockfile's additional duplicate `windows` support crates are accepted prototype overhead from `wasapi` 0.23.0 and must be reconsidered if a later upgrade aligns with Tauri's projection version.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.

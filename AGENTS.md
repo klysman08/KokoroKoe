@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P2-004 - Sanitized Markdown, Windows CI, and Phase 2 closeout
+- Task: P3-001 - Bounded Windows WASAPI capture prototype
 - Date: 2026-08-08
-- Outcome: fixed raw-HTML-disabled and image-free Markdown renderer with explicit sanitization and inert links, adversarial tests, locked Windows CI and repository policy, reproducible verification/audit documentation, ADR 0006, and the Phase 2 acceptance handoff completed without adding content persistence, audio, models, external services, or new capabilities.
-- Verification: Node 24 frozen install, Prettier/ESLint/typecheck, 55 Vitest tests, Vite build, policy, clean production audit, and parsed license inventory; Rust 1.88 locked fmt/Clippy and 37 tests; Cargo deny/audit; actionlint 1.7.12; final locked x64 MSI/NSIS rebuild; packaged Settings smoke; secret/link/diff checks; three independent reviews with no remaining blockers. Hosted GitHub CI is configured but remains unobserved until pushed.
-- Memory: [P2-004 checkpoint](docs/project-memory.md#p2-004---sanitized-markdown-windows-ci-and-phase-2-closeout)
+- Outcome: added least-privilege endpoint enumeration and simultaneous event-driven shared-mode microphone/render-loopback capture with native formats, one QPC-derived timeline, independent retry/default recovery, bounded per-source packet queues, aggregate diagnostics, explicit consent acknowledgement, and no retained or frontend-delivered audio.
+- Verification: Node 24 frontend format/lint/type/build/policy and 70 Vitest tests; Rust 1.88 locked fmt/Clippy, 45 ordinary tests plus 3 capability tests; explicit concurrent hardware probe with zero queue drops, timestamp errors, or regressions; clean production audit; Cargo deny/audit with the existing allowed warnings; final locked x64 release build; link/secret/artifact/diff checks. The broader device/recovery matrix and two-hour clock gate remain open.
+- Memory: [P3-001 checkpoint](docs/project-memory.md#p3-001---bounded-windows-wasapi-capture-prototype)

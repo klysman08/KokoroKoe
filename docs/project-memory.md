@@ -4,11 +4,10 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 
 ## Current phase
 
-- Phase: 2 - Foundation
-- Status: Completed
-- Started: 2026-08-05
-- Completed: 2026-08-08
-- Objective: Establish the secure, typed, tested Windows desktop foundation before adding sensitive services or product data.
+- Phase: 3 - Audio and transcription
+- Status: In progress
+- Started: 2026-08-08
+- Objective: Prove the Windows audio, clock, format, VAD, local-transcription, acceleration-fallback, and backpressure gates before building the product transcription experience.
 
 ## Completed task table - Phase 1
 
@@ -27,6 +26,12 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | P2-002 | Coordinator + review agents | Completed | Sanitized tracing/errors, strict Rust/Zod settings boundary, read-only `get_settings`, TanStack Query integration, root/query error UI, and least-privilege command ACL | P2-001 | Shared fixtures parse in Rust/TypeScript; semantic validation matches; raw errors/tokens/paths do not reach logs or reports; only `main` can invoke the command; builds/audits/package smoke pass | 15 Rust tests; 27 Vitest tests; Node 24 format/lint/type/build; generated ACL/static capability checks; secret/path canaries; cargo-deny/audit and pnpm audit; MSI/NSIS rebuild; responding-process smoke; two independent reviews with blockers fixed and rechecked |
 | P2-003 | Coordinator + review agents | Completed | Versioned non-secret SQLite settings persistence, validated workspace selection/write-health probe, optimistic settings updates, strict mutation contracts, onboarding UI, and least-privilege commands | P2-002 | Corrupt-record recovery, traversal/ADS/reparse denial, optimistic-revision conflicts, Rust/Zod fixture parity, denied-window checks, audits, package build, and Windows onboarding smoke pass | 37 Rust tests; 51 Vitest tests; Node/Rust quality gates and audits; MSI/NSIS rebuild; packaged picker/update/restart smoke; three independent reviews with no remaining blockers |
 | P2-004 | Coordinator + review agents | Completed | Sanitized raw-HTML-disabled Markdown rendering boundary, locked Windows CI, reproducible verification commands, and Phase 2 acceptance/handoff | P2-003 | Untrusted Markdown cannot execute HTML/script, load images, or navigate through unsafe links; Windows CI covers locked frontend/Rust format, lint, type, unit, capability, audit, and desktop build checks; Phase 2 evidence and limitations are independently reviewed | 55 Vitest tests; 37 Rust/capability tests; Node/Rust format/lint/type/build; clean production audit; license inventory; Cargo deny/audit; actionlint; locked MSI/NSIS build; packaged Settings smoke; three independent reviews with no remaining blockers |
+
+## Phase 3 task table
+
+| ID | Owner | Status | Scope | Dependencies | Acceptance | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| P3-001 | Coordinator | Completed | Bounded Windows WASAPI prototype: active endpoint/default-role enumeration, simultaneous shared-mode event-driven microphone and render-loopback capture, QPC-derived session timestamps, independent channel supervision/retry, bounded packet queues, and native-format/health diagnostics | P2-004; ADR 0002; Windows 10 22H2/11 x64; active capture and render endpoints | Deterministic queue/timeline/supervisor tests pass; an explicit Windows hardware probe captures both sources concurrently without retaining samples, reports monotonic QPC-derived timestamps and native formats, bounds memory with visible drop/discontinuity counters, and demonstrates that one channel failure/retry does not stop the other; dependency, capability, privacy, and scope checks pass | 70 Vitest tests; 45 ordinary Rust tests plus 3 capability tests; explicit dual-source hardware probe passed; zero timestamp regressions or queue drops; locked frontend/Rust quality gates, audits, and x64 release build passed |
 
 ## Confirmed decisions
 
@@ -60,13 +65,15 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 | 2026-08-08 | Keep workspace selection in a single-flight Rust native picker with no frontend path or dialog capability | React cannot submit an arbitrary path, and cancellation or concurrent selection leaves settings unchanged |
 | 2026-08-08 | Route all future Markdown-derived React UI through the fixed `SanitizedMarkdown` boundary | Raw HTML, images, unsafe schemes, and active navigation remain unavailable; ADR 0006 records the policy and Phase 4 input-size responsibility |
 | 2026-08-08 | Use one read-only, full-SHA-pinned Windows 2022 CI workflow for the Phase 2 gates | Match the Windows/MSVC product boundary without adding secrets, publishing, signing, or non-Windows claims; local MSI/NSIS smoke remains separate evidence |
+| 2026-08-08 | Use `wasapi` 0.23 with separate bounded Crossbeam packet queues for the Phase 3 capture prototype | Keep unsafe Core Audio details behind a maintained Rust wrapper while ensuring neither source blocks the other or grows memory without bound |
+| 2026-08-08 | Re-resolve default-role endpoints during capture while fixed selections retry only their stored endpoint ID | Implements ADR 0002 without silently changing a user's explicit selection |
 
 ## Prototype and risk register
 
 | ID | Gate or risk | Resolution rule | Target phase | Status |
 | --- | --- | --- | --- | --- |
-| R-001 | WASAPI device/format/recovery matrix | Unaffected channel continues; all gaps and retries are visible | 3 | Pending |
-| R-002 | QPC clock alignment and long-run drift | Less than 20 ms calculated error over two hours, excluding physical latency | 3 | Pending |
+| R-001 | WASAPI device/format/recovery matrix | Unaffected channel continues; all gaps and retries are visible | 3 | Partially proven by P3-001 on one endpoint pair; matrix open |
+| R-002 | QPC clock alignment and long-run drift | Less than 20 ms calculated error over two hours, excluding physical latency | 3 | Short-run monotonicity proven by P3-001; two-hour gate open |
 | R-003 | Earshot versus Silero VAD | Keep Earshot only if it meets the approved miss/false-positive thresholds and remains within two points of Silero | 3 | Pending |
 | R-004 | Tiny/Base real-time throughput | Aggregate real-time factor below 1.0 on a supported configuration; target final p95 below two seconds | 3 | Pending |
 | R-005 | Vulkan failure isolation | Use in-process fallback only if missing/broken drivers cannot prevent startup; otherwise use a supervised worker | 3 | Pending |
@@ -170,6 +177,19 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 - Result: the Windows x64 Tauri/React foundation now has a strict typed shell, shadcn/Tailwind UI, local UI state and routing, sanitized error/log boundaries, least-privilege commands/capabilities, versioned non-secret settings persistence, conservative native workspace onboarding, a sanitized Markdown rendering boundary, reproducible local gates, Windows CI configuration, audits, and verified MSI/NSIS packaging.
 - Deferred by design: all WASAPI capture, audio processing, VAD, local transcription, model management/downloads, project/session schemas and Markdown persistence, FTS/search, Credential Manager/OpenRouter, insights/summaries, extra windows, opacity/shortcuts, and release signing/telemetry remain in their assigned later phases.
 
+### P3-001 - Bounded Windows WASAPI capture prototype
+
+- Completed: 2026-08-08
+- Deliverables: active input/render endpoint and default-role enumeration; strict Rust/Zod device-selection and diagnostic contracts; four exact main-window Tauri commands; explicit capture-consent acknowledgement; simultaneous event-driven shared-mode microphone and render-loopback threads; native mix-format reporting; one shared QPC-derived millisecond epoch; source-local health, retry, and default-endpoint re-resolution; separate bounded nonblocking packet queues; aggregate drop, discontinuity, timestamp, packet, frame, and consumption counters; no sample persistence or frontend audio delivery; implementation, privacy, dependency, and hardware-probe documentation.
+- Verification:
+  - Node 24.14.0 and pnpm 10.30.2: `pnpm verify:frontend` passed Prettier, ESLint, strict TypeScript, 12 Vitest files/70 tests, Vite production build, and repository policy; `pnpm audit:frontend` found no known production vulnerability.
+  - Rust 1.88.0: `pnpm verify:rust` passed locked MSVC rustfmt, Clippy with warnings denied, 45 ordinary tests, and 3 capability tests; one explicitly hardware-dependent test remains ignored in the ordinary suite.
+  - The opt-in hardware probe passed on the current Windows machine with concurrent 44.1 kHz stereo-float microphone and 48 kHz stereo-float render-loopback capture. Both streams used one capture attempt, consumed every captured packet, and reported zero queue drops, timestamp errors, or timestamp regressions. One initial discontinuity per stream remained visible in diagnostics.
+  - `pnpm audit:rust` passed Cargo licenses, bans, and sources; RustSec returned success with the same 17 documented allowed transitive maintenance/non-Windows GTK warnings.
+  - `pnpm tauri build --ci --no-bundle --target x86_64-pc-windows-msvc -- --locked` produced the final locked release executable.
+  - Final source review, scope review, local-link/secret/artifact checks, `git diff --check`, and `git status --short --branch` passed without retained audio, models, databases, logs, or build artifacts entering the worktree.
+- Known limitations: the live evidence covers one default microphone/render pair and a short run only. Real unplug/hotplug, fixed-device removal, default switches, Windows Audio restart, Bluetooth, docks, USB, virtual devices, Remote Desktop, protected/exclusive audio, PCM integer and broader channel/sample-rate formats, and the two-hour QPC drift target remain open Phase 3 gates. P3-001 does not normalize, resample, meter, run VAD, retain audio, transcribe, persist meetings, or provide product capture UI.
+
 ## Known environment facts
 
 - The machine-wide shell still defaults to Node 26.5.1; P2 verification initializes `fnm` and uses the repository-pinned Node 24.19.0.
@@ -180,4 +200,4 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 
 ## Next handoff
 
-Begin `P3-001`, a bounded Windows audio-capture prototype. Prove endpoint enumeration plus simultaneous shared-mode microphone and WASAPI render-loopback capture with QPC-derived session timestamps, independent channel health/recovery, bounded packet queues, and native-format diagnostics. Keep Whisper/VAD/model downloads, retained audio, project/session persistence, OpenRouter, product transcript UI, and additional native windows out of `P3-001`. Record hardware/driver coverage honestly; the full device matrix remains a Phase 3 prototype gate rather than a single-machine claim.
+Begin `P3-002`, a bounded audio-processing prototype. Convert supported native PCM/float packets to finite `f32`, downmix and resample each source independently to 16 kHz mono, and derive throttled RMS/peak/clipping diagnostics with deterministic format fixtures and bounded queues. Keep VAD, Whisper/model downloads, retained audio, project/session persistence, OpenRouter, product transcript UI, and additional native windows out of `P3-002`; continue treating the broader device/recovery matrix and two-hour clock run as open Phase 3 gates.

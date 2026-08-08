@@ -56,3 +56,13 @@ CI requests read-only repository contents, persists no checkout credential, refe
 ## Sanitized Markdown boundary
 
 All future Markdown-derived UI must use `SanitizedMarkdown`. The component disables raw HTML, applies an explicit sanitize schema, blocks images and unsafe URL schemes, and renders even allowed external links inertly. A later external-link feature must cross a separately authorized Rust command and must not weaken this renderer.
+
+## Windows audio hardware probe
+
+The ordinary locked Rust suite skips the device-dependent P3-001 probe. On a Windows machine with active default input and output endpoints, run it explicitly:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc audio::windows::tests::hardware_probe_enumerates_and_captures_both_default_endpoints -- --ignored --nocapture --test-threads=1
+```
+
+The test emits a short local tone and reports only endpoint-format and aggregate capture diagnostics. It writes no audio file. See [P3-001 Windows audio-capture prototype](audio-capture-prototype.md) for the evidence boundary and remaining hardware matrix.

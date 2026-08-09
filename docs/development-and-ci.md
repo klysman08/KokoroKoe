@@ -92,3 +92,13 @@ The ordinary suite skips P3-004's model/audio-dependent throughput gate. With FF
 ```
 
 The script verifies pinned whisper.cpp source and Tiny/Base SHA-256 values, builds the MIT C adapter, and runs both models CPU-only. All source, DLL, model, decoded-audio, and transcript artifacts remain under `%LOCALAPPDATA%\KokoroKoe\p3-004` or in memory; output contains aggregate metrics only. See [P3-004 bounded local Whisper runtime prototype](whisper-runtime-prototype.md).
+
+## Local Whisper Vulkan recovery probe
+
+The ordinary suite skips P3-005's SDK/model/GPU-dependent failure-isolation gate. With Git, CMake, MSVC, FFmpeg, Windows System Speech, and a Vulkan-capable driver available, run:
+
+```powershell
+.\scripts\run-whisper-vulkan-recovery-prototype.ps1
+```
+
+The script verifies pinned `whisper.cpp`, Tiny-model, and LunarG SDK hashes; uses the SDK installer in copy-only mode under `%LOCALAPPDATA%\KokoroKoe\p3-005`; generates a short local speech fixture; builds explicit CPU/Vulkan adapter API v2; and runs attested Vulkan success, forced missing-driver startup, native inference-abort isolation, and exact CPU-recovery checks. The first run downloads a roughly 309 MB SDK installer and copies about 2.18 GB of SDK files outside the repository. Use `-VulkanSdkPath` to select an existing SDK. Output contains fixed aggregate status only. See [P3-005 Vulkan recovery prototype](whisper-vulkan-recovery-prototype.md).

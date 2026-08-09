@@ -41,6 +41,8 @@ P3-003 runs an independent local Earshot detector and bounded utterance segmente
 
 P3-004 transcribes only explicit finalized utterances inside a local Rust-owned CPU runtime. The opt-in probe decodes one user-supplied MP3 in memory and passes bounded samples through the production VAD and pinned multilingual Tiny/Base models. It prints aggregate timing and result counts only; transcript text, detected language, samples, paths, source audio, model weights, and native build output are not logged, persisted, committed, or sent to React or a service. The application still has no model downloader, live transcription command/event, audio retention, or transcript persistence path.
 
+P3-005 runs optional Vulkan model loading and inference only in isolated probe children. Its speech fixture is generated locally outside the repository, bounded to one finalized utterance, and reused for each CPU/Vulkan case. Child output is suppressed; the gate prints only attestation, isolation, result-count, duplicate/loss, and worker-decision flags. A forced missing driver or native inference abort cannot expose audio or terminate the parent. No audio, transcript text, detected language, path, model, SDK, DLL, crash dump, or driver detail enters React, persistence, logs, the repository, or a service.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.
@@ -53,6 +55,7 @@ P3-004 transcribes only explicit finalized utterances inside a local Rust-owned 
 - P3-002 uses equal-weight channel averaging rather than speaker-mask weighting, reports but does not compensate sinc startup delay, and discards partial/tail buffers on format change or prototype stop.
 - P3-003's generated bake-off corpus is synthetic and favors Earshot; it does not establish performance across real speakers, languages, rooms, noise, music, echo, overlapping speech, or devices. VAD can still miss speech or classify non-speech as speech.
 - P3-004's local MP3 is one unlabelled user recording on one CPU, not an accuracy, language, noise, minimum-hardware, or redistributable fixture. Base met the real-time gate but missed the two-second p95 target on seven VAD-finalized utterances.
+- P3-005 covers one generated English utterance and one NVIDIA GPU/driver. It proves process isolation and CPU recovery semantics, not accuracy or compatibility across AMD, Intel, multi-GPU, old drivers, device loss, suspend/resume, or packaged workers. The product worker/IPC boundary is not implemented yet.
 
 ## Transcription limitations
 
@@ -61,7 +64,7 @@ P3-004 transcribes only explicit finalized utterances inside a local Rust-owned 
 - Whisper can hallucinate during noise or silence, repeat text, or omit speech. VAD and final-pass processing reduce but cannot eliminate these failures.
 - Confidence is displayed only when the engine supplies defensible probability data.
 - When inference remains slower than incoming audio, partials are disabled first. At the hard bounded backlog limit, the application records an explicit gap rather than exhausting memory.
-- Vulkan availability does not guarantee successful acceleration. The UI reports the backend actually in use and falls back to CPU.
+- Vulkan availability does not guarantee successful acceleration. The future UI reports the attested backend actually in use. Vulkan runs in a supervised worker; worker startup, timeout, protocol, exit, or crash failure discards incomplete output and retries the same finalized utterance once on CPU.
 
 ## OpenRouter limitations
 

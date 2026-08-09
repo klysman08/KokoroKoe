@@ -83,11 +83,22 @@ The bundled comparison model is 2,327,524 bytes and originates from the MIT-lice
 | Area | Resolved version | License | Notes |
 | --- | ---: | --- | --- |
 | Native inference | `whisper.cpp` v1.9.2, commit `306c88f4d1286aec1bf96e544632897886af5501` | MIT | Official CPU-only library built outside the repository for the explicit throughput probe |
-| Rust/native boundary | KokoroKoe C ABI adapter API v1 | Project source | Bounded model/result ownership and fixed error boundary; no third-party Rust wrapper or wrapper license is introduced |
+| Rust/native boundary | KokoroKoe C ABI adapter API v2 | Project source | Bounded model/result ownership, explicit CPU/Vulkan selection and attestation, and fixed error boundary; no third-party Rust wrapper or wrapper license is introduced |
 | Windows loading | `windows-sys` 0.61.2 existing dependency, expanded features | MIT OR Apache-2.0 | Restricted native-library search and process-lifetime adapter handle; no new Rust package |
 | Probe decode | local FFmpeg executable | LGPL/GPL depending on local build | Development-only process invoked by the explicit script; not linked, bundled, or called by the application |
 
 P3-004 rejects `whisper-rs`'s Unlicense route and resolves R-006 with the minimal MIT adapter. Multilingual Tiny and Base weights are downloaded only by the explicit local script into `%LOCALAPPDATA%`, verified against pinned SHA-256 values, and are not application dependencies or repository artifacts. Distribution notices and native/model packaging remain required before shipping.
+
+## P3-005 Vulkan recovery prototype inventory
+
+| Area | Resolved version | License | Notes |
+| --- | ---: | --- | --- |
+| Vulkan build SDK | LunarG Vulkan SDK 1.4.350.0 | Component-specific licenses in the official LunarG registry | Development-only SDK copied outside the repository with `copy_only=1`; pinned installer SHA-256 `855b27ba05d2d8119c5114c5d4ff870ca38f2c632b11e1bb9923b9b7e6ecfe7b`; not linked as an application SDK or distributed |
+| Vulkan inference backend | `ggml-vulkan` from pinned `whisper.cpp` v1.9.2 | MIT | Built only for the explicit external probe; future packaged worker notices and DLL inventory remain required |
+| Vulkan loader/driver | Existing Windows loader and NVIDIA driver | System/proprietary runtime | User/system prerequisite, not installed, copied, or redistributed by KokoroKoe |
+| Generated speech | Windows System Speech plus local FFmpeg conversion | Windows system component; local FFmpeg license varies | Development-only generated fixture under `%LOCALAPPDATA%`; no audio or transcript artifact is committed or packaged |
+
+P3-005 adds no Cargo or frontend package and changes no lockfile. The exact runner verifies official source/model/SDK hashes, builds the KokoroKoe adapter with `/W4 /WX`, and keeps upstream source, SDK contents, models, generated audio, and native output outside the repository. The [LunarG license registry](https://vulkan.lunarg.com/license/) remains authoritative for the SDK's component-level notices; only the build inputs actually shipped with a future supervised worker will enter the distribution notice inventory.
 
 P2-003 audit evidence:
 
@@ -112,8 +123,8 @@ P2-001 audit evidence:
 | Desktop | `tauri` | 2.11.5 | MIT OR Apache-2.0 | Required |
 | Windows audio | `wasapi` | 0.23.0 | MIT | Preferred WASAPI wrapper |
 | Windows APIs | `windows` | 0.62.x | MIT OR Apache-2.0 | QPC and missing Core Audio APIs |
-| Transcription | KokoroKoe C ABI adapter | API v1 | MIT | Selected; bounded Rust wrapper over the native API |
-| Native inference | `whisper.cpp` | v1.9.2 / `306c88f` | MIT | Selected CPU prototype engine |
+| Transcription | KokoroKoe C ABI adapter | API v2 | Project source | Selected; bounded Rust wrapper over explicit CPU/Vulkan native selection |
+| Native inference | `whisper.cpp` | v1.9.2 / `306c88f` | MIT | Selected CPU engine and supervised Vulkan-worker prototype |
 | Resampling | `rubato` | 4.0.0 | MIT OR Apache-2.0 | Required |
 | VAD | `earshot` | 1.2.1 | MIT OR Apache-2.0 | Initial candidate; compare with Silero |
 | Runtime | `tokio`, `tokio-util` | Resolve in Phase 2 | MIT | Required asynchronous services/cancellation |
@@ -157,7 +168,7 @@ Use TanStack Query for asynchronous command/cache workflows only; keep short-liv
 - Pin Node 24 LTS, pnpm 10, and Rust 1.88 or newer.
 - Local pnpm and Rust are present.
 - Visual Studio 2022 Build Tools 17.14 with the VCTools workload, Windows SDK 10.0.26100.0, CMake 4.4.1, and `fnm` 1.39.0 with Node 24.19.0 were installed for P2-001. WebView2 Runtime 151.0.4129.59 was already present.
-- Vulkan 1.4 and an NVIDIA RTX 3070 Ti are available locally, but CPU-only and non-Vulkan machines remain mandatory test targets.
+- Vulkan 1.4 and an NVIDIA RTX 3070 Ti are available locally. P3-005 copied LunarG SDK 1.4.350.0 to an external user-local scratch path for compilation; CPU-only and non-Vulkan machines remain mandatory test targets.
 
 ## Policy and automated gates
 

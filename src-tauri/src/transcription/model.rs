@@ -13,6 +13,22 @@ pub(crate) enum WhisperModelKind {
     Base,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub(crate) enum WhisperBackend {
+    Cpu = 0,
+    Vulkan = 1,
+}
+
+impl WhisperBackend {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Vulkan => "vulkan",
+        }
+    }
+}
+
 impl WhisperModelKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -87,6 +103,7 @@ pub(crate) enum TranscriptionError {
     AdapterIncompatible,
     ModelUnavailable,
     ModelLoadFailed,
+    BackendUnavailable,
     InvalidAudio,
     InvalidTimeline,
     InferenceFailed,
@@ -100,6 +117,7 @@ impl TranscriptionError {
             Self::AdapterIncompatible => "transcription_adapter_incompatible",
             Self::ModelUnavailable => "transcription_model_unavailable",
             Self::ModelLoadFailed => "transcription_model_load_failed",
+            Self::BackendUnavailable => "transcription_backend_unavailable",
             Self::InvalidAudio => "transcription_audio_invalid",
             Self::InvalidTimeline => "transcription_timeline_invalid",
             Self::InferenceFailed => "transcription_inference_failed",

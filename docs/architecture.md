@@ -25,7 +25,7 @@ Rust application coordinator and session state machine
   |     |-- WASAPI microphone capture
   |     |-- WASAPI render-endpoint loopback capture
   |     `-- normalize -> meter -> VAD -> bounded ASR scheduler
-  |-- transcription engine -> Whisper CPU/Vulkan
+  |-- transcription engine -> Whisper CPU / supervised Vulkan worker
   |-- project/session services -> session writer
   |     |-- Markdown snapshots + recovery journal
   |     `-- rebuildable SQLite/FTS projection
@@ -134,9 +134,9 @@ Create only the directories needed by the active task. Do not commit model weigh
 
 Capture threads never wait on inference. Disable partial work at 20 seconds of queued speech, restore it below 10 seconds, and cap final backlog at 10 minutes. At the hard cap, record an explicit transcript gap and error instead of allowing unbounded memory growth.
 
-Whisper Tiny and Base multilingual models are the initial catalog entries. Base is the intended default only if it passes the Phase 3 throughput gate on the minimum supported hardware; otherwise Tiny becomes the default and Base remains an accuracy-oriented option. CPU is mandatory. Vulkan is the first acceleration path, with a runtime CPU retry and a supervised worker fallback if the in-process Vulkan prototype cannot isolate driver failures.
+Whisper Tiny and Base multilingual models are the initial catalog entries. Base is the intended default only if it passes the Phase 3 throughput gate on the minimum supported hardware; otherwise Tiny becomes the default and Base remains an accuracy-oriented option. CPU is mandatory. Vulkan is the first acceleration path and runs only in a supervised local worker under [ADR 0007](adr/0007-supervised-vulkan-transcription-worker.md). The worker must attest Vulkan rather than silently accept upstream CPU fallback. Startup failure, timeout, protocol failure, nonzero exit, or crash discards incomplete worker output and retries the same finalized utterance exactly once on CPU without emitting both results.
 
-The first CPU runtime uses a KokoroKoe-owned bounded C ABI shim over pinned MIT-licensed whisper.cpp rather than the Unlicense Rust wrapper. Rust owns paths, samples, source/timeline labels, errors, and result bounds. The native module remains loaded for process lifetime because dynamically registered GGML backends are unsafe to unload/reload; model contexts and inference results are explicitly freed, and only one heavy model remains loaded.
+The first local runtime uses KokoroKoe-owned bounded C ABI shim API v2 over pinned MIT-licensed whisper.cpp rather than the Unlicense Rust wrapper. Rust owns paths, samples, source/timeline labels, explicit CPU/Vulkan selection, errors, and result bounds. Each native module remains loaded for its process lifetime because dynamically registered GGML backends are unsafe to unload/reload; model contexts and inference results are explicitly freed. A healthy worker alone owns the Vulkan model. The parent loads the CPU model only after the worker is unavailable or terminated, so only one heavy model remains loaded.
 
 ## Domain contracts
 

@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-004 - Bounded local Whisper runtime and Tiny/Base throughput decision
+- Task: P3-005 - Vulkan failure isolation and CPU recovery
 - Date: 2026-08-09
-- Outcome: resolved the Unlicense wrapper gate with a project-owned bounded C ABI shim over pinned MIT whisper.cpp v1.9.2; added strict CPU finalized-utterance/result/error ownership, a process-lifetime native module with explicit model/result destruction, malformed-load recovery, and a reproducible SHA-256-pinned Tiny/Base probe without product wiring or retained artifacts.
-- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 63 ordinary tests plus 3 capability tests; native adapter `/W4 /WX`; exact local MP3 probe on Ryzen 7 3700X with Tiny RTF 0.0916/p95 1.831 s and Base RTF 0.1924/p95 3.637 s; clean frontend/Cargo audits; final locked x64 release build. Minimum-hardware/default freeze, Base's missed latency target, packaging/product wiring, Vulkan recovery, and scheduling remain open.
-- Memory: [P3-004 checkpoint](docs/project-memory.md#p3-004---bounded-local-whisper-runtime-and-tinybase-throughput-decision)
+- Outcome: upgraded the project-owned adapter to explicit CPU/Vulkan API v2 with backend attestation; proved real Vulkan inference, forced missing-driver startup isolation, native inference-abort isolation, and exact one-shot CPU recovery with zero duplicate/lost finalized results; accepted ADR 0007 requiring a supervised Vulkan worker while leaving product worker/IPC wiring out of scope.
+- Verification: pinned copy-only LunarG SDK/Tiny/whisper.cpp inputs; generated 4.596 s local fixture; native adapter `/W4 /WX`; exact Vulkan gate passed in 24.93 s; P3-004 CPU regression passed; Node 24 frontend gates and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 66 ordinary tests plus 3 capability tests; clean frontend/Cargo audits; final locked x64 release build. AMD/Intel/non-Vulkan/packaged-worker validation, worker protocol, and scheduling/backpressure remain open.
+- Memory: [P3-005 checkpoint](docs/project-memory.md#p3-005---vulkan-failure-isolation-and-cpu-recovery)

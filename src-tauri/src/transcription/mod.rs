@@ -1,3 +1,4 @@
+mod fallback;
 mod model;
 
 #[cfg(windows)]
@@ -6,7 +7,7 @@ mod whisper;
 pub(crate) use model::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionError,
     TranscriptionFailure, TranscriptionOutcome, TranscriptionRequest, TranscriptionResult,
-    WhisperModelKind,
+    WhisperBackend, WhisperModelKind,
 };
 
 pub(crate) trait TranscriptionEngine {
@@ -134,6 +135,7 @@ mod tests {
             TranscriptionError::AdapterIncompatible,
             TranscriptionError::ModelUnavailable,
             TranscriptionError::ModelLoadFailed,
+            TranscriptionError::BackendUnavailable,
             TranscriptionError::InvalidAudio,
             TranscriptionError::InvalidTimeline,
             TranscriptionError::InferenceFailed,

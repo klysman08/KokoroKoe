@@ -15,19 +15,21 @@ use windows_sys::Win32::System::LibraryLoader::{
 
 use super::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionEngine,
-    TranscriptionError, TranscriptionRequest, TranscriptionResult, WhisperModelKind,
+    TranscriptionError, TranscriptionRequest, TranscriptionResult, WhisperBackend,
+    WhisperModelKind,
 };
 
 #[cfg(test)]
-use super::model::TRANSCRIPTION_SAMPLE_RATE;
+use super::model::{MAX_TRANSCRIPTION_SAMPLES, TRANSCRIPTION_SAMPLE_RATE};
 
-const ADAPTER_API_VERSION: u32 = 1;
+const ADAPTER_API_VERSION: u32 = 2;
 const MAX_LANGUAGE_BYTES: usize = 15;
 static ADAPTER_API: Mutex<Option<(PathBuf, &'static AdapterApi)>> = Mutex::new(None);
 
 type ApiVersionFn = unsafe extern "C" fn() -> u32;
-type ModelLoadFn = unsafe extern "C" fn(*const c_char, c_int, *mut *mut c_void) -> c_int;
+type ModelLoadFn = unsafe extern "C" fn(*const c_char, c_int, c_int, *mut *mut c_void) -> c_int;
 type ModelFreeFn = unsafe extern "C" fn(*mut c_void);
+type ModelBackendFn = unsafe extern "C" fn(*const c_void) -> c_int;
 type TranscribeFn =
     unsafe extern "C" fn(*mut c_void, *const c_float, usize, *mut *mut c_void) -> c_int;
 type ResultFreeFn = unsafe extern "C" fn(*mut c_void);
@@ -37,15 +39,16 @@ type ResultSegmentTimeFn = unsafe extern "C" fn(*const c_void, usize) -> i64;
 type ResultSegmentTextFn = unsafe extern "C" fn(*const c_void, usize) -> *const c_char;
 
 #[derive(Debug, Clone)]
-pub(crate) struct WhisperCpuConfig {
+pub(crate) struct WhisperConfig {
     pub(crate) adapter_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) model_kind: WhisperModelKind,
     pub(crate) threads: usize,
+    pub(crate) backend: WhisperBackend,
 }
 
-impl WhisperCpuConfig {
-    pub(crate) fn new(
+impl WhisperConfig {
+    pub(crate) fn cpu(
         adapter_path: impl Into<PathBuf>,
         model_path: impl Into<PathBuf>,
         model_kind: WhisperModelKind,
@@ -56,6 +59,22 @@ impl WhisperCpuConfig {
             model_path: model_path.into(),
             model_kind,
             threads,
+            backend: WhisperBackend::Cpu,
+        }
+    }
+
+    pub(crate) fn vulkan(
+        adapter_path: impl Into<PathBuf>,
+        model_path: impl Into<PathBuf>,
+        model_kind: WhisperModelKind,
+        threads: usize,
+    ) -> Self {
+        Self {
+            adapter_path: adapter_path.into(),
+            model_path: model_path.into(),
+            model_kind,
+            threads,
+            backend: WhisperBackend::Vulkan,
         }
     }
 }
@@ -66,6 +85,7 @@ struct AdapterApi {
     module: usize,
     model_load: ModelLoadFn,
     model_free: ModelFreeFn,
+    model_backend: ModelBackendFn,
     transcribe: TranscribeFn,
     result_free: ResultFreeFn,
     result_language: ResultLanguageFn,
@@ -137,6 +157,7 @@ impl AdapterApi {
             module: module as usize,
             model_load: symbol!("kk_whisper_model_load", ModelLoadFn),
             model_free: symbol!("kk_whisper_model_free", ModelFreeFn),
+            model_backend: symbol!("kk_whisper_model_backend", ModelBackendFn),
             transcribe: symbol!("kk_whisper_transcribe", TranscribeFn),
             result_free: symbol!("kk_whisper_result_free", ResultFreeFn),
             result_language: symbol!("kk_whisper_result_language", ResultLanguageFn),
@@ -158,15 +179,16 @@ impl AdapterApi {
     }
 }
 
-pub(crate) struct WhisperCpuEngine {
+pub(crate) struct WhisperEngine {
     api: &'static AdapterApi,
     model: usize,
     model_kind: WhisperModelKind,
+    backend: WhisperBackend,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl WhisperCpuEngine {
-    pub(crate) fn load(config: WhisperCpuConfig) -> Result<Self, TranscriptionError> {
+impl WhisperEngine {
+    pub(crate) fn load(config: WhisperConfig) -> Result<Self, TranscriptionError> {
         if !config.model_path.is_file() {
             return Err(TranscriptionError::ModelUnavailable);
         }
@@ -184,21 +206,45 @@ impl WhisperCpuEngine {
         let status = unsafe {
             // SAFETY: the adapter API was version-checked, the path is a live C string, the thread
             // count is bounded, and `model` is a valid output slot.
-            (api.model_load)(model_path.as_ptr(), config.threads as c_int, &mut model)
+            (api.model_load)(
+                model_path.as_ptr(),
+                config.threads as c_int,
+                config.backend as c_int,
+                &mut model,
+            )
         };
+        if status == 4 {
+            return Err(TranscriptionError::BackendUnavailable);
+        }
         if status != 0 || model.is_null() {
             return Err(TranscriptionError::ModelLoadFailed);
+        }
+        let loaded_backend = unsafe {
+            // SAFETY: the non-null model handle is owned here and the adapter API was version-checked.
+            (api.model_backend)(model)
+        };
+        if loaded_backend != config.backend as c_int {
+            unsafe {
+                // SAFETY: this branch still uniquely owns the successfully loaded model.
+                (api.model_free)(model);
+            }
+            return Err(TranscriptionError::AdapterIncompatible);
         }
         Ok(Self {
             api,
             model: model as usize,
             model_kind: config.model_kind,
+            backend: config.backend,
             _not_sync: PhantomData,
         })
     }
 
     pub(crate) const fn model_kind(&self) -> WhisperModelKind {
         self.model_kind
+    }
+
+    pub(crate) const fn backend(&self) -> WhisperBackend {
+        self.backend
     }
 
     fn copy_native_text(
@@ -220,7 +266,7 @@ impl WhisperCpuEngine {
     }
 }
 
-impl TranscriptionEngine for WhisperCpuEngine {
+impl TranscriptionEngine for WhisperEngine {
     fn transcribe(
         &mut self,
         request: TranscriptionRequest<'_>,
@@ -308,7 +354,7 @@ impl TranscriptionEngine for WhisperCpuEngine {
     }
 }
 
-impl Drop for WhisperCpuEngine {
+impl Drop for WhisperEngine {
     fn drop(&mut self) {
         if self.model != 0 {
             unsafe {
@@ -429,9 +475,8 @@ mod tests {
         utterances: &[DetectedUtterance],
     ) -> Metrics {
         let load_started = Instant::now();
-        let mut engine =
-            WhisperCpuEngine::load(WhisperCpuConfig::new(adapter, model, kind, threads))
-                .expect("load CPU Whisper engine");
+        let mut engine = WhisperEngine::load(WhisperConfig::cpu(adapter, model, kind, threads))
+            .expect("load CPU Whisper engine");
         let model_load = load_started.elapsed();
         assert_eq!(engine.model_kind(), kind);
 
@@ -502,7 +547,7 @@ mod tests {
         invalid_model
             .write_all(b"not a Whisper model")
             .expect("write invalid model marker");
-        match WhisperCpuEngine::load(WhisperCpuConfig::new(
+        match WhisperEngine::load(WhisperConfig::cpu(
             &adapter,
             invalid_model.path(),
             WhisperModelKind::Tiny,
@@ -537,5 +582,200 @@ mod tests {
                 "CPU aggregate RTF must remain below 1.0"
             );
         }
+    }
+
+    const P3_005_WORKER_TEST: &str = "transcription::whisper::tests::whisper_vulkan_probe_worker";
+    const P3_005_STARTUP_UNAVAILABLE_EXIT: i32 = 21;
+    const P3_005_WORKER_TIMEOUT: Duration = Duration::from_secs(60);
+
+    fn decode_raw_fixture(path: &Path) -> Vec<f32> {
+        let bytes = fs::read(path).expect("read generated raw fixture");
+        assert!(!bytes.is_empty(), "generated raw fixture must not be empty");
+        assert_eq!(bytes.len() % 4, 0, "raw fixture must be f32 aligned");
+        assert!(
+            bytes.len() <= MAX_TRANSCRIPTION_SAMPLES * 4,
+            "raw fixture exceeds the finalized-utterance bound"
+        );
+        let samples: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte sample")))
+            .collect();
+        assert!(
+            samples
+                .iter()
+                .all(|sample| sample.is_finite() && (-1.0..=1.0).contains(sample)),
+            "raw fixture samples must be finite and normalized"
+        );
+        samples
+    }
+
+    fn p3_005_request(samples: &[f32]) -> TranscriptionRequest<'_> {
+        let duration_ms = samples.len() as u64 * 1_000 / TRANSCRIPTION_SAMPLE_RATE as u64;
+        TranscriptionRequest {
+            source: AudioSource::SystemOutput,
+            start_ms: 12_000,
+            end_ms: 12_000 + duration_ms,
+            samples,
+        }
+    }
+
+    fn p3_005_paths() -> (PathBuf, PathBuf, PathBuf, usize) {
+        let adapter = PathBuf::from(
+            env::var_os("KOKOROKOE_WHISPER_ADAPTER").expect("adapter environment path"),
+        );
+        let model = PathBuf::from(
+            env::var_os("KOKOROKOE_WHISPER_TINY_MODEL").expect("Tiny model environment path"),
+        );
+        let fixture =
+            PathBuf::from(env::var_os("KOKOROKOE_P3_005_FIXTURE").expect("generated fixture path"));
+        let threads = env::var("KOKOROKOE_WHISPER_THREADS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(8);
+        assert!((1..=64).contains(&threads));
+        (adapter, model, fixture, threads)
+    }
+
+    #[test]
+    #[ignore = "isolated child for the explicit P3-005 Vulkan probe"]
+    fn whisper_vulkan_probe_worker() {
+        let mode = env::var("KOKOROKOE_P3_005_WORKER_MODE").expect("worker mode");
+        let (adapter, model, fixture, threads) = p3_005_paths();
+        let engine = WhisperEngine::load(WhisperConfig::vulkan(
+            adapter,
+            model,
+            WhisperModelKind::Tiny,
+            threads,
+        ));
+
+        if mode == "startup_unavailable" {
+            match engine {
+                Err(TranscriptionError::BackendUnavailable) => {
+                    std::process::exit(P3_005_STARTUP_UNAVAILABLE_EXIT);
+                }
+                Err(other) => panic!("unexpected startup failure: {}", other.code()),
+                Ok(_) => panic!("forced missing driver must not attest Vulkan"),
+            }
+        }
+
+        let mut engine = engine.expect("load attested Vulkan engine");
+        assert_eq!(engine.backend(), WhisperBackend::Vulkan);
+        let samples = decode_raw_fixture(&fixture);
+        let request = p3_005_request(&samples);
+        let result = engine.transcribe(request).expect("Vulkan inference result");
+        assert_eq!(result.source, request.source);
+        assert_eq!(result.utterance_start_ms, request.start_ms);
+        assert_eq!(result.utterance_end_ms, request.end_ms);
+        assert!(!result.text.is_empty(), "generated speech must transcribe");
+        assert_eq!(mode, "success", "fault injection should abort the worker");
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum WorkerExit {
+        Exited(Option<i32>),
+        TimedOut,
+    }
+
+    fn run_p3_005_worker(
+        mode: &str,
+        broken_driver: Option<&Path>,
+        abort_inference: bool,
+    ) -> WorkerExit {
+        let (adapter, model, fixture, threads) = p3_005_paths();
+        let mut command = Command::new(env::current_exe().expect("current test executable"));
+        command
+            .args([P3_005_WORKER_TEST, "--exact", "--ignored"])
+            .env("KOKOROKOE_P3_005_WORKER_MODE", mode)
+            .env("KOKOROKOE_WHISPER_ADAPTER", adapter)
+            .env("KOKOROKOE_WHISPER_TINY_MODEL", model)
+            .env("KOKOROKOE_P3_005_FIXTURE", fixture)
+            .env("KOKOROKOE_WHISPER_THREADS", threads.to_string())
+            .env_remove("KOKOROKOE_P3_005_ABORT_VULKAN_INFERENCE")
+            .env_remove("VK_DRIVER_FILES")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(path) = broken_driver {
+            command.env("VK_DRIVER_FILES", path);
+        }
+        if abort_inference {
+            command.env("KOKOROKOE_P3_005_ABORT_VULKAN_INFERENCE", "1");
+        }
+
+        let mut child = command.spawn().expect("spawn isolated Vulkan worker");
+        let deadline = Instant::now() + P3_005_WORKER_TIMEOUT;
+        loop {
+            if let Some(status) = child.try_wait().expect("poll isolated Vulkan worker") {
+                return WorkerExit::Exited(status.code());
+            }
+            if Instant::now() >= deadline {
+                child.kill().expect("terminate timed-out Vulkan worker");
+                child.wait().expect("reap timed-out Vulkan worker");
+                return WorkerExit::TimedOut;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn transcribe_p3_005_cpu() -> TranscriptionResult {
+        let (adapter, model, fixture, threads) = p3_005_paths();
+        let samples = decode_raw_fixture(&fixture);
+        let request = p3_005_request(&samples);
+        let mut engine = WhisperEngine::load(WhisperConfig::cpu(
+            adapter,
+            model,
+            WhisperModelKind::Tiny,
+            threads,
+        ))
+        .expect("load CPU fallback engine");
+        assert_eq!(engine.backend(), WhisperBackend::Cpu);
+        let result = engine.transcribe(request).expect("CPU fallback result");
+        assert_eq!(result.source, request.source);
+        assert_eq!(result.utterance_start_ms, request.start_ms);
+        assert_eq!(result.utterance_end_ms, request.end_ms);
+        assert!(!result.text.is_empty(), "generated speech must transcribe");
+        result
+    }
+
+    #[test]
+    #[ignore = "explicit P3-005 Vulkan startup/crash isolation and CPU recovery probe"]
+    fn whisper_vulkan_failure_isolation_gate() {
+        assert_eq!(
+            run_p3_005_worker("success", None, false),
+            WorkerExit::Exited(Some(0)),
+            "the accelerated path must attest and execute Vulkan"
+        );
+
+        let broken_driver = env::temp_dir().join("kokorokoe-p3-005-missing-vulkan-driver.json");
+        assert!(!broken_driver.exists());
+        assert_eq!(
+            run_p3_005_worker("startup_unavailable", Some(&broken_driver), false),
+            WorkerExit::Exited(Some(P3_005_STARTUP_UNAVAILABLE_EXIT)),
+            "a missing Vulkan driver must fail with the fixed unavailable status"
+        );
+        let startup_recovery = transcribe_p3_005_cpu();
+
+        let inference_exit = run_p3_005_worker("inference_abort", None, true);
+        assert_ne!(inference_exit, WorkerExit::TimedOut);
+        assert_ne!(inference_exit, WorkerExit::Exited(Some(0)));
+        assert_ne!(
+            inference_exit,
+            WorkerExit::Exited(Some(101)),
+            "the native fault hook must terminate below the Rust test boundary"
+        );
+        let inference_recovery = transcribe_p3_005_cpu();
+
+        assert_eq!(startup_recovery.source, inference_recovery.source);
+        assert_eq!(
+            startup_recovery.utterance_start_ms,
+            inference_recovery.utterance_start_ms
+        );
+        assert_eq!(
+            startup_recovery.utterance_end_ms,
+            inference_recovery.utterance_end_ms
+        );
+        println!(
+            "vulkan_attested=true startup_failure_isolated=true inference_abort_isolated=true startup_cpu_results=1 inference_cpu_results=1 duplicate_results=0 lost_results=0 supervised_worker_required=true"
+        );
     }
 }

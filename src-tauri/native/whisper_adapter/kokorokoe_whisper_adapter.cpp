@@ -1,11 +1,14 @@
 #include "kokorokoe_whisper_adapter.h"
 
+#include "ggml-backend.h"
 #include "whisper.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <string>
@@ -14,14 +17,17 @@
 
 namespace {
 
-constexpr uint32_t kApiVersion = 1;
+constexpr uint32_t kApiVersion = 2;
 constexpr size_t kMaximumSamples = 480000;
 constexpr size_t kMaximumSegments = 256;
 constexpr size_t kMaximumTextBytes = 1024 * 1024;
+constexpr int32_t kBackendCpu = KK_WHISPER_BACKEND_CPU;
+constexpr int32_t kBackendVulkan = KK_WHISPER_BACKEND_VULKAN;
 
 struct Model {
     whisper_context *context = nullptr;
     int32_t threads = 1;
+    int32_t backend = kBackendCpu;
 
     ~Model() {
         if (context != nullptr) {
@@ -55,6 +61,40 @@ bool valid_samples(const float *samples, size_t count) {
     return true;
 }
 
+bool backend_is_vulkan(ggml_backend_dev_t device) {
+    const enum ggml_backend_dev_type device_type = ggml_backend_dev_type(device);
+    if (device_type != GGML_BACKEND_DEVICE_TYPE_GPU &&
+        device_type != GGML_BACKEND_DEVICE_TYPE_IGPU) {
+        return false;
+    }
+    const ggml_backend_reg_t registry = ggml_backend_dev_backend_reg(device);
+    const char *name = registry == nullptr ? nullptr : ggml_backend_reg_name(registry);
+    return name != nullptr && _stricmp(name, "Vulkan") == 0;
+}
+
+bool vulkan_device_available() {
+    for (size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+        if (backend_is_vulkan(ggml_backend_dev_get(index))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+#if defined(KK_WHISPER_PROTOTYPE_FAULT_INJECTION)
+bool prototype_should_abort_vulkan_inference() {
+    char *value = nullptr;
+    size_t length = 0;
+    if (_dupenv_s(&value, &length, "KOKOROKOE_P3_005_ABORT_VULKAN_INFERENCE") != 0 ||
+        value == nullptr) {
+        return false;
+    }
+    const bool should_abort = std::strcmp(value, "1") == 0;
+    std::free(value);
+    return should_abort;
+}
+#endif
+
 }  // namespace
 
 uint32_t kk_whisper_api_version(void) {
@@ -64,19 +104,24 @@ uint32_t kk_whisper_api_version(void) {
 int32_t kk_whisper_model_load(
     const char *model_path_utf8,
     int32_t threads,
+    int32_t backend,
     void **model_out) {
     if (model_out == nullptr) {
         return 1;
     }
     *model_out = nullptr;
-    if (model_path_utf8 == nullptr || model_path_utf8[0] == '\0' || threads < 1 || threads > 64) {
+    if (model_path_utf8 == nullptr || model_path_utf8[0] == '\0' || threads < 1 || threads > 64 ||
+        (backend != kBackendCpu && backend != kBackendVulkan)) {
         return 1;
     }
 
     try {
         whisper_log_set(quiet_log_callback, nullptr);
+        if (backend == kBackendVulkan && !vulkan_device_available()) {
+            return 4;
+        }
         whisper_context_params parameters = whisper_context_default_params();
-        parameters.use_gpu = false;
+        parameters.use_gpu = backend == kBackendVulkan;
         parameters.flash_attn = false;
         std::unique_ptr<Model> model(new Model{});
         model->context = whisper_init_from_file_with_params(model_path_utf8, parameters);
@@ -84,6 +129,7 @@ int32_t kk_whisper_model_load(
             return 2;
         }
         model->threads = threads;
+        model->backend = backend;
         *model_out = model.release();
         return 0;
     } catch (...) {
@@ -94,6 +140,11 @@ int32_t kk_whisper_model_load(
 void kk_whisper_model_free(void *model) {
     delete static_cast<Model *>(model);
     whisper_log_set(nullptr, nullptr);
+}
+
+int32_t kk_whisper_model_backend(const void *model_pointer) {
+    const auto *model = static_cast<const Model *>(model_pointer);
+    return model == nullptr ? -1 : model->backend;
 }
 
 int32_t kk_whisper_transcribe(
@@ -111,6 +162,11 @@ int32_t kk_whisper_transcribe(
     }
 
     try {
+#if defined(KK_WHISPER_PROTOTYPE_FAULT_INJECTION)
+        if (model->backend == kBackendVulkan && prototype_should_abort_vulkan_inference()) {
+            std::abort();
+        }
+#endif
         whisper_full_params parameters = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
         parameters.n_threads = model->threads;
         parameters.translate = false;

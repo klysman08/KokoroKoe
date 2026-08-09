@@ -112,6 +112,18 @@ P3-007 reuses the existing Rust standard library, `wasapi` 0.23.0, `windows-sys`
 
 P3-008 uses Rust standard-library process/pipe/thread/JSON support, existing `serde`/`serde_json`, the existing project-owned whisper.cpp adapter API v2, and additional `windows-sys` 0.61.2 Job Objects/Threading feature projections. It adds no package, native library, model, audio fixture, network client, command, event, capability, or lockfile entry. The exact runner reuses the SHA-256-verified external Tiny model and P3-005 adapter/generated fixture; no external artifact is packaged or copied into the repository.
 
+## P3-010 model-management prototype inventory
+
+| Area | Resolved direct version | License | Notes |
+| --- | ---: | --- | --- |
+| Rust HTTPS/downloads | `reqwest` 0.13.4, default features disabled, `blocking` + `rustls` | MIT OR Apache-2.0 | Rust-owned fixed-catalog HTTPS client; no cookies, JSON request API, compression, system proxy, HTTP/2, or frontend network capability enabled |
+| Integrity | `sha2` 0.11.0 | MIT OR Apache-2.0 | Streaming SHA-256 over exact staged and installed model files |
+| TLS implementation | `rustls` 0.23.43, `rustls-platform-verifier` 0.7.0, AWS-LC transitive graph | MIT OR Apache-2.0, ISC, and compatible permissive licenses | Platform certificate verification and bundled cryptographic provider selected by reqwest's current `rustls` feature; adds build-time CMake/AWS-LC compilation but no separately managed application DLL |
+
+The curated Tiny/Base weights remain MIT-identified third-party cache artifacts from `ggerganov/whisper.cpp`, pinned to revision `5359861c739e955e79d9a303bcbc70fb988958b1`; they are neither committed nor packaged. The exact local gate verifies both existing P3-004 files. Distribution notices, model redistribution review, actual packaged download behavior, and native worker layout remain release prerequisites.
+
+The Windows-targeted Cargo license policy now explicitly accepts ISC and MIT-0 in addition to its existing permissive allowlist. Those identifiers are required by `rustls-webpki`, `untrusted`, and the AWS-LC graph; no crate-specific license exception or copyleft term was added.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.
@@ -147,7 +159,7 @@ P2-001 audit evidence:
 | Credentials | `keyring` Windows backend | 4.1.x | MIT OR Apache-2.0 | Windows Credential Manager adapter |
 | YAML | `serde_yaml_ng` | 0.10.0 | MIT | Markdown front matter |
 | Audio files | `hound` | Resolve in Phase 3 | Apache-2.0 | Optional WAV retention |
-| Integrity | `sha2`, `crc32fast` | Resolve in implementation phase | MIT OR Apache-2.0 | Downloads and recovery journal |
+| Integrity | `sha2` 0.11.0; `crc32fast` unresolved | SHA-256 resolved in P3-010 | MIT OR Apache-2.0 | Verified model downloads now; recovery-journal checksum remains future work |
 | Serialization | `serde` 1.0.229, `serde_json` 1.0.151 | Resolved in P2-002 | MIT OR Apache-2.0 | Rust contracts and JSON boundaries; `serde_json` is currently test-only |
 | IDs and time | `uuid` 1.24.0; time library unresolved | UUID resolved in P2-002 | MIT OR Apache-2.0 | Correlation and preset IDs now; RFC 3339 time support remains future work |
 | Logging/errors | `tracing` 0.1.44, `tracing-subscriber` 0.3.23; `thiserror` unresolved | Tracing resolved in P2-002 | MIT; MIT OR Apache-2.0 | Sanitized structured logs and typed errors |

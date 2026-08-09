@@ -1,4 +1,5 @@
 mod fallback;
+mod integration;
 mod model;
 pub(crate) mod scheduler;
 
@@ -21,6 +22,17 @@ pub(crate) trait TranscriptionEngine {
         &mut self,
         request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionResult, TranscriptionError>;
+
+    fn transcribe_with_cancel(
+        &mut self,
+        request: TranscriptionRequest<'_>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<TranscriptionResult, TranscriptionError> {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(TranscriptionError::WorkerCancelled);
+        }
+        self.transcribe(request)
+    }
 }
 
 pub(crate) struct TranscriptionOwner<E> {

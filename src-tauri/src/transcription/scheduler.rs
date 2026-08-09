@@ -350,15 +350,7 @@ impl TranscriptionScheduler {
     }
 
     pub(crate) fn next_job(&mut self) -> Option<ScheduledTranscriptionJob> {
-        if let Some(job) = self.finals.pop_front() {
-            self.queued_final_speech_ms = self
-                .queued_final_speech_ms
-                .saturating_sub(job.duration_ms());
-            self.queued_final_samples = self
-                .queued_final_samples
-                .saturating_sub(job.request.samples.len());
-            self.diagnostics.finals_dequeued = self.diagnostics.finals_dequeued.saturating_add(1);
-            self.update_partial_mode();
+        if let Some(job) = self.next_final_job() {
             return Some(job);
         }
 
@@ -374,6 +366,29 @@ impl TranscriptionScheduler {
         self.next_partial_source = other_source(source);
         self.diagnostics.partials_dequeued = self.diagnostics.partials_dequeued.saturating_add(1);
         Some(job)
+    }
+
+    pub(crate) fn next_final_job(&mut self) -> Option<ScheduledTranscriptionJob> {
+        let job = self.finals.pop_front()?;
+        self.queued_final_speech_ms = self
+            .queued_final_speech_ms
+            .saturating_sub(job.duration_ms());
+        self.queued_final_samples = self
+            .queued_final_samples
+            .saturating_sub(job.request.samples.len());
+        self.diagnostics.finals_dequeued = self.diagnostics.finals_dequeued.saturating_add(1);
+        self.update_partial_mode();
+        Some(job)
+    }
+
+    pub(crate) fn next_final_start_ms(&self) -> Option<u64> {
+        self.finals.front().map(ScheduledTranscriptionJob::start_ms)
+    }
+
+    pub(crate) fn discard_partials(&mut self) -> usize {
+        let discarded = self.partials.count();
+        self.partials.clear();
+        discarded
     }
 
     pub(crate) fn queued_final_jobs(&self) -> usize {

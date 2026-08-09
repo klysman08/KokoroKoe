@@ -90,7 +90,7 @@ pub(crate) struct WorkerFailure {
 }
 
 impl WorkerFailure {
-    const fn new(kind: WorkerFailureKind) -> Self {
+    pub(crate) const fn new(kind: WorkerFailureKind) -> Self {
         Self { kind }
     }
 
@@ -823,6 +823,14 @@ where
         request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionResult, TranscriptionError> {
         self.transcribe_with_cancel(request, &AtomicBool::new(false))
+    }
+
+    fn transcribe_with_cancel(
+        &mut self,
+        request: TranscriptionRequest<'_>,
+        cancelled: &AtomicBool,
+    ) -> Result<TranscriptionResult, TranscriptionError> {
+        SupervisedFallbackEngine::transcribe_with_cancel(self, request, cancelled)
     }
 }
 

@@ -51,6 +51,7 @@ pub(crate) struct ProcessingOutcome {
     pub(crate) vad_resets: u64,
     pub(crate) vad_pending_samples: u64,
     pub(crate) vad_buffered_samples: u64,
+    pub(crate) vad_ordering_watermark_ms: Option<u64>,
 }
 
 impl ProcessingOutcome {
@@ -70,6 +71,7 @@ impl ProcessingOutcome {
         self.vad_resets = self.vad_resets.saturating_add(outcome.resets);
         self.vad_pending_samples = outcome.pending_samples;
         self.vad_buffered_samples = outcome.buffered_samples;
+        self.vad_ordering_watermark_ms = outcome.ordering_watermark_ms;
     }
 
     fn vad_only(outcome: VadProcessOutcome) -> Self {
@@ -91,6 +93,7 @@ impl ProcessingOutcome {
             vad_resets: 0,
             vad_pending_samples: 0,
             vad_buffered_samples: 0,
+            vad_ordering_watermark_ms: None,
         };
         processing.merge_vad(outcome);
         processing
@@ -163,6 +166,7 @@ impl SourceProcessor {
             vad_resets: 0,
             vad_pending_samples: 0,
             vad_buffered_samples: 0,
+            vad_ordering_watermark_ms: None,
         };
         if let Some(reset) = reset_outcome {
             outcome.merge_vad(reset);
@@ -685,6 +689,8 @@ mod tests {
             assert!(produced.abs_diff((TARGET_SAMPLE_RATE / 2) as usize) <= 320);
             assert!(outcome.pending_native_frames < sample_rate.div_ceil(100) as u64);
             assert!(outcome.pending_normalized_samples < 160);
+            assert!(outcome.vad_ordering_watermark_ms.is_some());
+            assert!(outcome.vad_ordering_watermark_ms.unwrap() <= 500);
         }
     }
 

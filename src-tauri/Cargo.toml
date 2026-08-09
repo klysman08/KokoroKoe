@@ -24,10 +24,12 @@ crossbeam-channel = "0.5.15"
 earshot = "=1.2.1"
 fs2 = "0.4"
 rfd = { version = "0.17", default-features = false }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"] }
 rubato = { version = "4.0.0", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11.0"
 tauri = { version = "2", features = [] }
 tempfile = "3"
 tracing = "0.1"
@@ -40,6 +42,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_LibraryLoader",
   "Win32_System_JobObjects",
   "Win32_System_Performance",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_System_WindowsProgramming",
 ] }

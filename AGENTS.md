@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-008 - Supervised Vulkan worker protocol and lifecycle
+- Task: P3-010 - Curated Whisper model management and installation
 - Date: 2026-08-09
-- Outcome: implemented strict bounded protocol v1 over anonymous pipes, a private same-executable Vulkan worker, Windows Job Object process-tree cleanup, backend attestation, timeouts/cancellation, corruption rejection, and lazy exact one-shot CPU recovery only after worker termination, without frontend process capability or product wiring.
-- Verification: one attested Vulkan result; seven failed accelerated attempts each yielded exactly one CPU result; one cancellation yielded none; zero duplicates/losses; confirmed descendant cleanup; exact gate 30.63 s; Rust 1.88 locked fmt/Clippy, 81 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean audits/policy; locked x64 release build with no debug fault-hook strings.
-- Memory: [P3-008 checkpoint](docs/project-memory.md#p3-008---supervised-vulkan-worker-protocol-and-lifecycle)
+- Outcome: added the immutable multilingual Tiny/Base catalog plus Rust-owned disk/memory diagnostics, resumable bounded downloads, exact length/SHA-256 verification, synced atomic installation, verified-only ephemeral selection, deletion, and interrupted/corrupt-cache recovery without commands/events/UI or native/model packaging.
+- Verification: 12 focused deterministic model tests and the external exact Tiny/Base hash gate passed; Rust 1.88 locked fmt/Clippy, 102 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean npm/Cargo audits and license policy after explicit ISC/MIT-0 review; locked x64 release build.
+- Memory: [P3-010 checkpoint](docs/project-memory.md#p3-010---curated-whisper-model-management-and-installation)

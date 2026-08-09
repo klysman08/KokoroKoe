@@ -2,6 +2,8 @@ mod audio;
 mod commands;
 mod domain;
 mod logging;
+#[allow(dead_code)] // P3-010 is an intentionally unwired model-management prototype.
+mod models;
 mod persistence;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.

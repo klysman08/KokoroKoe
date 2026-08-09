@@ -45,6 +45,7 @@ pub(crate) struct VadProcessOutcome {
     pub(crate) resets: u64,
     pub(crate) pending_samples: u64,
     pub(crate) buffered_samples: u64,
+    pub(crate) ordering_watermark_ms: Option<u64>,
 }
 
 impl VadProcessOutcome {
@@ -60,6 +61,7 @@ impl VadProcessOutcome {
         self.resets = self.resets.saturating_add(other.resets);
         self.pending_samples = other.pending_samples;
         self.buffered_samples = other.buffered_samples;
+        self.ordering_watermark_ms = other.ordering_watermark_ms;
     }
 }
 
@@ -322,7 +324,17 @@ impl<P: FramePredictor> VadSegmenter<P> {
                 .as_ref()
                 .map_or(0, |active| active.samples.len()))
             as u64;
+        outcome.ordering_watermark_ms = self.ordering_watermark_ms();
         debug_assert!(outcome.buffered_samples <= MAX_VAD_BUFFERED_SAMPLES as u64);
+    }
+
+    fn ordering_watermark_ms(&self) -> Option<u64> {
+        if let Some(active) = self.active.as_ref() {
+            return Some(active.start_ms);
+        }
+        let pending_start_ms = self.pending_start_ms.or(self.expected_chunk_start_ms)?;
+        let pre_roll_ms = self.pre_roll.len() as u64 * 1_000 / SAMPLE_RATE;
+        Some(pending_start_ms.saturating_sub(pre_roll_ms))
     }
 }
 
@@ -388,6 +400,20 @@ mod tests {
         assert_eq!(utterance.end_ms, 980);
         assert_eq!(utterance.samples.len(), 15_360);
         assert_eq!(utterance.reason, UtteranceEndReason::TrailingSilence);
+    }
+
+    #[test]
+    fn ordering_watermark_tracks_pre_roll_active_speech_and_finalization() {
+        let (_, silence) = run_script(vec![false; 20]);
+        assert_eq!(silence.ordering_watermark_ms, Some(20));
+
+        let (_, active) = run_script([vec![false; 20], vec![true; 10]].concat());
+        assert_eq!(active.ordering_watermark_ms, Some(20));
+
+        let (_, finalized) =
+            run_script([vec![false; 20], vec![true; 10], vec![false; 35]].concat());
+        assert_eq!(finalized.utterances.len(), 1);
+        assert_eq!(finalized.ordering_watermark_ms, Some(992));
     }
 
     #[test]

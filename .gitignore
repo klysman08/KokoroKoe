@@ -28,8 +28,10 @@ workspace
 *.sqlite3
 *.wav
 *.partial.wav
+*.mp3
 *.ggml
 *.gguf
+ggml-*.bin
 
 # Editor directories and files
 .vscode/*

@@ -78,6 +78,17 @@ P3-002 adds seven locked Rust packages and no frontend package, native DLL, netw
 
 The bundled comparison model is 2,327,524 bytes and originates from the MIT-licensed [Silero VAD upstream](https://github.com/snakers4/silero-vad). It is fetched as part of the development crate source cache, is not a KokoroKoe catalog/download, and is not committed or packaged. Earshot passed the frozen generated-corpus gates and is the only new production dependency. P3-003 adds no frontend package, external request, persisted audio, or release DLL.
 
+## P3-004 resolved local-transcription prototype inventory
+
+| Area | Resolved version | License | Notes |
+| --- | ---: | --- | --- |
+| Native inference | `whisper.cpp` v1.9.2, commit `306c88f4d1286aec1bf96e544632897886af5501` | MIT | Official CPU-only library built outside the repository for the explicit throughput probe |
+| Rust/native boundary | KokoroKoe C ABI adapter API v1 | Project source | Bounded model/result ownership and fixed error boundary; no third-party Rust wrapper or wrapper license is introduced |
+| Windows loading | `windows-sys` 0.61.2 existing dependency, expanded features | MIT OR Apache-2.0 | Restricted native-library search and process-lifetime adapter handle; no new Rust package |
+| Probe decode | local FFmpeg executable | LGPL/GPL depending on local build | Development-only process invoked by the explicit script; not linked, bundled, or called by the application |
+
+P3-004 rejects `whisper-rs`'s Unlicense route and resolves R-006 with the minimal MIT adapter. Multilingual Tiny and Base weights are downloaded only by the explicit local script into `%LOCALAPPDATA%`, verified against pinned SHA-256 values, and are not application dependencies or repository artifacts. Distribution notices and native/model packaging remain required before shipping.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.
@@ -101,8 +112,8 @@ P2-001 audit evidence:
 | Desktop | `tauri` | 2.11.5 | MIT OR Apache-2.0 | Required |
 | Windows audio | `wasapi` | 0.23.0 | MIT | Preferred WASAPI wrapper |
 | Windows APIs | `windows` | 0.62.x | MIT OR Apache-2.0 | QPC and missing Core Audio APIs |
-| Transcription | `whisper-rs` | 0.16.0 | Unlicense | Conditional on license and prototype review |
-| Native inference | `whisper.cpp` | pinned commit | MIT | Required underlying engine |
+| Transcription | KokoroKoe C ABI adapter | API v1 | MIT | Selected; bounded Rust wrapper over the native API |
+| Native inference | `whisper.cpp` | v1.9.2 / `306c88f` | MIT | Selected CPU prototype engine |
 | Resampling | `rubato` | 4.0.0 | MIT OR Apache-2.0 | Required |
 | VAD | `earshot` | 1.2.1 | MIT OR Apache-2.0 | Initial candidate; compare with Silero |
 | Runtime | `tokio`, `tokio-util` | Resolve in Phase 2 | MIT | Required asynchronous services/cancellation |
@@ -119,7 +130,7 @@ P2-001 audit evidence:
 | Logging/errors | `tracing` 0.1.44, `tracing-subscriber` 0.3.23; `thiserror` unresolved | Tracing resolved in P2-002 | MIT; MIT OR Apache-2.0 | Sanitized structured logs and typed errors |
 | Safe files/secrets | `tempfile` 3.27.0; `zeroize` unresolved | `tempfile` resolved in P2-003 | MIT OR Apache-2.0 | Workspace health probe now; atomic staging and secret zeroization remain phase-specific |
 
-`whisper-rs` uses the Unlicense while `whisper.cpp` is MIT. Before accepting `whisper-rs` for distribution, record explicit project/license approval. If rejected, implement a minimal adapter to the MIT `whisper.cpp` C API without copying Handy.
+`whisper-rs` uses the Unlicense and was not accepted. P3-004 instead implements the approved minimal adapter to the MIT `whisper.cpp` C API; future wrapper changes must preserve the license decision or record a new review.
 
 Model catalog entries must retain the model license, source repository and revision, exact byte count, SHA-256, supported languages, and attribution. Downloaded model weights are not covered by the application license.
 

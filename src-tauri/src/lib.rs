@@ -4,6 +4,8 @@ mod domain;
 mod logging;
 mod persistence;
 mod security;
+#[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
+mod transcription;
 
 use std::io;
 

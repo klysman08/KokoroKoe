@@ -39,6 +39,8 @@ P3-002 processes those packets only in Rust. Each source is decoded, downmixed, 
 
 P3-003 runs an independent local Earshot detector and bounded utterance segmenter for each normalized source. Active samples are held only in Rust memory, hard-split at 30 seconds, counted, and immediately discarded; neither VAD frames nor utterance samples cross a command/event boundary or enter persistence. The frontend status receives only aggregate classifications, reset/rejection/split counts, bounded buffer occupancy, and the latest finalized timing/end reason. The Silero comparison model is development-only and is not packaged or downloaded by the application.
 
+P3-004 transcribes only explicit finalized utterances inside a local Rust-owned CPU runtime. The opt-in probe decodes one user-supplied MP3 in memory and passes bounded samples through the production VAD and pinned multilingual Tiny/Base models. It prints aggregate timing and result counts only; transcript text, detected language, samples, paths, source audio, model weights, and native build output are not logged, persisted, committed, or sent to React or a service. The application still has no model downloader, live transcription command/event, audio retention, or transcript persistence path.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.
@@ -50,6 +52,7 @@ P3-003 runs an independent local Earshot detector and bounded utterance segmente
 - Physical speaker-to-microphone latency is not corrected; timestamps describe capture time.
 - P3-002 uses equal-weight channel averaging rather than speaker-mask weighting, reports but does not compensate sinc startup delay, and discards partial/tail buffers on format change or prototype stop.
 - P3-003's generated bake-off corpus is synthetic and favors Earshot; it does not establish performance across real speakers, languages, rooms, noise, music, echo, overlapping speech, or devices. VAD can still miss speech or classify non-speech as speech.
+- P3-004's local MP3 is one unlabelled user recording on one CPU, not an accuracy, language, noise, minimum-hardware, or redistributable fixture. Base met the real-time gate but missed the two-second p95 target on seven VAD-finalized utterances.
 
 ## Transcription limitations
 

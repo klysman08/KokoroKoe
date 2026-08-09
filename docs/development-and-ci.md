@@ -82,3 +82,13 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib audio::vad::tests
 ```
 
 This command loads Silero's bundled comparison model from the Cargo development dependency and writes no model or audio file to the repository. Its synthetic corpus is a regression gate, not a substitute for the broader consented/licensed real-speech matrix.
+
+## Local Whisper CPU throughput probe
+
+The ordinary suite skips P3-004's model/audio-dependent throughput gate. With FFmpeg, Git, CMake, MSVC, and the local test MP3 available, run:
+
+```powershell
+.\scripts\run-whisper-throughput-prototype.ps1
+```
+
+The script verifies pinned whisper.cpp source and Tiny/Base SHA-256 values, builds the MIT C adapter, and runs both models CPU-only. All source, DLL, model, decoded-audio, and transcript artifacts remain under `%LOCALAPPDATA%\KokoroKoe\p3-004` or in memory; output contains aggregate metrics only. See [P3-004 bounded local Whisper runtime prototype](whisper-runtime-prototype.md).

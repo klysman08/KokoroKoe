@@ -31,7 +31,8 @@ const forbiddenTrackedFiles = trackedFiles.filter((path) => {
     fileName === ".env" ||
     (fileName.startsWith(".env.") && fileName !== ".env.example")
   const isLocalArtifact =
-    /\.(?:db|sqlite3?|wav|ggml|gguf|log)$/iu.test(fileName) ||
+    /\.(?:db|sqlite3?|wav|mp3|ggml|gguf|log)$/iu.test(fileName) ||
+    /^ggml-.*\.bin$/iu.test(fileName) ||
     /(?:^|\/)(?:node_modules|dist|target|graphify-out|workspace)(?:\/|$)/u.test(
       normalized,
     )

@@ -34,8 +34,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
   "Win32_Storage_FileSystem",
   "Win32_System_Diagnostics_Debug",
+  "Win32_System_LibraryLoader",
   "Win32_System_Performance",
   "Win32_System_WindowsProgramming",
 ] }

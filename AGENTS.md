@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-003 - Source-local VAD and bounded utterance segmentation
+- Task: P3-004 - Bounded local Whisper runtime and Tiny/Base throughput decision
 - Date: 2026-08-09
-- Outcome: selected Earshot 1.2.1 through a pre-frozen generated-corpus comparison with Silero VAD v6; added independent bounded per-source detection, 300 ms pre-roll, 500 ms trailing silence, 160 ms minimum speech, 30 s forced splitting, reset/finish handling, strict aggregate diagnostics, and no retained or frontend-delivered samples.
-- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 60 ordinary tests plus 3 capability tests; exact ignored bake-off (Earshot 0.40% miss, 1.07% false positive, 0.9901 F1); explicit concurrent live VAD probe with zero processing errors or queue drops; clean frontend/Cargo audits; final locked x64 release build excluded the development-only Silero/ONNX comparator; final link/secret/artifact/diff checks. Synthetic-corpus generalization, the broader device/recovery matrix, and the two-hour clock gate remain open.
-- Memory: [P3-003 checkpoint](docs/project-memory.md#p3-003---source-local-vad-and-bounded-utterance-segmentation)
+- Outcome: resolved the Unlicense wrapper gate with a project-owned bounded C ABI shim over pinned MIT whisper.cpp v1.9.2; added strict CPU finalized-utterance/result/error ownership, a process-lifetime native module with explicit model/result destruction, malformed-load recovery, and a reproducible SHA-256-pinned Tiny/Base probe without product wiring or retained artifacts.
+- Verification: Node 24 frontend format/lint/type/build/policy and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 63 ordinary tests plus 3 capability tests; native adapter `/W4 /WX`; exact local MP3 probe on Ryzen 7 3700X with Tiny RTF 0.0916/p95 1.831 s and Base RTF 0.1924/p95 3.637 s; clean frontend/Cargo audits; final locked x64 release build. Minimum-hardware/default freeze, Base's missed latency target, packaging/product wiring, Vulkan recovery, and scheduling remain open.
+- Memory: [P3-004 checkpoint](docs/project-memory.md#p3-004---bounded-local-whisper-runtime-and-tinybase-throughput-decision)

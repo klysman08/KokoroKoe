@@ -136,6 +136,8 @@ Capture threads never wait on inference. Disable partial work at 20 seconds of q
 
 Whisper Tiny and Base multilingual models are the initial catalog entries. Base is the intended default only if it passes the Phase 3 throughput gate on the minimum supported hardware; otherwise Tiny becomes the default and Base remains an accuracy-oriented option. CPU is mandatory. Vulkan is the first acceleration path, with a runtime CPU retry and a supervised worker fallback if the in-process Vulkan prototype cannot isolate driver failures.
 
+The first CPU runtime uses a KokoroKoe-owned bounded C ABI shim over pinned MIT-licensed whisper.cpp rather than the Unlicense Rust wrapper. Rust owns paths, samples, source/timeline labels, errors, and result bounds. The native module remains loaded for process lifetime because dynamically registered GGML backends are unsafe to unload/reload; model contexts and inference results are explicitly freed, and only one heavy model remains loaded.
+
 ## Domain contracts
 
 Rust types are the semantic source. JSON uses `camelCase` fields and `snake_case` enum values. Strict TypeScript types and Zod schemas mirror the boundary. Shared golden JSON fixtures must parse in both Rust and Vitest.

@@ -128,3 +128,19 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-wind
 ```
 
 The live test arms one test-only microphone capture-loop failure after both real endpoints are active, then proves the production supervisor retries and closes a durable recovery gap while system-output packets continue. It prints fixed aggregate counters only and retains no audio. See [P3-007 QPC alignment and Windows recovery prototype](audio-clock-recovery-prototype.md).
+
+## Supervised Vulkan worker protocol and lifecycle gate
+
+P3-008's strict codec, lazy CPU ordering, cancellation, fixed-error, and result-validation tests are part of the ordinary Rust suite. Run them alone with:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc transcription::worker -- --nocapture
+```
+
+After the external P3-005 adapter, verified Tiny model, and generated fixture exist, run the exact native protocol/lifecycle matrix with:
+
+```powershell
+.\scripts\run-whisper-worker-protocol-prototype.ps1
+```
+
+The runner verifies the external Tiny-model hash and fixture bound, builds the debug KokoroKoe worker executable, and tests Vulkan attestation, missing-driver startup, malformed hello/response frames, blocked writes, hung and nonzero-exit inference, cancellation, Job Object descendant cleanup, and exact lazy CPU recovery. Output is fixed aggregate status only. Debug fault modes are not compiled into release builds. See [P3-008 supervised Vulkan worker protocol prototype](whisper-worker-protocol-prototype.md).

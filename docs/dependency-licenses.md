@@ -108,6 +108,10 @@ P3-006 uses only the Rust standard library (`VecDeque` and `Arc`) plus existing 
 
 P3-007 reuses the existing Rust standard library, `wasapi` 0.23.0, `windows-sys` 0.61.2 QPC/test-tone APIs, and strict Rust/Zod audio status contract. It adds no dependency, native library, model, audio fixture, network client, command, event, capability, or lockfile change. Fault injection exists only under Rust test compilation.
 
+## P3-008 worker protocol prototype inventory
+
+P3-008 uses Rust standard-library process/pipe/thread/JSON support, existing `serde`/`serde_json`, the existing project-owned whisper.cpp adapter API v2, and additional `windows-sys` 0.61.2 Job Objects/Threading feature projections. It adds no package, native library, model, audio fixture, network client, command, event, capability, or lockfile entry. The exact runner reuses the SHA-256-verified external Tiny model and P3-005 adapter/generated fixture; no external artifact is packaged or copied into the repository.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.

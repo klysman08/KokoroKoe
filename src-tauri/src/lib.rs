@@ -16,6 +16,22 @@ use persistence::SettingsService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
 
+#[cfg(windows)]
+pub fn run_transcription_worker_if_requested() -> bool {
+    let requested = std::env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == transcription::WORKER_MODE_ARGUMENT);
+    if requested {
+        transcription::run_worker_if_requested();
+    }
+    requested
+}
+
+#[cfg(not(windows))]
+pub const fn run_transcription_worker_if_requested() -> bool {
+    false
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     logging::init();

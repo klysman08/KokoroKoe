@@ -4,6 +4,11 @@ pub(crate) mod scheduler;
 
 #[cfg(windows)]
 mod whisper;
+#[cfg(windows)]
+mod worker;
+
+#[cfg(windows)]
+pub(crate) use worker::{WORKER_MODE_ARGUMENT, run_worker_if_requested};
 
 pub(crate) use model::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionError,
@@ -141,6 +146,12 @@ mod tests {
             TranscriptionError::InvalidTimeline,
             TranscriptionError::InferenceFailed,
             TranscriptionError::InvalidNativeResult,
+            TranscriptionError::WorkerStartupFailed,
+            TranscriptionError::WorkerProtocolFailed,
+            TranscriptionError::WorkerWriteTimeout,
+            TranscriptionError::WorkerInferenceTimeout,
+            TranscriptionError::WorkerCancelled,
+            TranscriptionError::WorkerTerminated,
         ] {
             assert_eq!(error.to_string(), error.code());
             assert!(!error.to_string().contains('\\'));

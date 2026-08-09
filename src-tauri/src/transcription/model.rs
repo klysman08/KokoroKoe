@@ -108,6 +108,12 @@ pub(crate) enum TranscriptionError {
     InvalidTimeline,
     InferenceFailed,
     InvalidNativeResult,
+    WorkerStartupFailed,
+    WorkerProtocolFailed,
+    WorkerWriteTimeout,
+    WorkerInferenceTimeout,
+    WorkerCancelled,
+    WorkerTerminated,
 }
 
 impl TranscriptionError {
@@ -122,6 +128,12 @@ impl TranscriptionError {
             Self::InvalidTimeline => "transcription_timeline_invalid",
             Self::InferenceFailed => "transcription_inference_failed",
             Self::InvalidNativeResult => "transcription_native_result_invalid",
+            Self::WorkerStartupFailed => "transcription_worker_startup_failed",
+            Self::WorkerProtocolFailed => "transcription_worker_protocol_failed",
+            Self::WorkerWriteTimeout => "transcription_worker_write_timeout",
+            Self::WorkerInferenceTimeout => "transcription_worker_inference_timeout",
+            Self::WorkerCancelled => "transcription_worker_cancelled",
+            Self::WorkerTerminated => "transcription_worker_terminated",
         }
     }
 }

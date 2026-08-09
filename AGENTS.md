@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-007 - QPC alignment and source-local Windows recovery
+- Task: P3-008 - Supervised Vulkan worker protocol and lifecycle
 - Date: 2026-08-09
-- Outcome: proved the shared QPC session timeline for two deterministic hours across different source cadences and a source-local discontinuity; added durable aggregate capture failure/retry/recovery-gap diagnostics; and proved one live microphone capture-loop failure recovers through the production supervisor while system output continues, without a production injection surface.
-- Verification: 720,001 microphone and 675,001 system timestamps had 0 ms maximum calculated error and zero regressions; two live runs restarted microphone on attempt 2 with one retained 264-265 ms gap while system output advanced 51-53 packets and microphone resumed for 24-26; Rust 1.88 locked fmt/Clippy, 75 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean audits/policy; final locked x64 release build. Real physical device/service recovery and real oscillator drift remain open.
-- Memory: [P3-007 checkpoint](docs/project-memory.md#p3-007---qpc-alignment-and-source-local-windows-recovery)
+- Outcome: implemented strict bounded protocol v1 over anonymous pipes, a private same-executable Vulkan worker, Windows Job Object process-tree cleanup, backend attestation, timeouts/cancellation, corruption rejection, and lazy exact one-shot CPU recovery only after worker termination, without frontend process capability or product wiring.
+- Verification: one attested Vulkan result; seven failed accelerated attempts each yielded exactly one CPU result; one cancellation yielded none; zero duplicates/losses; confirmed descendant cleanup; exact gate 30.63 s; Rust 1.88 locked fmt/Clippy, 81 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean audits/policy; locked x64 release build with no debug fault-hook strings.
+- Memory: [P3-008 checkpoint](docs/project-memory.md#p3-008---supervised-vulkan-worker-protocol-and-lifecycle)

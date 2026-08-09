@@ -29,4 +29,6 @@ Load the CPU model only after the accelerated worker has failed or is unavailabl
 
 P3-005 built pinned `whisper.cpp` with Vulkan and used one locally generated 4.596-second speech fixture. An attested Vulkan child completed inference. A child constrained to a nonexistent `VK_DRIVER_FILES` manifest returned the fixed backend-unavailable status. A prototype-only native abort inside Vulkan inference terminated only the child; the parent remained alive and produced exactly one CPU result. Both forced failure scenarios reported zero duplicate and zero lost finalized results.
 
+P3-008 implements protocol version 1 and Windows Job Object lifecycle supervision in the KokoroKoe executable. Its exact external gate produced one attested Vulkan result, seven one-shot CPU recoveries for distinct startup/protocol/write-timeout/inference-timeout/nonzero-exit failures, and one cancellation with no CPU retry. It reported zero duplicate or lost results and proved descendant cleanup after cancellation. Product scheduler/live-audio wiring and packaging validation remain separate work.
+
 See [P3-005 Vulkan recovery prototype](../whisper-vulkan-recovery-prototype.md).

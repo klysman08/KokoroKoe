@@ -62,7 +62,7 @@ The child processes suppress native output and never print transcript text, dete
 
 ## Boundaries and limitations
 
-- The product supervised-worker executable and IPC protocol are not implemented yet; P3-005 freezes their required isolation and retry semantics.
+- P3-008 now implements the supervised local IPC/lifecycle boundary in a worker mode of the KokoroKoe executable. Live scheduler/model-management wiring and packaged installer validation remain future work.
 - The real acceleration pass covers one NVIDIA GPU/driver, one Tiny model, and one generated English utterance. AMD, Intel, multi-GPU, old/broken drivers, device loss, suspend/resume, timeout, and packaged-worker behavior remain future validation.
 - The forced missing-driver case exercises loader/device unavailability. The abort hook is deliberate crash-class fault injection, not a claim that every real driver failure behaves identically.
 - Upstream Vulkan compilation emits its own MSVC warnings. The KokoroKoe adapter itself builds with `/W4 /WX`; upstream warnings are not suppressed or presented as project-source cleanliness.

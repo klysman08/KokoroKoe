@@ -122,6 +122,12 @@ pub(crate) struct ChannelDiagnostics {
     pub(crate) endpoint_id: Option<String>,
     pub(crate) native_format: Option<NativeAudioFormat>,
     pub(crate) capture_attempts: u64,
+    pub(crate) capture_failures: u64,
+    pub(crate) recovery_gaps: u64,
+    pub(crate) recovery_gap_ms: u64,
+    pub(crate) recovery_pending_since_ms: Option<u64>,
+    pub(crate) last_recovery_gap_ms: Option<u64>,
+    pub(crate) last_capture_failure_code: Option<String>,
     pub(crate) packets_captured: u64,
     pub(crate) frames_captured: u64,
     pub(crate) packets_consumed: u64,
@@ -170,6 +176,12 @@ impl ChannelDiagnostics {
             endpoint_id: None,
             native_format: None,
             capture_attempts: 0,
+            capture_failures: 0,
+            recovery_gaps: 0,
+            recovery_gap_ms: 0,
+            recovery_pending_since_ms: None,
+            last_recovery_gap_ms: None,
+            last_capture_failure_code: None,
             packets_captured: 0,
             frames_captured: 0,
             packets_consumed: 0,
@@ -366,6 +378,9 @@ mod tests {
             serde_json::from_str(fixture).expect("shared audio status fixture should parse");
 
         assert_eq!(parsed.processing_queue_capacity_chunks_per_source, 64);
+        assert_eq!(parsed.microphone.capture_failures, 1);
+        assert_eq!(parsed.microphone.recovery_gaps, 1);
+        assert_eq!(parsed.microphone.last_recovery_gap_ms, Some(260));
         assert_eq!(parsed.microphone.normalized_samples_produced, 18_880);
         assert_eq!(parsed.system_output.native_frames_decoded, 52_920);
         assert_eq!(

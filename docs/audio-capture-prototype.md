@@ -1,6 +1,6 @@
 # P3-001 Windows Audio-Capture Prototype
 
-Status: implemented and locally hardware-probed on 2026-08-08; the broader Phase 3 device matrix remains open.
+Status: implemented and locally hardware-probed on 2026-08-08; P3-007 added the long-run calculated clock and injected source-recovery gates on 2026-08-09, while the broader physical device matrix remains open.
 
 ## Boundary
 
@@ -47,6 +47,6 @@ Local evidence on 2026-08-08:
 
 ## Honest limitations and remaining gates
 
-This is not the Phase 3 device-matrix gate. It does not yet prove unplug/hotplug or Windows Audio restart recovery on real hardware; docks, Bluetooth profiles, USB devices, virtual devices, Remote Desktop, fixed endpoint removal, multiple drivers, PCM integer formats, channel counts beyond stereo, sample-rate variety, or a two-hour run. The deterministic retry/isolation tests prove supervisor behavior under injected failure, while real device recovery remains required evidence for a later Phase 3 task.
+This is not the complete Phase 3 device-matrix gate. P3-007 now proves a test-only injected live capture-loop failure restarts one source without stopping the other, but it does not prove unplug/hotplug or Windows Audio restart recovery on real hardware; docks, Bluetooth profiles, USB devices, virtual devices, Remote Desktop, fixed endpoint removal, multiple drivers, PCM integer formats, channel counts beyond stereo, and broader sample-rate variety remain open.
 
-The five-second probe proves monotonic shared QPC-derived timestamps on one machine, not the architecture's less-than-20-ms error target over two hours. It also does not normalize, resample, meter, run VAD, retain audio, transcribe, persist sessions, emit product audio-level events, or provide a product capture UI. Protected/exclusive-mode audio and output silence retain the limitations in [Privacy, Consent, and Technical Limitations](privacy-and-limitations.md).
+P3-007's deterministic simulation meets the less-than-20-ms calculated mapping target over two hours, but it does not measure real-device oscillator drift or physical acoustic latency. The capture prototype still does not retain audio, transcribe, persist sessions, emit product audio-level events, or provide a product capture UI. Protected/exclusive-mode audio and output silence retain the limitations in [Privacy, Consent, and Technical Limitations](privacy-and-limitations.md).

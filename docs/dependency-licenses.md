@@ -100,6 +100,14 @@ P3-004 rejects `whisper-rs`'s Unlicense route and resolves R-006 with the minima
 
 P3-005 adds no Cargo or frontend package and changes no lockfile. The exact runner verifies official source/model/SDK hashes, builds the KokoroKoe adapter with `/W4 /WX`, and keeps upstream source, SDK contents, models, generated audio, and native output outside the repository. The [LunarG license registry](https://vulkan.lunarg.com/license/) remains authoritative for the SDK's component-level notices; only the build inputs actually shipped with a future supervised worker will enter the distribution notice inventory.
 
+## P3-006 scheduler prototype inventory
+
+P3-006 uses only the Rust standard library (`VecDeque` and `Arc`) plus existing KokoroKoe audio/transcription contracts. It adds no Cargo or frontend dependency, native library, model, fixture file, network client, command, event, capability, or lockfile change. All slowdown and audio inputs are deterministic in-memory test data.
+
+## P3-007 clock and recovery prototype inventory
+
+P3-007 reuses the existing Rust standard library, `wasapi` 0.23.0, `windows-sys` 0.61.2 QPC/test-tone APIs, and strict Rust/Zod audio status contract. It adds no dependency, native library, model, audio fixture, network client, command, event, capability, or lockfile change. Fault injection exists only under Rust test compilation.
+
 P2-003 audit evidence:
 
 - `pnpm audit --prod --audit-level moderate`: no known vulnerabilities.

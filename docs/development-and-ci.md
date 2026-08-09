@@ -102,3 +102,29 @@ The ordinary suite skips P3-005's SDK/model/GPU-dependent failure-isolation gate
 ```
 
 The script verifies pinned `whisper.cpp`, Tiny-model, and LunarG SDK hashes; uses the SDK installer in copy-only mode under `%LOCALAPPDATA%\KokoroKoe\p3-005`; generates a short local speech fixture; builds explicit CPU/Vulkan adapter API v2; and runs attested Vulkan success, forced missing-driver startup, native inference-abort isolation, and exact CPU-recovery checks. The first run downloads a roughly 309 MB SDK installer and copies about 2.18 GB of SDK files outside the repository. Use `-VulkanSdkPath` to select an existing SDK. Output contains fixed aggregate status only. See [P3-005 Vulkan recovery prototype](whisper-vulkan-recovery-prototype.md).
+
+## Transcription scheduler and backpressure soak
+
+P3-006 is deterministic, model-free, and part of the ordinary Rust suite. Run its focused tests with:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked transcription::scheduler -- --nocapture
+```
+
+The suite first verifies the 5x fake-inference clock, then simulates two hours of alternating one-second final jobs from `microphone` and `system_output`. It checks final priority and chronology, fair source progress, replaceable partial slots, 20-second/10-second partial hysteresis, the 600-second/4,096-job hard backlog bounds, explicit gap accounting, and plateaued logical queued-sample memory. It loads no model, retains no audio, and adds no command, event, capability, UI, or persistence path. See [P3-006 transcription scheduler prototype](transcription-scheduler-prototype.md).
+
+## QPC alignment and source-local recovery gate
+
+P3-007's deterministic two-hour clock gate is part of the ordinary Rust suite. Run it with aggregate output using:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc audio::timeline -- --nocapture
+```
+
+On Windows with active default input and render endpoints, run the ignored bounded recovery probe with:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc audio::windows::tests::hardware_probe_recovers_one_source_without_stopping_the_other -- --ignored --exact --nocapture
+```
+
+The live test arms one test-only microphone capture-loop failure after both real endpoints are active, then proves the production supervisor retries and closes a durable recovery gap while system-output packets continue. It prints fixed aggregate counters only and retains no audio. See [P3-007 QPC alignment and Windows recovery prototype](audio-clock-recovery-prototype.md).

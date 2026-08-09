@@ -27,6 +27,50 @@ const EVENT_WAIT_MS: u32 = 100;
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Default)]
+struct CaptureControl {
+    #[cfg(test)]
+    fault: Option<Arc<TestCaptureFault>>,
+}
+
+#[cfg(test)]
+impl CaptureControl {
+    fn should_fail(&self, source: AudioSource) -> bool {
+        if let Some(fault) = &self.fault {
+            return fault.should_fail(source);
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+struct TestCaptureFault {
+    source: AudioSource,
+    armed: AtomicBool,
+    fired: AtomicBool,
+}
+
+#[cfg(test)]
+impl TestCaptureFault {
+    fn new(source: AudioSource) -> Self {
+        Self {
+            source,
+            armed: AtomicBool::new(false),
+            fired: AtomicBool::new(false),
+        }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    fn should_fail(&self, source: AudioSource) -> bool {
+        source == self.source
+            && self.armed.load(Ordering::Acquire)
+            && !self.fired.swap(true, Ordering::AcqRel)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AudioPrototypeError {
     pub(crate) code: &'static str,
@@ -113,6 +157,21 @@ pub(crate) struct RunningAudioPrototype {
 
 impl RunningAudioPrototype {
     pub(crate) fn start(config: AudioPrototypeConfig) -> Result<Self, AudioPrototypeError> {
+        Self::start_inner(config, CaptureControl::default())
+    }
+
+    #[cfg(test)]
+    fn start_with_fault(
+        config: AudioPrototypeConfig,
+        fault: Arc<TestCaptureFault>,
+    ) -> Result<Self, AudioPrototypeError> {
+        Self::start_inner(config, CaptureControl { fault: Some(fault) })
+    }
+
+    fn start_inner(
+        config: AudioPrototypeConfig,
+        control: CaptureControl,
+    ) -> Result<Self, AudioPrototypeError> {
         if config.queue_capacity_packets_per_source == 0 {
             return Err(AudioPrototypeError::new("audio_queue_capacity_invalid"));
         }
@@ -177,6 +236,7 @@ impl RunningAudioPrototype {
             Arc::clone(&stop),
             Arc::clone(&status),
             microphone_sender,
+            control.clone(),
         ) {
             Ok(handle) => handle,
             Err(error) => {
@@ -195,6 +255,7 @@ impl RunningAudioPrototype {
             Arc::clone(&stop),
             Arc::clone(&status),
             system_sender,
+            control,
         ) {
             Ok(handle) => handle,
             Err(error) => {
@@ -345,6 +406,7 @@ fn spawn_supervisor(
     stop: Arc<AtomicBool>,
     status: Arc<Mutex<AudioPrototypeStatus>>,
     sender: PacketSender,
+    control: CaptureControl,
 ) -> Result<JoinHandle<()>, AudioPrototypeError> {
     thread::Builder::new()
         .name(
@@ -354,7 +416,7 @@ fn spawn_supervisor(
             }
             .to_owned(),
         )
-        .spawn(move || supervise_channel(source, selection, epoch, stop, status, sender))
+        .spawn(move || supervise_channel(source, selection, epoch, stop, status, sender, control))
         .map_err(|_| AudioPrototypeError::new("audio_capture_thread_unavailable"))
 }
 
@@ -365,22 +427,31 @@ fn supervise_channel(
     stop: Arc<AtomicBool>,
     status: Arc<Mutex<AudioPrototypeStatus>>,
     sender: PacketSender,
+    control: CaptureControl,
 ) {
     let _com = match ComGuard::initialize() {
         Ok(com) => com,
         Err(error) => {
-            record_failure(&status, source, error.code, ChannelStatus::Unavailable);
+            let at_ms = session_now_ms(epoch, &status, source);
+            record_failure(
+                &status,
+                source,
+                error.code,
+                ChannelStatus::Unavailable,
+                at_ms,
+            );
             return;
         }
     };
 
-    supervise_attempts(source, &stop, &status, INITIAL_RETRY_DELAY, || {
-        capture_until_stopped(source, &selection, epoch, &stop, &status, &sender)
+    supervise_attempts(source, epoch, &stop, &status, INITIAL_RETRY_DELAY, || {
+        capture_until_stopped(source, &selection, epoch, &stop, &status, &sender, &control)
     });
 }
 
 fn supervise_attempts(
     source: AudioSource,
+    epoch: QpcEpoch,
     stop: &AtomicBool,
     status: &Mutex<AudioPrototypeStatus>,
     initial_retry_delay: Duration,
@@ -402,7 +473,14 @@ fn supervise_attempts(
         match capture_attempt() {
             Ok(()) => break,
             Err(error) => {
-                record_failure(status, source, error.code, ChannelStatus::Reconnecting);
+                let at_ms = session_now_ms(epoch, status, source);
+                record_failure(
+                    status,
+                    source,
+                    error.code,
+                    ChannelStatus::Reconnecting,
+                    at_ms,
+                );
                 if wait_for_stop(stop, retry_delay) {
                     break;
                 }
@@ -425,6 +503,7 @@ fn capture_until_stopped(
     stop: &AtomicBool,
     status: &Mutex<AudioPrototypeStatus>,
     sender: &PacketSender,
+    control: &CaptureControl,
 ) -> Result<(), AudioPrototypeError> {
     let enumerator = DeviceEnumerator::new().map_err(map_wasapi_error)?;
     let direction = match source {
@@ -454,16 +533,15 @@ fn capture_until_stopped(
         .get_audiocaptureclient()
         .map_err(map_wasapi_error)?;
 
-    {
-        let mut current = status.lock().expect("audio status lock poisoned");
-        let channel = current.channel_mut(source);
-        channel.status = ChannelStatus::Active;
-        channel.endpoint_id = Some(endpoint_id.clone());
-        channel.native_format = Some(diagnostics_format.clone());
-        channel.last_error_code = None;
-    }
-
     audio_client.start_stream().map_err(map_wasapi_error)?;
+    let active_at_ms = session_now_ms(epoch, status, source);
+    record_active(
+        status,
+        source,
+        endpoint_id.clone(),
+        diagnostics_format.clone(),
+        active_at_ms,
+    );
     let result = capture_event_loop(
         source,
         epoch,
@@ -477,6 +555,7 @@ fn capture_until_stopped(
         sender,
         &event,
         &capture,
+        control,
     );
     let _ = audio_client.stop_stream();
     result
@@ -496,7 +575,10 @@ fn capture_event_loop(
     sender: &PacketSender,
     event: &wasapi::Handle,
     capture: &wasapi::AudioCaptureClient,
+    control: &CaptureControl,
 ) -> Result<(), AudioPrototypeError> {
+    #[cfg(not(test))]
+    let _ = control;
     let block_align = native_format.block_align as usize;
     let mut next_default_check = Instant::now() + Duration::from_secs(1);
     while !stop.load(Ordering::Acquire) {
@@ -506,6 +588,10 @@ fn capture_event_loop(
         }
         if stop.load(Ordering::Acquire) {
             break;
+        }
+        #[cfg(test)]
+        if control.should_fail(source) {
+            return Err(AudioPrototypeError::new("audio_injected_capture_failure"));
         }
         if Instant::now() >= next_default_check {
             if default_endpoint_changed(enumerator, direction, selection, endpoint_id)? {
@@ -902,11 +988,55 @@ fn record_failure(
     source: AudioSource,
     code: &str,
     channel_status: ChannelStatus,
+    at_ms: u64,
 ) {
     let mut current = status.lock().expect("audio status lock poisoned");
     let channel = current.channel_mut(source);
     channel.status = channel_status;
     channel.last_error_code = Some(code.to_owned());
+    channel.capture_failures = channel.capture_failures.saturating_add(1);
+    channel.last_capture_failure_code = Some(code.to_owned());
+    channel.recovery_pending_since_ms.get_or_insert(at_ms);
+}
+
+fn record_active(
+    status: &Mutex<AudioPrototypeStatus>,
+    source: AudioSource,
+    endpoint_id: String,
+    native_format: NativeAudioFormat,
+    at_ms: u64,
+) {
+    let mut current = status.lock().expect("audio status lock poisoned");
+    let channel = current.channel_mut(source);
+    if let Some(started_ms) = channel.recovery_pending_since_ms.take() {
+        let gap_ms = at_ms.saturating_sub(started_ms);
+        channel.recovery_gaps = channel.recovery_gaps.saturating_add(1);
+        channel.recovery_gap_ms = channel.recovery_gap_ms.saturating_add(gap_ms);
+        channel.last_recovery_gap_ms = Some(gap_ms);
+    }
+    channel.status = ChannelStatus::Active;
+    channel.endpoint_id = Some(endpoint_id);
+    channel.native_format = Some(native_format);
+    channel.last_error_code = None;
+}
+
+fn session_now_ms(
+    epoch: QpcEpoch,
+    status: &Mutex<AudioPrototypeStatus>,
+    source: AudioSource,
+) -> u64 {
+    current_qpc_100ns().map_or_else(
+        |_| {
+            let current = status.lock().expect("audio status lock poisoned");
+            match source {
+                AudioSource::Microphone => current.microphone.last_packet_ms.unwrap_or_default(),
+                AudioSource::SystemOutput => {
+                    current.system_output.last_packet_ms.unwrap_or_default()
+                }
+            }
+        },
+        |now| epoch.packet_ms(now),
+    )
 }
 
 fn wait_for_stop(stop: &AtomicBool, duration: Duration) -> bool {
@@ -945,19 +1075,19 @@ impl Drop for ComGuard {
 mod tests {
     use std::{
         sync::{
-            Mutex,
+            Arc, Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use windows_sys::Win32::System::Diagnostics::Debug::Beep;
 
     use super::{
         AudioPrototypeConfig, AudioPrototypeError, AudioPrototypeStatus, AudioSource,
-        ChannelStatus, RunningAudioPrototype, bounded_device_name, list_audio_devices,
-        record_failure, supervise_attempts, valid_endpoint_id,
+        ChannelStatus, QpcEpoch, RunningAudioPrototype, TestCaptureFault, bounded_device_name,
+        list_audio_devices, record_failure, supervise_attempts, valid_endpoint_id,
     };
 
     #[test]
@@ -974,6 +1104,7 @@ mod tests {
             AudioSource::Microphone,
             "audio_endpoint_unavailable",
             ChannelStatus::Reconnecting,
+            125,
         );
 
         let current = status.lock().unwrap();
@@ -984,6 +1115,9 @@ mod tests {
         );
         assert_eq!(current.system_output.status, ChannelStatus::Active);
         assert_eq!(current.system_output.last_error_code, None);
+        assert_eq!(current.microphone.capture_failures, 1);
+        assert_eq!(current.microphone.recovery_pending_since_ms, Some(125));
+        assert_eq!(current.system_output.capture_failures, 0);
     }
 
     #[test]
@@ -1016,6 +1150,7 @@ mod tests {
 
         supervise_attempts(
             AudioSource::Microphone,
+            QpcEpoch::from_100ns(0),
             &stop,
             &status,
             Duration::from_millis(1),
@@ -1033,6 +1168,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         let channel = &status.lock().unwrap().microphone;
         assert_eq!(channel.capture_attempts, 2);
+        assert_eq!(channel.capture_failures, 1);
         assert_eq!(channel.status, ChannelStatus::Stopped);
     }
 
@@ -1108,6 +1244,119 @@ mod tests {
             assert!(level.peak_dbfs.is_finite());
             assert!((-120.0..=0.0).contains(&level.peak_dbfs));
         }
+    }
+
+    #[test]
+    #[ignore = "requires active Windows microphone and render endpoints"]
+    fn hardware_probe_recovers_one_source_without_stopping_the_other() {
+        require_default_hardware();
+        let fault = Arc::new(TestCaptureFault::new(AudioSource::Microphone));
+        let running = RunningAudioPrototype::start_with_fault(
+            AudioPrototypeConfig::default(),
+            Arc::clone(&fault),
+        )
+        .expect("dual capture should start");
+
+        let ready = wait_for_status(&running, Duration::from_secs(10), |status| {
+            status.microphone.status == ChannelStatus::Active
+                && status.system_output.status == ChannelStatus::Active
+                && status.microphone.packets_captured > 10
+                && status.system_output.packets_captured > 10
+        });
+        fault.arm();
+        let failed = wait_for_status(&running, Duration::from_secs(5), |status| {
+            status.microphone.capture_failures == 1
+                && status.microphone.recovery_pending_since_ms.is_some()
+        });
+        let unaffected_packets_at_failure = failed.system_output.packets_captured;
+        let recovered = wait_for_status(&running, Duration::from_secs(10), |status| {
+            status.microphone.status == ChannelStatus::Active
+                && status.microphone.capture_attempts >= 2
+                && status.microphone.recovery_gaps == 1
+        });
+        assert!(
+            recovered.system_output.packets_captured > unaffected_packets_at_failure,
+            "system output must continue while microphone capture recovers"
+        );
+        let recovered_packets = recovered.microphone.packets_captured;
+        unsafe {
+            Beep(880, 250);
+        }
+        let resumed = wait_for_status(&running, Duration::from_secs(5), |status| {
+            status.microphone.packets_captured > recovered_packets
+        });
+        let final_status = running.stop();
+
+        assert!(ready.microphone.capture_attempts >= 1);
+        assert_eq!(final_status.microphone.capture_failures, 1);
+        assert_eq!(final_status.microphone.recovery_gaps, 1);
+        assert!(final_status.microphone.recovery_gap_ms >= 250);
+        assert_eq!(
+            final_status.microphone.last_recovery_gap_ms,
+            Some(final_status.microphone.recovery_gap_ms)
+        );
+        assert_eq!(final_status.microphone.recovery_pending_since_ms, None);
+        assert_eq!(
+            final_status.microphone.last_capture_failure_code.as_deref(),
+            Some("audio_injected_capture_failure")
+        );
+        assert_eq!(final_status.microphone.last_error_code, None);
+        assert_eq!(final_status.system_output.capture_failures, 0);
+        assert_eq!(final_status.microphone.timestamp_regressions, 0);
+        assert_eq!(final_status.system_output.timestamp_regressions, 0);
+        assert!(resumed.system_output.packets_captured > unaffected_packets_at_failure);
+        eprintln!(
+            "P3-007 recovery gate: affected_attempts={} affected_failures={} completed_gaps={} recovery_gap_ms={} unaffected_packet_advance={} affected_packet_advance_after_recovery={}",
+            final_status.microphone.capture_attempts,
+            final_status.microphone.capture_failures,
+            final_status.microphone.recovery_gaps,
+            final_status.microphone.recovery_gap_ms,
+            final_status
+                .system_output
+                .packets_captured
+                .saturating_sub(unaffected_packets_at_failure),
+            final_status
+                .microphone
+                .packets_captured
+                .saturating_sub(recovered_packets),
+        );
+    }
+
+    fn wait_for_status(
+        running: &RunningAudioPrototype,
+        timeout: Duration,
+        mut predicate: impl FnMut(&AudioPrototypeStatus) -> bool,
+    ) -> AudioPrototypeStatus {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let status = running.snapshot();
+            if predicate(&status) {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for audio state"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn require_default_hardware() {
+        let devices = list_audio_devices().expect("active endpoints should enumerate");
+        assert!(
+            devices
+                .inputs
+                .iter()
+                .any(|device| device.is_default_console),
+            "a default console input endpoint is required"
+        );
+        assert!(
+            devices
+                .outputs
+                .iter()
+                .any(|device| device.is_default_console),
+            "a default console output endpoint is required"
+        );
     }
 
     fn capture_hardware_status() -> AudioPrototypeStatus {

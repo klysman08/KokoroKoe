@@ -1,5 +1,6 @@
 mod fallback;
 mod model;
+pub(crate) mod scheduler;
 
 #[cfg(windows)]
 mod whisper;

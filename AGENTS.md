@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-005 - Vulkan failure isolation and CPU recovery
+- Task: P3-007 - QPC alignment and source-local Windows recovery
 - Date: 2026-08-09
-- Outcome: upgraded the project-owned adapter to explicit CPU/Vulkan API v2 with backend attestation; proved real Vulkan inference, forced missing-driver startup isolation, native inference-abort isolation, and exact one-shot CPU recovery with zero duplicate/lost finalized results; accepted ADR 0007 requiring a supervised Vulkan worker while leaving product worker/IPC wiring out of scope.
-- Verification: pinned copy-only LunarG SDK/Tiny/whisper.cpp inputs; generated 4.596 s local fixture; native adapter `/W4 /WX`; exact Vulkan gate passed in 24.93 s; P3-004 CPU regression passed; Node 24 frontend gates and 72 Vitest tests; Rust 1.88 locked fmt/Clippy, 66 ordinary tests plus 3 capability tests; clean frontend/Cargo audits; final locked x64 release build. AMD/Intel/non-Vulkan/packaged-worker validation, worker protocol, and scheduling/backpressure remain open.
-- Memory: [P3-005 checkpoint](docs/project-memory.md#p3-005---vulkan-failure-isolation-and-cpu-recovery)
+- Outcome: proved the shared QPC session timeline for two deterministic hours across different source cadences and a source-local discontinuity; added durable aggregate capture failure/retry/recovery-gap diagnostics; and proved one live microphone capture-loop failure recovers through the production supervisor while system output continues, without a production injection surface.
+- Verification: 720,001 microphone and 675,001 system timestamps had 0 ms maximum calculated error and zero regressions; two live runs restarted microphone on attempt 2 with one retained 264-265 ms gap while system output advanced 51-53 packets and microphone resumed for 24-26; Rust 1.88 locked fmt/Clippy, 75 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean audits/policy; final locked x64 release build. Real physical device/service recovery and real oscillator drift remain open.
+- Memory: [P3-007 checkpoint](docs/project-memory.md#p3-007---qpc-alignment-and-source-local-windows-recovery)

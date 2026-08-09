@@ -43,6 +43,10 @@ P3-004 transcribes only explicit finalized utterances inside a local Rust-owned 
 
 P3-005 runs optional Vulkan model loading and inference only in isolated probe children. Its speech fixture is generated locally outside the repository, bounded to one finalized utterance, and reused for each CPU/Vulkan case. Child output is suppressed; the gate prints only attestation, isolation, result-count, duplicate/loss, and worker-decision flags. A forced missing driver or native inference abort cannot expose audio or terminate the parent. No audio, transcript text, detected language, path, model, SDK, DLL, crash dump, or driver detail enters React, persistence, logs, the repository, or a service.
 
+P3-006 schedules only generated in-memory test jobs. Production-shaped jobs own bounded `Arc<[f32]>` sample buffers in Rust; the two-hour soak reuses one synthetic buffer and measures logical queued sample storage rather than process RSS. Pending finals are capped at 600 seconds, 9,600,000 samples, and 4,096 jobs. At most two partial jobs exist, one per source, and they are discarded when final lag reaches 20 seconds. Rejected finals return a fixed source/timeline gap record. The prototype neither transcribes nor exposes, persists, logs, or transmits sample content.
+
+P3-007 adds only aggregate capture-health fields to the existing strict status contract. The deterministic two-hour clock test generates timestamps and no audio. The opt-in live probe injects one fixed test-only microphone-loop failure after real dual-source capture begins, retains samples only in the existing bounded Rust pipeline, prints fixed counters without endpoint metadata, and exposes no production injection command, capability, event, or frontend control.
+
 - WASAPI loopback captures the complete mix rendered through the selected output endpoint, not a single meeting application.
 - Protected/DRM audio may not be capturable.
 - Exclusive-mode applications and drivers may interrupt shared-mode capture.
@@ -56,6 +60,8 @@ P3-005 runs optional Vulkan model loading and inference only in isolated probe c
 - P3-003's generated bake-off corpus is synthetic and favors Earshot; it does not establish performance across real speakers, languages, rooms, noise, music, echo, overlapping speech, or devices. VAD can still miss speech or classify non-speech as speech.
 - P3-004's local MP3 is one unlabelled user recording on one CPU, not an accuracy, language, noise, minimum-hardware, or redistributable fixture. Base met the real-time gate but missed the two-second p95 target on seven VAD-finalized utterances.
 - P3-005 covers one generated English utterance and one NVIDIA GPU/driver. It proves process isolation and CPU recovery semantics, not accuracy or compatibility across AMD, Intel, multi-GPU, old drivers, device loss, suspend/resume, or packaged workers. The product worker/IPC boundary is not implemented yet.
+- P3-006 proves an in-process scheduler state machine with deterministic simulated arrivals and service time. It does not measure allocator/RSS behavior, thread/channel contention, real inference jitter, capture integration, worker IPC, device recovery, or end-to-end transcript delivery. A rejected final is represented by a gap object, but persistence and UI presentation of that gap remain future work.
+- P3-007 calculates shared-QPC timeline error rather than measuring physical acoustic latency or crystal drift between real devices. Its live recovery proof uses one test-only injected microphone-stream failure on one default input/render pair; real unplug/hotplug, fixed-device removal, default switching, Windows Audio restart, suspend/resume, Bluetooth, dock, USB, virtual-device, Remote Desktop, and multi-driver recovery remain unproven.
 
 ## Transcription limitations
 

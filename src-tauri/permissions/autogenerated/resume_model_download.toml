@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resume-model-download"
+description = "Enables the resume_model_download command without any pre-configured scope."
+commands.allow = ["resume_model_download"]
+
+[[permission]]
+identifier = "deny-resume-model-download"
+description = "Denies the resume_model_download command without any pre-configured scope."
+commands.deny = ["resume_model_download"]

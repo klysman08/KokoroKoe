@@ -38,6 +38,17 @@ pub enum InstallOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstallProgress {
+    Downloading {
+        bytes_downloaded: u64,
+        total_bytes: u64,
+    },
+    Verifying {
+        total_bytes: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelManagerError {
     UnknownModel,
     ModelRootUnavailable,
@@ -94,6 +105,7 @@ impl ModelManager {
         })
     }
 
+    #[cfg(test)]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -116,10 +128,11 @@ impl ModelManager {
         ))
     }
 
-    pub fn install(
+    pub fn install_with_progress(
         &mut self,
         model_id: &str,
         cancel: &AtomicBool,
+        mut progress: impl FnMut(InstallProgress),
     ) -> Result<InstallOutcome, ModelManagerError> {
         let descriptor = catalog::find(model_id).ok_or(ModelManagerError::UnknownModel)?;
         let compatibility = self.compatibility(model_id)?;
@@ -127,12 +140,18 @@ impl ModelManager {
             return Err(ModelManagerError::InsufficientDisk);
         }
         let source = HttpDownloadSource::new()?;
-        self.install_from(
+        self.install_from_with_progress(
             descriptor,
             &source,
             cancel,
             compatibility.available_disk_bytes,
+            &mut progress,
         )
+    }
+
+    pub fn resumable_bytes(&self, model_id: &str) -> Result<u64, ModelManagerError> {
+        let descriptor = catalog::find(model_id).ok_or(ModelManagerError::UnknownModel)?;
+        self.valid_staged_bytes(descriptor)
     }
 
     pub fn is_installed(&self, model_id: &str) -> Result<bool, ModelManagerError> {
@@ -161,10 +180,12 @@ impl ModelManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn selected_model_id(&self) -> Option<&'static str> {
         self.selected_model_id
     }
 
+    #[cfg(test)]
     pub fn clear_selection(&mut self) {
         self.selected_model_id = None;
     }
@@ -194,12 +215,13 @@ impl ModelManager {
         Ok(reclaimed)
     }
 
-    fn install_from(
+    fn install_from_with_progress(
         &self,
         descriptor: &ModelDescriptor,
         source: &dyn DownloadSource,
         cancel: &AtomicBool,
         available_disk_bytes: u64,
+        progress: &mut dyn FnMut(InstallProgress),
     ) -> Result<InstallOutcome, ModelManagerError> {
         let final_path = self.final_path(descriptor);
         if final_path.exists() {
@@ -214,6 +236,9 @@ impl ModelManager {
         let mut offset = file_len_or_zero(&part_path)?;
         if offset == descriptor.download_bytes {
             if verify_file(&part_path, descriptor).is_ok() {
+                progress(InstallProgress::Verifying {
+                    total_bytes: descriptor.download_bytes,
+                });
                 if cancel.load(Ordering::Relaxed) {
                     return Ok(InstallOutcome::Cancelled);
                 }
@@ -278,6 +303,10 @@ impl ModelManager {
             .map_err(|_| ModelManagerError::FileOperationFailed)?;
         let mut buffer = [0_u8; COPY_BUFFER_BYTES];
         let mut downloaded = offset;
+        progress(InstallProgress::Downloading {
+            bytes_downloaded: downloaded,
+            total_bytes: descriptor.download_bytes,
+        });
         loop {
             if cancel.load(Ordering::Relaxed) {
                 output
@@ -307,6 +336,10 @@ impl ModelManager {
             output
                 .write_all(&buffer[..read])
                 .map_err(|_| ModelManagerError::FileOperationFailed)?;
+            progress(InstallProgress::Downloading {
+                bytes_downloaded: downloaded,
+                total_bytes: descriptor.download_bytes,
+            });
         }
         output
             .sync_all()
@@ -319,6 +352,9 @@ impl ModelManager {
         if cancel.load(Ordering::Relaxed) {
             return Ok(InstallOutcome::Cancelled);
         }
+        progress(InstallProgress::Verifying {
+            total_bytes: descriptor.download_bytes,
+        });
         if verify_file(&part_path, descriptor).is_err() {
             self.clear_staging(descriptor)?;
             return Err(ModelManagerError::StagedModelInvalid);
@@ -326,6 +362,23 @@ impl ModelManager {
         fs::rename(&part_path, &final_path).map_err(|_| ModelManagerError::FileOperationFailed)?;
         remove_if_present(&self.metadata_path(descriptor))?;
         Ok(InstallOutcome::Installed)
+    }
+
+    #[cfg(test)]
+    fn install_from(
+        &self,
+        descriptor: &ModelDescriptor,
+        source: &dyn DownloadSource,
+        cancel: &AtomicBool,
+        available_disk_bytes: u64,
+    ) -> Result<InstallOutcome, ModelManagerError> {
+        self.install_from_with_progress(
+            descriptor,
+            source,
+            cancel,
+            available_disk_bytes,
+            &mut |_| {},
+        )
     }
 
     fn normalize_staging(&self, descriptor: &ModelDescriptor) -> Result<(), ModelManagerError> {

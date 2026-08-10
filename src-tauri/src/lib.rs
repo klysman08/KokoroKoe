@@ -2,7 +2,6 @@ mod audio;
 mod commands;
 mod domain;
 mod logging;
-#[allow(dead_code)] // P3-010 is an intentionally unwired model-management prototype.
 mod models;
 mod persistence;
 mod security;
@@ -14,6 +13,7 @@ use std::io;
 use tauri::Manager;
 
 use audio::AudioPrototypeService;
+use models::ModelService;
 use persistence::SettingsService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
@@ -48,10 +48,14 @@ pub fn run() {
                 .path()
                 .document_dir()
                 .map_err(|_| io::Error::other("Windows Documents directory is unavailable"))?;
-            let settings = SettingsService::open(app_data_directory, documents_directory)
-                .map_err(|_| io::Error::other("application settings initialization failed"))?;
+            let settings =
+                SettingsService::open(app_data_directory.clone(), documents_directory)
+                    .map_err(|_| io::Error::other("application settings initialization failed"))?;
+            let models = ModelService::open(&app_data_directory, settings.clone())
+                .map_err(|_| io::Error::other("model service initialization failed"))?;
 
             app.manage(settings);
+            app.manage(models);
             app.manage(AudioPrototypeService::default());
             Ok(())
         })
@@ -59,6 +63,12 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::choose_workspace,
+            commands::models::list_transcription_models,
+            commands::models::download_transcription_model,
+            commands::models::cancel_model_download,
+            commands::models::resume_model_download,
+            commands::models::delete_transcription_model,
+            commands::models::set_default_transcription_model,
             commands::audio::list_audio_devices,
             commands::audio::start_audio_capture_prototype,
             commands::audio::get_audio_capture_prototype_status,

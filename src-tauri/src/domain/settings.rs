@@ -369,6 +369,10 @@ impl AppSettings {
         &self.workspace_path
     }
 
+    pub(crate) fn default_transcription_model_id(&self) -> &str {
+        &self.default_transcription_model_id
+    }
+
     fn increment_revision(&mut self) -> Result<(), AppError> {
         self.revision = self
             .revision
@@ -400,6 +404,23 @@ impl AppSettings {
 }
 
 impl AppSettingsUpdate {
+    pub(crate) fn changes_default_transcription_model(&self) -> bool {
+        self.default_transcription_model_id.is_some()
+    }
+
+    pub(crate) fn for_default_transcription_model(model_id: String) -> Self {
+        Self {
+            default_preset_id: None,
+            default_transcription_model_id: Some(model_id),
+            llm_enabled: None,
+            retain_audio_by_default: None,
+            require_zero_data_retention: None,
+            deny_provider_data_collection: None,
+            max_tokens_per_request: None,
+            default_session_budget_usd: None,
+        }
+    }
+
     fn validate(&self) -> Result<(), &'static str> {
         if self.is_empty() {
             return Err("At least one settings field must be changed.");

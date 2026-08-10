@@ -7,6 +7,7 @@ import { vi } from "vitest"
 import appSettingsFixture from "../../../fixtures/contracts/app-settings-v1.json"
 import commandErrorFixture from "../../../fixtures/contracts/command-error-v1.json"
 import workspaceStatusFixture from "../../../fixtures/contracts/workspace-status-v1.json"
+import modelFixture from "../../../fixtures/contracts/model-management-v1.json"
 
 import { SettingsPage } from "@/features/settings/SettingsPage"
 
@@ -68,6 +69,7 @@ describe("SettingsPage", () => {
   it("selects a workspace without sending a path from React", async () => {
     const user = userEvent.setup()
     invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
       if (command === "choose_workspace") return workspaceStatusFixture
       return appSettingsFixture
     })
@@ -95,6 +97,7 @@ describe("SettingsPage", () => {
   it("requires confirmation before enabling retained audio and saves by revision", async () => {
     const user = userEvent.setup()
     invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
       if (command === "update_settings") {
         return {
           ...appSettingsFixture,
@@ -138,6 +141,7 @@ describe("SettingsPage", () => {
     const user = userEvent.setup()
     let getCount = 0
     invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
       if (command === "update_settings") throw conflictError
       if (command === "get_settings") {
         getCount += 1
@@ -182,6 +186,7 @@ describe("SettingsPage", () => {
   it("treats native picker cancellation as an unchanged workspace", async () => {
     const user = userEvent.setup()
     invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
       if (command === "choose_workspace") throw cancellationError
       return appSettingsFixture
     })
@@ -204,5 +209,46 @@ describe("SettingsPage", () => {
     expect(
       screen.getByText(appSettingsFixture.workspacePath),
     ).toBeInTheDocument()
+  })
+
+  it("shows bounded model progress and never renders Rust-owned download metadata", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models")
+        return [modelFixture.installation]
+      if (command === "cancel_model_download") {
+        return {
+          ...modelFixture.installation.downloadJob,
+          status: "cancelled",
+          resumable: true,
+        }
+      }
+      return appSettingsFixture
+    })
+    const queryClient = new QueryClient()
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    )
+
+    expect(
+      await screen.findByText(modelFixture.installation.descriptor.name),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("progressbar", { name: /whisper tiny/i }),
+    ).toHaveAttribute("aria-valuenow", "5")
+    expect(
+      screen.queryByText(modelFixture.installation.descriptor.sourceUrl),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(modelFixture.installation.descriptor.sha256),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /cancel download/i }))
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("cancel_model_download", {
+        requestId: modelFixture.installation.downloadJob.requestId,
+      }),
+    )
   })
 })

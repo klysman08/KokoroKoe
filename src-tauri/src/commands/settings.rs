@@ -31,6 +31,11 @@ pub(crate) async fn update_settings<R: tauri::Runtime>(
 ) -> Result<AppSettings, CommandError> {
     let service = authorize_before_side_effect(webview_window.label(), || state.inner().clone())
         .map_err(record_error)?;
+    if value.changes_default_transcription_model() {
+        return Err(record_error(AppError::model_error(
+            "model_settings_route_required",
+        )));
+    }
     let request = Versioned::new(expected_revision, value).map_err(record_error)?;
 
     run_blocking(move || service.update_settings(request.expected_revision, request.value))

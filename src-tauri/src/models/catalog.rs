@@ -1,6 +1,7 @@
 use super::ModelDescriptor;
 
 const REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+#[cfg(test)]
 const REPOSITORY: &str = "https://huggingface.co/ggerganov/whisper.cpp";
 
 pub const TINY: ModelDescriptor = ModelDescriptor {

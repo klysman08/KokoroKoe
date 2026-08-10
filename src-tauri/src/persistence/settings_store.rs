@@ -11,13 +11,15 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    domain::{AppError, AppSettings, AppSettingsUpdate, WorkspaceStatus},
+    domain::{AppError, AppSettings, AppSettingsUpdate, ModelDownloadJob, WorkspaceStatus},
     security::{prepare_foundation_workspace, probe_workspace, validate_workspace_path_syntax},
 };
 
 const FOUNDATION_MIGRATION: &str = include_str!("../../migrations/0001_foundation.sql");
+const MODEL_STATE_MIGRATION: &str = include_str!("../../migrations/0002_model_state.sql");
 const SETTINGS_DATABASE_NAME: &str = "kokorokoe.sqlite3";
-const SETTINGS_SCHEMA_VERSION: u32 = 1;
+const SETTINGS_SCHEMA_VERSION: u32 = 2;
+const MAX_MODEL_JOB_SNAPSHOTS: usize = 64;
 
 #[derive(Clone)]
 pub(crate) struct SettingsService {
@@ -71,6 +73,140 @@ impl SettingsService {
                 expected_revision,
                 update.clone(),
             )
+        })
+    }
+
+    pub(crate) fn set_default_transcription_model(
+        &self,
+        expected_revision: u64,
+        model_id: String,
+    ) -> Result<AppSettings, AppError> {
+        self.update_settings(
+            expected_revision,
+            AppSettingsUpdate::for_default_transcription_model(model_id),
+        )
+    }
+
+    pub(crate) fn save_model_job(&self, job: &ModelDownloadJob) -> Result<(), AppError> {
+        job.validate().map_err(AppError::model_operation_failed)?;
+        let json = serde_json::to_string(job)
+            .map_err(|_| AppError::model_operation_failed("The model job could not be encoded."))?;
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO model_download_jobs (request_id, model_id, job_json, updated_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(request_id) DO UPDATE SET
+                       model_id = excluded.model_id,
+                       job_json = excluded.job_json,
+                       updated_at = excluded.updated_at",
+                    params![
+                        job.request_id.as_uuid().to_string(),
+                        job.model_id,
+                        json,
+                        job.updated_at
+                    ],
+                )
+                .map_err(map_model_sqlite_error)?;
+            connection
+                .execute(
+                    "DELETE FROM model_download_jobs WHERE request_id NOT IN (
+                       SELECT request_id FROM model_download_jobs ORDER BY updated_at DESC LIMIT ?1
+                     )",
+                    params![MAX_MODEL_JOB_SNAPSHOTS as i64],
+                )
+                .map_err(map_model_sqlite_error)?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn load_model_jobs(&self) -> Result<Vec<ModelDownloadJob>, AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            let mut statement = connection
+                .prepare("SELECT request_id, job_json FROM model_download_jobs ORDER BY updated_at DESC LIMIT ?1")
+                .map_err(map_model_sqlite_error)?;
+            let rows = statement
+                .query_map(params![MAX_MODEL_JOB_SNAPSHOTS as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(map_model_sqlite_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_model_sqlite_error)?;
+            drop(statement);
+            let mut jobs = Vec::with_capacity(rows.len());
+            for (request_id, json) in rows {
+                match serde_json::from_str(&json) {
+                    Ok(job) => jobs.push(job),
+                    Err(_) => {
+                        connection.execute(
+                            "DELETE FROM model_download_jobs WHERE request_id = ?1",
+                            params![request_id],
+                        ).map_err(map_model_sqlite_error)?;
+                        tracing::warn!("invalid non-secret model job snapshot discarded");
+                    }
+                }
+            }
+            Ok(jobs)
+        })
+    }
+
+    pub(crate) fn record_model_installed(
+        &self,
+        model_id: &str,
+        installed_at: &str,
+    ) -> Result<(), AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO model_installations (model_id, installed_at) VALUES (?1, ?2)
+                 ON CONFLICT(model_id) DO UPDATE SET installed_at = excluded.installed_at",
+                    params![model_id, installed_at],
+                )
+                .map_err(map_model_sqlite_error)?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn model_installed_at(&self, model_id: &str) -> Result<Option<String>, AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .query_row(
+                    "SELECT installed_at FROM model_installations WHERE model_id = ?1",
+                    params![model_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_model_sqlite_error)
+        })
+    }
+
+    pub(crate) fn remove_model_installation(&self, model_id: &str) -> Result<(), AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .execute(
+                    "DELETE FROM model_installations WHERE model_id = ?1",
+                    params![model_id],
+                )
+                .map_err(map_model_sqlite_error)?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn remove_model_jobs(&self, model_id: &str) -> Result<(), AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .execute(
+                    "DELETE FROM model_download_jobs WHERE model_id = ?1",
+                    params![model_id],
+                )
+                .map_err(map_model_sqlite_error)?;
+            Ok(())
         })
     }
 
@@ -205,6 +341,7 @@ fn ensure_schema(connection: &mut Connection, initial_version: u32) -> Result<()
         0 => {
             transaction
                 .execute_batch(FOUNDATION_MIGRATION)
+                .and_then(|()| transaction.execute_batch(MODEL_STATE_MIGRATION))
                 .and_then(|()| {
                     transaction.pragma_update(None, "user_version", SETTINGS_SCHEMA_VERSION)
                 })
@@ -213,6 +350,18 @@ fn ensure_schema(connection: &mut Connection, initial_version: u32) -> Result<()
                         error,
                         "The local settings database migration did not complete.",
                     )
+                })?;
+        }
+        1 => {
+            transaction
+                .execute_batch(MODEL_STATE_MIGRATION)
+                .map_err(|error| {
+                    map_sqlite_read_error(error, "The model-state migration did not complete.")
+                })?;
+            transaction
+                .pragma_update(None, "user_version", SETTINGS_SCHEMA_VERSION)
+                .map_err(|error| {
+                    map_sqlite_read_error(error, "The model-state migration did not complete.")
                 })?;
         }
         SETTINGS_SCHEMA_VERSION => {}
@@ -266,6 +415,14 @@ fn map_sqlite_write_error(error: rusqlite::Error) -> AppError {
         AppError::settings_database_corrupt()
     } else {
         AppError::settings_save_failed()
+    }
+}
+
+fn map_model_sqlite_error(error: rusqlite::Error) -> AppError {
+    if is_physical_corruption(&error) {
+        AppError::settings_database_corrupt()
+    } else {
+        AppError::model_operation_failed("The local model operation state could not be saved.")
     }
 }
 
@@ -469,7 +626,7 @@ mod tests {
     };
 
     use super::{SETTINGS_DATABASE_NAME, SettingsService, schema_version};
-    use crate::domain::AppSettingsUpdate;
+    use crate::domain::{AppSettingsUpdate, ModelContractFixture, RequestId};
     use rusqlite::Connection;
 
     struct TestService {
@@ -507,6 +664,21 @@ mod tests {
         )
         .expect("settings update fixture should be valid");
         versioned.value
+    }
+
+    #[test]
+    fn model_job_snapshots_are_strict_and_bounded_to_sixty_four() {
+        let service = service();
+        let fixture: ModelContractFixture = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/model-management-v1.json"
+        ))
+        .unwrap();
+        for _ in 0..70 {
+            let mut job = fixture.event.payload.job.clone();
+            job.request_id = RequestId::new();
+            service.save_model_job(&job).unwrap();
+        }
+        assert_eq!(service.load_model_jobs().unwrap().len(), 64);
     }
 
     #[test]
@@ -692,7 +864,7 @@ mod tests {
         let documents = tempfile::tempdir().unwrap();
         let database_path = app_data.path().join(SETTINGS_DATABASE_NAME);
         let connection = Connection::open(&database_path).unwrap();
-        connection.pragma_update(None, "user_version", 2).unwrap();
+        connection.pragma_update(None, "user_version", 3).unwrap();
         let before_mode: String = connection
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
@@ -711,7 +883,7 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
         assert_eq!(before_mode, after_mode);
-        assert_eq!(schema_version(&connection).unwrap(), 2);
+        assert_eq!(schema_version(&connection).unwrap(), 3);
     }
 
     #[test]

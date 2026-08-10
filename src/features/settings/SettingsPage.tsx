@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { Database, HardDrive, ShieldCheck } from "lucide-react"
+import { Cpu, Database, Download, HardDrive, ShieldCheck } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -12,12 +12,22 @@ import {
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
+import { ApplicationError } from "@/contracts/app-error"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import {
   useChooseWorkspaceMutation,
   useUpdateSettingsMutation,
 } from "@/features/settings/use-settings-mutations"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
+import {
+  useCancelModelMutation,
+  useDeleteModelMutation,
+  useDownloadModelMutation,
+  useModelProgressEvents,
+  useModelsQuery,
+  useResumeModelMutation,
+  useSetDefaultModelMutation,
+} from "@/features/settings/use-model-management"
 
 export function SettingsPage() {
   const settingsQuery = useSettingsQuery()
@@ -110,6 +120,10 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      {settingsQuery.isSuccess && (
+        <ModelManagement settings={settingsQuery.data} />
+      )}
+
       {settingsQuery.isPending && (
         <Card aria-live="polite">
           <CardHeader>
@@ -144,6 +158,195 @@ export function SettingsPage() {
         </CardHeader>
       </Card>
     </div>
+  )
+}
+
+function ModelManagement({ settings }: { settings: AppSettings | undefined }) {
+  const models = useModelsQuery()
+  const download = useDownloadModelMutation()
+  const resume = useResumeModelMutation()
+  const cancel = useCancelModelMutation()
+  const remove = useDeleteModelMutation()
+  const select = useSetDefaultModelMutation()
+  useModelProgressEvents()
+
+  const error =
+    models.error ??
+    download.error ??
+    resume.error ??
+    cancel.error ??
+    remove.error ??
+    select.error
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <span className="bg-muted grid size-9 place-items-center rounded-lg">
+            <Cpu aria-hidden="true" className="size-4" />
+          </span>
+          <div>
+            <CardTitle>Local transcription models</CardTitle>
+            <CardDescription>
+              Download and verify a curated Whisper model for local-only
+              transcription. Model files never pass through React.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {models.isPending && (
+          <p role="status" className="text-muted-foreground text-sm">
+            Checking local model installations…
+          </p>
+        )}
+        {models.data?.map((model) => {
+          const job = model.downloadJob
+          const active =
+            job && ["queued", "downloading", "verifying"].includes(job.status)
+          const progress = job
+            ? Math.round((job.bytesDownloaded / job.totalBytes) * 100)
+            : 0
+          const busy =
+            download.isPending ||
+            resume.isPending ||
+            cancel.isPending ||
+            remove.isPending ||
+            select.isPending
+          return (
+            <section
+              key={model.descriptor.id}
+              className="border-border space-y-3 rounded-lg border p-4"
+              aria-label={model.descriptor.name}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-medium">{model.descriptor.name}</h3>
+                    {model.selectedAsDefault && <Badge>Default</Badge>}
+                    <Badge variant="outline">
+                      {model.status.replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    {model.descriptor.languages.join(", ")} ·{" "}
+                    {formatBytes(model.descriptor.downloadBytes)} download ·
+                    about {formatBytes(model.descriptor.approximateMemoryBytes)}{" "}
+                    memory · {model.descriptor.performanceClass}
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Backends available here:{" "}
+                    {model.availableBackends.join(", ").toUpperCase()} · License{" "}
+                    {model.descriptor.licenseSpdx}
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    model.compatibility.diskCompatible &&
+                    model.compatibility.memoryCompatible
+                      ? "secondary"
+                      : "destructive"
+                  }
+                >
+                  {model.compatibility.diskCompatible &&
+                  model.compatibility.memoryCompatible
+                    ? "Compatible"
+                    : "Check resources"}
+                </Badge>
+              </div>
+              {job && (
+                <div className="space-y-1" aria-live="polite">
+                  <div
+                    className="bg-muted h-2 overflow-hidden rounded-full"
+                    role="progressbar"
+                    aria-label={`${model.descriptor.name} download`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progress}
+                  >
+                    <div
+                      className="bg-primary h-full"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {job.status} · {formatBytes(job.bytesDownloaded)} of{" "}
+                    {formatBytes(job.totalBytes)} ({progress}%)
+                  </p>
+                </div>
+              )}
+              {model.lastError && (
+                <SanitizedErrorPanel
+                  error={new ApplicationError(model.lastError)}
+                />
+              )}
+              <div className="flex flex-wrap gap-2">
+                {model.status !== "installed" && !active && !job?.resumable && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy || !model.compatibility.diskCompatible}
+                    onClick={() => download.mutate(model.descriptor.id)}
+                  >
+                    <Download aria-hidden="true" className="size-4" /> Download
+                  </Button>
+                )}
+                {!active && job?.resumable && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => resume.mutate(model.descriptor.id)}
+                  >
+                    Resume
+                  </Button>
+                )}
+                {active && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => cancel.mutate(job.requestId)}
+                  >
+                    Cancel download
+                  </Button>
+                )}
+                {model.status === "installed" &&
+                  !model.selectedAsDefault &&
+                  settings && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        select.mutate({
+                          modelId: model.descriptor.id,
+                          expectedSettingsRevision: settings.revision,
+                        })
+                      }
+                    >
+                      Set as default
+                    </Button>
+                  )}
+                {model.status === "installed" && !model.selectedAsDefault && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => remove.mutate(model.descriptor.id)}
+                  >
+                    Delete model
+                  </Button>
+                )}
+              </div>
+            </section>
+          )
+        })}
+        {error && <SanitizedErrorPanel error={error} />}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -351,4 +554,10 @@ function CheckboxField({
 
 function formatFreeSpace(bytes: number) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GiB`
+}
+
+function formatBytes(bytes: number) {
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} GiB`
+    : `${(bytes / 1024 ** 2).toFixed(0)} MiB`
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-transcription-models"
+description = "Enables the list_transcription_models command without any pre-configured scope."
+commands.allow = ["list_transcription_models"]
+
+[[permission]]
+identifier = "deny-list-transcription-models"
+description = "Denies the list_transcription_models command without any pre-configured scope."
+commands.deny = ["list_transcription_models"]

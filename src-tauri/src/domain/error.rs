@@ -251,6 +251,77 @@ impl AppError {
         )
     }
 
+    pub(crate) fn model_operation_failed(technical_detail: &str) -> Self {
+        Self::new(
+            "model_operation_failed",
+            "KokoroKoe could not complete the local model operation.",
+            Some(technical_detail),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn model_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "model_unknown" => (
+                "That transcription model is not in the KokoroKoe catalog.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "model_download_in_progress" => (
+                "Another transcription model download is already running.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "model_download_not_resumable" => (
+                "That transcription model has no interrupted download to resume.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "model_download_not_found" => (
+                "That model download job is no longer available.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "model_not_installed" | "installed_model_invalid" => (
+                "Install and verify that transcription model before selecting it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "selected_model_cannot_be_deleted" => (
+                "Choose another installed default model before deleting this one.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "model_active_job_cannot_be_deleted" => (
+                "Cancel the active model download before deleting it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insufficient_model_disk" => (
+                "There is not enough local disk space to install this model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "model_download_cancelled" => (
+                "The model download was cancelled and can be resumed later.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "model_settings_route_required" => (
+                "Use the model manager to change the default transcription model.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            _ => (
+                "KokoroKoe could not complete the local model operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     fn new(
         code: &str,
         user_message: &str,

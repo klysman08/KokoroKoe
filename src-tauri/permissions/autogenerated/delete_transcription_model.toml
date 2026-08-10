@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-transcription-model"
+description = "Enables the delete_transcription_model command without any pre-configured scope."
+commands.allow = ["delete_transcription_model"]
+
+[[permission]]
+identifier = "deny-delete-transcription-model"
+description = "Denies the delete_transcription_model command without any pre-configured scope."
+commands.deny = ["delete_transcription_model"]

@@ -8,6 +8,12 @@ fn main() {
             "start_audio_capture_prototype",
             "get_audio_capture_prototype_status",
             "stop_audio_capture_prototype",
+            "list_transcription_models",
+            "download_transcription_model",
+            "cancel_model_download",
+            "resume_model_download",
+            "delete_transcription_model",
+            "set_default_transcription_model",
         ]));
 
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

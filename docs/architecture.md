@@ -541,11 +541,19 @@ type TranscriptSearchHit = { segment: TranscriptSegment; matchedRanges: { start:
 type ModelInstallation = {
   descriptor: ModelDescriptor
   status: "not_installed" | "downloading" | "installed" | "failed" | "incompatible"
-  installedPath?: string
   installedBytes: number
   installedAt?: Rfc3339Utc
   selectedAsDefault: boolean
   availableBackends: ("cpu" | "vulkan")[]
+  compatibility: {
+    availableDiskBytes: number
+    requiredDiskBytes: number
+    availableMemoryBytes: number
+    approximateMemoryBytes: number
+    diskCompatible: boolean
+    memoryCompatible: boolean
+  }
+  downloadJob?: ModelDownloadJob
   lastError?: AppError
 }
 
@@ -743,6 +751,8 @@ type EventEnvelope<T> = {
 | `session-recovered` | `{ session: Session; replayedEvents: number; restoredPartial: boolean }` |
 
 Use ordered Tauri Channels for high-frequency LLM deltas, model-download byte deltas, and optional combined session streams. Persist only complete locally validated LLM results, not raw streaming fragments.
+
+The bounded model manager is the exception to the optional combined-stream guidance: it emits the versioned `model-download-progress` semantic event directly to the exact `main` webview at a throttled rate. Event delivery failure is non-fatal to the Rust-owned download and verification job. Source URLs, hashes, local paths, and resume validators remain Rust-owned even though descriptor metadata is validated at the transport boundary; the Settings UI does not render those fields.
 
 ## Persistence ownership and recovery
 

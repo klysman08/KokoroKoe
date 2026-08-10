@@ -1928,6 +1928,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tempfile",
+ "time",
  "tracing",
  "tracing-subscriber",
  "uuid",

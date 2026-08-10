@@ -1,0 +1,64 @@
+{
+  "installation": {
+    "descriptor": {
+      "id": "whisper-tiny-multilingual",
+      "engine": "whisper",
+      "name": "Whisper Tiny (multilingual)",
+      "sourceUrl": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin",
+      "sourceRevision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "fileName": "ggml-tiny.bin",
+      "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+      "downloadBytes": 77691713,
+      "diskBytes": 77691713,
+      "languages": ["multilingual"],
+      "approximateMemoryBytes": 536870912,
+      "performanceClass": "fast",
+      "backends": ["cpu", "vulkan"],
+      "licenseSpdx": "MIT",
+      "licenseUrl": "https://huggingface.co/ggerganov/whisper.cpp/blob/5359861c739e955e79d9a303bcbc70fb988958b1/README.md"
+    },
+    "status": "downloading",
+    "installedBytes": 0,
+    "selectedAsDefault": false,
+    "availableBackends": ["cpu", "vulkan"],
+    "compatibility": {
+      "availableDiskBytes": 2147483648,
+      "requiredDiskBytes": 144800577,
+      "availableMemoryBytes": 8589934592,
+      "approximateMemoryBytes": 536870912,
+      "diskCompatible": true,
+      "memoryCompatible": true
+    },
+    "downloadJob": {
+      "requestId": "00000000-0000-4000-8000-000000000011",
+      "modelId": "whisper-tiny-multilingual",
+      "status": "downloading",
+      "bytesDownloaded": 4194304,
+      "totalBytes": 77691713,
+      "resumable": true,
+      "etag": "fixture-etag",
+      "startedAt": "2026-08-10T09:00:00Z",
+      "updatedAt": "2026-08-10T09:00:01Z"
+    }
+  },
+  "event": {
+    "schemaVersion": 1,
+    "eventId": "00000000-0000-4000-8000-000000000012",
+    "emittedAt": "2026-08-10T09:00:01Z",
+    "requestId": "00000000-0000-4000-8000-000000000011",
+    "payload": {
+      "job": {
+        "requestId": "00000000-0000-4000-8000-000000000011",
+        "modelId": "whisper-tiny-multilingual",
+        "status": "downloading",
+        "bytesDownloaded": 4194304,
+        "totalBytes": 77691713,
+        "resumable": true,
+        "etag": "fixture-etag",
+        "startedAt": "2026-08-10T09:00:00Z",
+        "updatedAt": "2026-08-10T09:00:01Z"
+      },
+      "bytesPerSecond": 2097152
+    }
+  }
+}

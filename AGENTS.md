@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-010 - Curated Whisper model management and installation
-- Date: 2026-08-09
-- Outcome: added the immutable multilingual Tiny/Base catalog plus Rust-owned disk/memory diagnostics, resumable bounded downloads, exact length/SHA-256 verification, synced atomic installation, verified-only ephemeral selection, deletion, and interrupted/corrupt-cache recovery without commands/events/UI or native/model packaging.
-- Verification: 12 focused deterministic model tests and the external exact Tiny/Base hash gate passed; Rust 1.88 locked fmt/Clippy, 102 ordinary tests plus 3 capability tests; Node 24 frontend gates and 72 Vitest tests; clean npm/Cargo audits and license policy after explicit ISC/MIT-0 review; locked x64 release build.
-- Memory: [P3-010 checkpoint](docs/project-memory.md#p3-010---curated-whisper-model-management-and-installation)
+- Task: P3-011 - Product model-management integration
+- Date: 2026-08-10
+- Outcome: integrated the curated Tiny/Base manager through six exact-main commands, a versioned main-targeted progress event, bounded SQLite job/install state, verified revisioned selection, dedicated blocking work, strict shared Rust/Zod contracts, and the Settings model-management UI without exposing model paths/URLs/hashes or adding live-session/native-package scope.
+- Verification: Rust 1.88 locked fmt/Clippy, 109 ordinary tests plus 3 capability tests; Node 24 frontend gates and 77 Vitest tests; clean npm audit and Cargo policy/audit with existing allowed warnings; locked x64 release build and bounded native launch health smoke. Native visual automation was unavailable and is recorded as a limitation in project memory.
+- Memory: [P3-011 checkpoint](docs/project-memory.md#p3-011---product-model-management-integration)

@@ -1,5 +1,8 @@
 mod catalog;
 mod installer;
+mod service;
+
+pub(crate) use service::ModelService;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ModelDescriptor {

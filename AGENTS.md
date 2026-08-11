@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-004 - Bounded project discovery and rebuildable SQLite projection
+- Task: P4-005 - Product project-management boundary
 - Date: 2026-08-11
-- Outcome: added bounded direct-child project discovery through the pinned snapshot store, explicit invalid/recovered/duplicate reporting, stable timestamp ordering, generation-bound pagination, and an atomic app-local SQLite projection that rebuilds solely from Markdown after empty or physically corrupt state.
-- Verification: Rust 1.88 locked fmt/Clippy, 155 ordinary tests plus 3 capability tests; 24 focused snapshot/discovery/index/recovery/cursor/fault tests; Node 24 frontend gates and 98 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-004 checkpoint](docs/project-memory.md#p4-004---bounded-project-discovery-and-rebuildable-sqlite-projection)
+- Outcome: exposed strict exact-main list/get/create/update project commands over Markdown-authoritative persistence, serialized them with workspace changes, bound the rebuildable index to an opaque workspace identity, verified projection refresh after durable writes, and added a bounded Home list/create/versioned-edit UI.
+- Verification: Rust 1.88 locked fmt/Clippy, 163 ordinary tests plus 3 capability tests and 36 focused project tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-005 checkpoint](docs/project-memory.md#p4-005---product-project-management-boundary)

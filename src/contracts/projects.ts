@@ -173,6 +173,52 @@ export const projectSchema = z
     }
   })
 
+const createProjectFields = {
+  name: singleLine(128),
+  description: multiline(4096),
+  globalContext: multiline(32768),
+  participants: uniqueList(64, 128),
+  tags: uniqueList(64, 64),
+  defaultPresetId: presetIdSchema,
+  defaultTranscriptionModelId: singleLine(128),
+  preferredLlmModels: llmRoleModelsSchema,
+} as const
+
+export const createProjectInputSchema = z.strictObject(createProjectFields)
+export const updateProjectInputSchema = z
+  .strictObject(createProjectFields)
+  .partial()
+  .refine((value) => Object.values(value).some((field) => field !== undefined))
+
+const projectCursorSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^p1:\d+:\d+$/)
+
+export const projectPageRequestSchema = z.strictObject({
+  cursor: projectCursorSchema.optional(),
+  limit: z.number().int().min(1).max(100),
+})
+
+export const projectPageSchema = z.strictObject({
+  items: z.array(projectSchema).max(100),
+  nextCursor: projectCursorSchema.optional(),
+})
+
+export const projectUpdateRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  expectedRevision: safeCounterSchema,
+  value: updateProjectInputSchema,
+})
+
+export const projectManagementFixtureSchema = z.strictObject({
+  pageRequest: projectPageRequestSchema,
+  page: projectPageSchema,
+  createInput: createProjectInputSchema,
+  updateRequest: projectUpdateRequestSchema,
+})
+
 export const sessionStateSchema = z.enum([
   "idle",
   "preparing",
@@ -330,6 +376,11 @@ export const projectSessionFixtureSchema = z
 export type ProjectId = z.infer<typeof projectIdSchema>
 export type SessionId = z.infer<typeof sessionIdSchema>
 export type Project = z.infer<typeof projectSchema>
+export type CreateProjectInput = z.infer<typeof createProjectInputSchema>
+export type UpdateProjectInput = z.infer<typeof updateProjectInputSchema>
+export type ProjectPageRequest = z.infer<typeof projectPageRequestSchema>
+export type ProjectPage = z.infer<typeof projectPageSchema>
+export type ProjectUpdateRequest = z.infer<typeof projectUpdateRequestSchema>
 export type Session = z.infer<typeof sessionSchema>
 export type PortableFolderContract = z.infer<
   typeof portableFolderContractSchema

@@ -1,10 +1,5 @@
-import {
-  ArrowRight,
-  FolderKanban,
-  Mic2,
-  ShieldCheck,
-  Sparkles,
-} from "lucide-react"
+import { FolderKanban, Pencil, Plus, Sparkles } from "lucide-react"
+import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,78 +10,182 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { useNavigationStore } from "@/stores/navigation-store"
-
-const readiness = [
-  {
-    title: "Local transcription",
-    description: "Audio and Whisper integration begin in Phase 3.",
-    icon: Mic2,
-  },
-  {
-    title: "Private by default",
-    description:
-      "Audio retention and external LLM features will start disabled.",
-    icon: ShieldCheck,
-  },
-  {
-    title: "Portable workspace",
-    description:
-      "Projects and sessions will be materialized as local Markdown.",
-    icon: FolderKanban,
-  },
-] as const
+import { type Project } from "@/contracts/projects"
+import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { ProjectForm } from "@/features/projects/ProjectForm"
+import {
+  useCreateProjectMutation,
+  useProjectsQuery,
+  useUpdateProjectMutation,
+} from "@/features/projects/use-projects"
+import { useSettingsQuery } from "@/features/settings/use-settings-query"
 
 export function HomePage() {
-  const navigate = useNavigationStore((state) => state.navigate)
+  const projectsQuery = useProjectsQuery()
+  const settingsQuery = useSettingsQuery()
+  const createMutation = useCreateProjectMutation()
+  const updateMutation = useUpdateProjectMutation()
+  const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState<Project>()
+  const projects = projectsQuery.data?.pages.flatMap((page) => page.items) ?? []
+  const mutationError = createMutation.error ?? updateMutation.error
+  const busy = createMutation.isPending || updateMutation.isPending
+
+  const closeForm = () => {
+    setCreating(false)
+    setEditing(undefined)
+    createMutation.reset()
+    updateMutation.reset()
+  }
 
   return (
     <div className="space-y-8">
       <section className="bg-card flex flex-col gap-5 rounded-2xl border p-6 shadow-sm md:flex-row md:items-center md:justify-between md:p-8">
         <div className="max-w-2xl space-y-3">
-          <Badge variant="secondary">Foundation ready</Badge>
+          <Badge variant="secondary">Local project workspace</Badge>
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">
-              Meetings stay understandable—and yours.
+              Keep every meeting grounded in context.
             </h1>
             <p className="text-muted-foreground mt-2 text-sm leading-6 md:text-base">
-              KokoroKoe is being built as a local-first Windows meeting
-              assistant. This checkpoint establishes the secure desktop shell
-              before audio or external services are connected.
+              Projects organize participants, reusable context, and local model
+              defaults. Markdown remains the portable source of truth.
             </p>
           </div>
         </div>
-        <Button onClick={() => navigate("settings")} size="lg">
-          Review setup
-          <ArrowRight data-icon="inline-end" />
+        <Button
+          disabled={settingsQuery.data === undefined}
+          onClick={() => {
+            setEditing(undefined)
+            setCreating(true)
+          }}
+          size="lg"
+        >
+          <Plus data-icon="inline-start" />
+          Create project
         </Button>
       </section>
 
-      <section aria-labelledby="readiness-title">
-        <div className="mb-4 flex items-end justify-between gap-4">
+      {(creating || editing) && (
+        <ProjectForm
+          busy={busy}
+          defaultPresetId={settingsQuery.data?.defaultPresetId}
+          defaultTranscriptionModelId={
+            settingsQuery.data?.defaultTranscriptionModelId
+          }
+          key={editing?.id ?? "create"}
+          onCancel={closeForm}
+          onCreate={(input) =>
+            createMutation.mutate(input, { onSuccess: closeForm })
+          }
+          onUpdate={(value) => {
+            if (!editing) return
+            updateMutation.mutate(
+              {
+                projectId: editing.id,
+                expectedRevision: editing.revision,
+                value,
+              },
+              { onSuccess: closeForm },
+            )
+          }}
+          project={editing}
+        />
+      )}
+
+      {mutationError && <SanitizedErrorPanel error={mutationError} />}
+      {projectsQuery.error && (
+        <SanitizedErrorPanel error={projectsQuery.error} />
+      )}
+
+      <section aria-labelledby="projects-title" className="space-y-4">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <p className="text-muted-foreground text-sm font-medium">
-              MVP foundations
+              Portable workspace
             </p>
-            <h2 className="text-xl font-semibold" id="readiness-title">
-              Privacy boundaries are visible from day one
+            <h2 className="text-xl font-semibold" id="projects-title">
+              Projects
             </h2>
           </div>
-          <Badge variant="outline">P2-001</Badge>
+          <Badge variant="outline">{projects.length} loaded</Badge>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {readiness.map(({ title, description, icon: Icon }) => (
-            <Card key={title}>
-              <CardHeader>
-                <span className="bg-muted mb-2 grid size-9 place-items-center rounded-lg">
-                  <Icon aria-hidden="true" className="size-4" />
-                </span>
-                <CardTitle>{title}</CardTitle>
-                <CardDescription>{description}</CardDescription>
-              </CardHeader>
-            </Card>
-          ))}
-        </div>
+
+        {projectsQuery.isPending ? (
+          <Card>
+            <CardContent className="text-muted-foreground p-6 text-sm">
+              Loading local projects…
+            </CardContent>
+          </Card>
+        ) : projects.length === 0 && !projectsQuery.error ? (
+          <Card>
+            <CardContent className="grid min-h-40 place-items-center p-6 text-center">
+              <div className="space-y-2">
+                <FolderKanban className="text-muted-foreground mx-auto size-5" />
+                <p className="text-sm font-medium">No projects yet</p>
+                <p className="text-muted-foreground text-xs">
+                  Create one to establish reusable meeting context.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {projects.map((project) => (
+              <Card key={project.id}>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle className="truncate">{project.name}</CardTitle>
+                      <CardDescription className="mt-1 line-clamp-2">
+                        {project.description || "No description"}
+                      </CardDescription>
+                    </div>
+                    <Button
+                      aria-label={`Edit ${project.name}`}
+                      onClick={() => {
+                        setCreating(false)
+                        setEditing(project)
+                      }}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Pencil />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-muted-foreground line-clamp-3 text-xs leading-5">
+                    {project.globalContext || "No global context"}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {project.tags.map((tag) => (
+                      <Badge key={tag} variant="secondary">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    Revision {project.revision} · {project.participants.length}{" "}
+                    participants
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {projectsQuery.hasNextPage && (
+          <div className="flex justify-center">
+            <Button
+              disabled={projectsQuery.isFetchingNextPage}
+              onClick={() => void projectsQuery.fetchNextPage()}
+              variant="outline"
+            >
+              {projectsQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        )}
       </section>
 
       <Card>
@@ -94,8 +193,7 @@ export function HomePage() {
           <div>
             <CardTitle>Recent sessions</CardTitle>
             <CardDescription>
-              Sessions will appear here after project persistence is
-              implemented.
+              Session persistence is the next Phase 4 boundary.
             </CardDescription>
           </div>
           <Button disabled variant="outline">
@@ -103,17 +201,10 @@ export function HomePage() {
           </Button>
         </CardHeader>
         <CardContent>
-          <div className="bg-muted/30 grid min-h-36 place-items-center rounded-xl border border-dashed p-6 text-center">
+          <div className="bg-muted/30 grid min-h-28 place-items-center rounded-xl border border-dashed p-6 text-center">
             <div className="space-y-2">
-              <Sparkles
-                aria-hidden="true"
-                className="text-muted-foreground mx-auto size-5"
-              />
-              <p className="text-sm font-medium">No session data yet</p>
-              <p className="text-muted-foreground max-w-md text-xs leading-5">
-                This scaffold deliberately contains no audio capture, transcript
-                storage, or network access.
-              </p>
+              <Sparkles className="text-muted-foreground mx-auto size-5" />
+              <p className="text-sm font-medium">No persisted sessions yet</p>
             </div>
           </div>
         </CardContent>

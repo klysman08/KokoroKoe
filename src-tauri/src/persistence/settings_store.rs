@@ -227,6 +227,17 @@ impl SettingsService {
         )))
     }
 
+    pub(crate) fn with_workspace_operation<T>(
+        &self,
+        operation: impl FnOnce(&Path) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let _operation = self.lock_operation()?;
+        let settings = self.with_database_recovery(|connection| {
+            get_settings_on_connection(connection, &self.foundation_defaults)
+        })?;
+        operation(Path::new(settings.workspace_path()))
+    }
+
     fn lock_operation(&self) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
         self.operation_lock
             .lock()

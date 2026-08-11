@@ -6,28 +6,19 @@ use std::{
 };
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use sha2::{Digest, Sha256};
 
-use crate::domain::Project;
+use crate::domain::{PageRequest, Project, ProjectId, ProjectPage};
 
 use super::project_store::{ProjectDiscoveryReport, ProjectStore, ProjectStoreError};
 
 const PROJECT_INDEX_MIGRATION: &str = include_str!("../../migrations/project_index_v1.sql");
+const PROJECT_INDEX_WORKSPACE_MIGRATION: &str =
+    include_str!("../../migrations/project_index_v2.sql");
 const PROJECT_INDEX_DATABASE_NAME: &str = "project-index.sqlite3";
-const PROJECT_INDEX_SCHEMA_VERSION: u32 = 1;
+const PROJECT_INDEX_SCHEMA_VERSION: u32 = 2;
 const MAX_PAGE_LIMIT: u16 = 100;
 const CURSOR_PREFIX: &str = "p1:";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectPageRequest {
-    pub(crate) cursor: Option<String>,
-    pub(crate) limit: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectPage {
-    pub(crate) items: Vec<Project>,
-    pub(crate) next_cursor: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectIndexRebuildReport {
@@ -42,6 +33,7 @@ pub(crate) struct ProjectCatalog {
     store: ProjectStore,
     app_data_directory: PathBuf,
     database_path: PathBuf,
+    workspace_key: String,
     operation_lock: Mutex<()>,
 }
 
@@ -52,10 +44,18 @@ impl ProjectCatalog {
         app_data_directory: PathBuf,
     ) -> Result<Self, ProjectStoreError> {
         let store = ProjectStore::open(workspace_path)?;
+        let canonical_workspace = fs::canonicalize(workspace_path)
+            .map_err(|_| ProjectStoreError::new("project_workspace_invalid"))?;
+        let normalized_workspace = canonical_workspace.to_string_lossy().to_lowercase();
+        let workspace_key = Sha256::digest(normalized_workspace.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Ok(Self {
             database_path: app_data_directory.join(PROJECT_INDEX_DATABASE_NAME),
             app_data_directory,
             store,
+            workspace_key,
             operation_lock: Mutex::new(()),
         })
     }
@@ -70,7 +70,7 @@ impl ProjectCatalog {
 
     pub(crate) fn list_projects(
         &self,
-        request: &ProjectPageRequest,
+        request: &PageRequest,
     ) -> Result<ProjectPage, ProjectStoreError> {
         let cursor = decode_cursor(request)?;
         let _operation = self
@@ -91,13 +91,159 @@ impl ProjectCatalog {
         }
     }
 
+    pub(crate) fn read_project(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<super::project_store::ProjectSnapshot, ProjectStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| ProjectStoreError::new("project_index_unavailable"))?;
+        match self.read_project_locked(project_id) {
+            Err(error)
+                if matches!(
+                    error.code,
+                    "project_index_corrupt" | "project_index_invalid"
+                ) =>
+            {
+                if error.code == "project_index_corrupt" {
+                    self.quarantine_corrupt_index()?;
+                }
+                self.rebuild_index_with_fault(None)?;
+                self.read_project_locked(project_id)
+            }
+            result => result,
+        }
+    }
+
+    pub(crate) fn create_project(&self, project: &Project) -> Result<Project, ProjectStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| ProjectStoreError::new("project_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        self.store.create_project(project)?;
+        self.refresh_after_write(project.id)?;
+        Ok(project.clone())
+    }
+
+    #[cfg(test)]
+    fn create_project_with_refresh_fault(
+        &self,
+        project: &Project,
+        fault: RebuildFault,
+    ) -> Result<Project, ProjectStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| ProjectStoreError::new("project_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        self.store.create_project(project)?;
+        self.refresh_after_write_with_fault(project.id, Some(fault))?;
+        Ok(project.clone())
+    }
+
+    pub(crate) fn update_project(
+        &self,
+        project: &Project,
+        expected_revision: u64,
+        expected_fingerprint: super::project_store::ProjectSnapshotFingerprint,
+    ) -> Result<Project, ProjectStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| ProjectStoreError::new("project_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        let snapshot =
+            self.store
+                .update_project(project, expected_revision, expected_fingerprint)?;
+        self.refresh_after_write(snapshot.project.id)?;
+        Ok(snapshot.project)
+    }
+
+    fn read_project_locked(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<super::project_store::ProjectSnapshot, ProjectStoreError> {
+        let connection = self.open_connection_without_recovery()?;
+        if !index_has_projection(&connection, &self.workspace_key)? {
+            drop(connection);
+            self.rebuild_index_with_fault(None)?;
+        }
+        let connection = self.open_connection_without_recovery()?;
+        let project_id = project_id_text(project_id)?;
+        let cached: Option<(String, Vec<u8>)> = connection
+            .query_row(
+                "SELECT project_json, snapshot_sha256 FROM project_index_entries WHERE project_id = ?1",
+                params![project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(map_index_read_error)?;
+        let (project_json, cached_fingerprint) =
+            cached.ok_or_else(|| ProjectStoreError::new("project_not_found"))?;
+        let cached_project: Project = serde_json::from_str(&project_json)
+            .map_err(|_| ProjectStoreError::new("project_index_invalid"))?;
+        let locator = super::project_store::ProjectLocator::from_project(&cached_project)?;
+        let snapshot = self.store.read_project(&locator)?;
+        if snapshot.project != cached_project
+            || snapshot.fingerprint.as_bytes().as_slice() != cached_fingerprint.as_slice()
+            || snapshot.recovered_from_backup
+        {
+            self.rebuild_index_with_fault(None)?;
+        }
+        Ok(snapshot)
+    }
+
+    fn invalidate_projection_locked(&self) -> Result<(), ProjectStoreError> {
+        let mut connection = match self.open_connection_without_recovery() {
+            Ok(connection) => connection,
+            Err(error) if error.code == "project_index_corrupt" => {
+                self.quarantine_corrupt_index()?;
+                self.open_connection_without_recovery()?
+            }
+            Err(error) => return Err(error),
+        };
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_index_write_error)?;
+        transaction
+            .execute("DELETE FROM project_index_meta", [])
+            .map_err(map_index_write_error)?;
+        transaction.commit().map_err(map_index_write_error)
+    }
+
+    fn refresh_after_write(&self, project_id: ProjectId) -> Result<(), ProjectStoreError> {
+        self.refresh_after_write_with_fault(project_id, None)
+    }
+
+    fn refresh_after_write_with_fault(
+        &self,
+        project_id: ProjectId,
+        fault: Option<RebuildFault>,
+    ) -> Result<(), ProjectStoreError> {
+        let report = self
+            .rebuild_index_with_fault(fault)
+            .map_err(|_| ProjectStoreError::new("project_projection_refresh_pending"))?;
+        if report
+            .discovery
+            .projects
+            .iter()
+            .any(|snapshot| snapshot.project.id == project_id)
+        {
+            Ok(())
+        } else {
+            Err(ProjectStoreError::new("project_projection_refresh_pending"))
+        }
+    }
+
     fn list_projects_locked(
         &self,
         cursor: DecodedCursor,
         limit: u16,
     ) -> Result<ProjectPage, ProjectStoreError> {
         let connection = self.open_connection_without_recovery()?;
-        if !index_has_projection(&connection)? {
+        if !index_has_projection(&connection, &self.workspace_key)? {
             drop(connection);
             self.rebuild_index_with_fault(None)?;
         }
@@ -119,16 +265,19 @@ impl ProjectCatalog {
                 }
                 Err(error) => return Err(error),
             };
-        let generation = match rebuild_on_connection(&mut connection, &discovery, fault) {
-            Err(error) if error.code == "project_index_corrupt" && !quarantined_corrupt_index => {
-                drop(connection);
-                self.quarantine_corrupt_index()?;
-                quarantined_corrupt_index = true;
-                let mut recovered = self.open_connection_without_recovery()?;
-                rebuild_on_connection(&mut recovered, &discovery, fault)?
-            }
-            result => result?,
-        };
+        let generation =
+            match rebuild_on_connection(&mut connection, &discovery, &self.workspace_key, fault) {
+                Err(error)
+                    if error.code == "project_index_corrupt" && !quarantined_corrupt_index =>
+                {
+                    drop(connection);
+                    self.quarantine_corrupt_index()?;
+                    quarantined_corrupt_index = true;
+                    let mut recovered = self.open_connection_without_recovery()?;
+                    rebuild_on_connection(&mut recovered, &discovery, &self.workspace_key, fault)?
+                }
+                result => result?,
+            };
         Ok(ProjectIndexRebuildReport {
             generation,
             indexed_projects: discovery.projects.len() as u32,
@@ -183,12 +332,16 @@ fn ensure_schema(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_index_write_error)?;
-    transaction
-        .execute_batch(PROJECT_INDEX_MIGRATION)
-        .and_then(|()| {
-            transaction.pragma_update(None, "user_version", PROJECT_INDEX_SCHEMA_VERSION)
-        })
-        .map_err(map_index_write_error)?;
+    match initial_version {
+        0 => transaction
+            .execute_batch(PROJECT_INDEX_MIGRATION)
+            .and_then(|()| transaction.execute_batch(PROJECT_INDEX_WORKSPACE_MIGRATION)),
+        1 => transaction.execute_batch(PROJECT_INDEX_WORKSPACE_MIGRATION),
+        PROJECT_INDEX_SCHEMA_VERSION => Ok(()),
+        _ => return Err(ProjectStoreError::new("project_index_future_schema")),
+    }
+    .and_then(|()| transaction.pragma_update(None, "user_version", PROJECT_INDEX_SCHEMA_VERSION))
+    .map_err(map_index_write_error)?;
     transaction.commit().map_err(map_index_write_error)
 }
 
@@ -196,21 +349,36 @@ fn raw_schema_version(connection: &Connection) -> rusqlite::Result<u32> {
     connection.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
-fn index_has_projection(connection: &Connection) -> Result<bool, ProjectStoreError> {
+fn project_id_text(project_id: ProjectId) -> Result<String, ProjectStoreError> {
+    serde_json::to_value(project_id)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| ProjectStoreError::new("project_contract_invalid"))
+}
+
+fn index_has_projection(
+    connection: &Connection,
+    workspace_key: &str,
+) -> Result<bool, ProjectStoreError> {
     connection
         .query_row(
-            "SELECT generation FROM project_index_meta WHERE singleton = 1",
+            "SELECT generation, workspace_key FROM project_index_meta WHERE singleton = 1",
             [],
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map(|generation| generation.is_some_and(|generation| generation >= 1))
+        .map(|projection| {
+            projection.is_some_and(|(generation, stored_key)| {
+                generation >= 1 && stored_key == workspace_key
+            })
+        })
         .map_err(map_index_read_error)
 }
 
 fn rebuild_on_connection(
     connection: &mut Connection,
     discovery: &ProjectDiscoveryReport,
+    workspace_key: &str,
     fault: Option<RebuildFault>,
 ) -> Result<u64, ProjectStoreError> {
     let current_generation = connection
@@ -258,9 +426,11 @@ fn rebuild_on_connection(
     inject_rebuild_fault(fault, RebuildFault::AfterInsert)?;
     transaction
         .execute(
-            "INSERT INTO project_index_meta (singleton, generation) VALUES (1, ?1)
-             ON CONFLICT(singleton) DO UPDATE SET generation = excluded.generation",
-            params![generation],
+            "INSERT INTO project_index_meta (singleton, generation, workspace_key) VALUES (1, ?1, ?2)
+             ON CONFLICT(singleton) DO UPDATE SET
+                generation = excluded.generation,
+                workspace_key = excluded.workspace_key",
+            params![generation, workspace_key],
         )
         .map_err(map_index_write_error)?;
     transaction.commit().map_err(map_index_write_error)?;
@@ -325,8 +495,8 @@ struct DecodedCursor {
     offset: u32,
 }
 
-fn decode_cursor(request: &ProjectPageRequest) -> Result<DecodedCursor, ProjectStoreError> {
-    if request.limit == 0 || request.limit > MAX_PAGE_LIMIT {
+fn decode_cursor(request: &PageRequest) -> Result<DecodedCursor, ProjectStoreError> {
+    if request.validate().is_err() || request.limit > MAX_PAGE_LIMIT {
         return Err(ProjectStoreError::new("project_page_invalid"));
     }
     let Some(cursor) = request.cursor.as_deref() else {
@@ -408,8 +578,11 @@ fn inject_rebuild_fault(
 mod tests {
     use std::fs;
 
-    use super::{ProjectCatalog, ProjectPageRequest, RebuildFault};
-    use crate::{domain::Project, persistence::ProjectStore};
+    use super::{PROJECT_INDEX_MIGRATION, ProjectCatalog, RebuildFault};
+    use crate::{
+        domain::{PageRequest, Project},
+        persistence::ProjectStore,
+    };
 
     fn project(id: &str, name: &str, updated_at: &str) -> Project {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -463,7 +636,7 @@ mod tests {
             ProjectCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
 
         let first = catalog
-            .list_projects(&ProjectPageRequest {
+            .list_projects(&PageRequest {
                 cursor: None,
                 limit: 2,
             })
@@ -478,7 +651,7 @@ mod tests {
         );
         let first_cursor = first.next_cursor.clone();
         let second = catalog
-            .list_projects(&ProjectPageRequest {
+            .list_projects(&PageRequest {
                 cursor: first.next_cursor,
                 limit: 2,
             })
@@ -489,7 +662,7 @@ mod tests {
         catalog.rebuild_index().unwrap();
         assert_eq!(
             catalog
-                .list_projects(&ProjectPageRequest {
+                .list_projects(&PageRequest {
                     cursor: first_cursor,
                     limit: 2,
                 })
@@ -527,7 +700,7 @@ mod tests {
                 .starts_with("project-index.sqlite3.corrupt-")
         }));
         let page = catalog
-            .list_projects(&ProjectPageRequest {
+            .list_projects(&PageRequest {
                 cursor: None,
                 limit: 10,
             })
@@ -544,7 +717,7 @@ mod tests {
             .unwrap();
         drop(connection);
         let repaired = catalog
-            .list_projects(&ProjectPageRequest {
+            .list_projects(&PageRequest {
                 cursor: None,
                 limit: 10,
             })
@@ -579,7 +752,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "project_index_fault_injected");
         let page = catalog
-            .list_projects(&ProjectPageRequest {
+            .list_projects(&PageRequest {
                 cursor: None,
                 limit: 10,
             })
@@ -592,25 +765,102 @@ mod tests {
     }
 
     #[test]
+    fn durable_create_reports_pending_refresh_and_the_next_list_repairs_it() {
+        let workspace = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let catalog =
+            ProjectCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
+        catalog.rebuild_index().unwrap();
+        let created = project(
+            "77777777-7777-4777-8777-777777777777",
+            "Durable Project",
+            "2026-08-11T13:00:00Z",
+        );
+
+        let error = catalog
+            .create_project_with_refresh_fault(&created, RebuildFault::AfterDelete)
+            .unwrap_err();
+
+        assert_eq!(error.code, "project_projection_refresh_pending");
+        assert!(
+            workspace
+                .path()
+                .join("projects")
+                .join(&created.folder_name)
+                .join("project.md")
+                .is_file()
+        );
+        let repaired = catalog
+            .list_projects(&PageRequest {
+                cursor: None,
+                limit: 10,
+            })
+            .unwrap();
+        assert_eq!(repaired.items, vec![created]);
+    }
+
+    #[test]
+    fn version_one_index_migrates_and_rebinds_to_the_current_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let database = app_data.path().join("project-index.sqlite3");
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection.execute_batch(PROJECT_INDEX_MIGRATION).unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        drop(connection);
+        let current = project(
+            "88888888-8888-4888-8888-888888888888",
+            "Current Workspace",
+            "2026-08-11T14:00:00Z",
+        );
+        create_projects(workspace.path(), std::slice::from_ref(&current));
+
+        let catalog =
+            ProjectCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
+        let page = catalog
+            .list_projects(&PageRequest {
+                cursor: None,
+                limit: 10,
+            })
+            .unwrap();
+
+        assert_eq!(page.items, vec![current]);
+        let connection = rusqlite::Connection::open(database).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let workspace_key: String = connection
+            .query_row(
+                "SELECT workspace_key FROM project_index_meta WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(workspace_key.len(), 64);
+        assert!(!workspace_key.contains(&workspace.path().display().to_string()));
+    }
+
+    #[test]
     fn invalid_page_requests_are_rejected_before_database_access() {
         let workspace = tempfile::tempdir().unwrap();
         let app_data = tempfile::tempdir().unwrap();
         let catalog =
             ProjectCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
         for request in [
-            ProjectPageRequest {
+            PageRequest {
                 cursor: None,
                 limit: 0,
             },
-            ProjectPageRequest {
+            PageRequest {
                 cursor: None,
                 limit: 101,
             },
-            ProjectPageRequest {
+            PageRequest {
                 cursor: Some("p1:not-a-number".to_owned()),
                 limit: 10,
             },
-            ProjectPageRequest {
+            PageRequest {
                 cursor: Some("p2:1:0".to_owned()),
                 limit: 10,
             },

@@ -5,7 +5,11 @@ import { vi } from "vitest"
 import appSettingsFixture from "../../fixtures/contracts/app-settings-v1.json"
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn().mockResolvedValue(appSettingsFixture),
+  invoke: vi.fn().mockImplementation((command: string) => {
+    if (command === "get_settings") return Promise.resolve(appSettingsFixture)
+    if (command === "list_projects") return Promise.resolve({ items: [] })
+    return Promise.reject(new Error(`Unexpected command: ${command}`))
+  }),
 }))
 
 import App from "@/App"
@@ -26,7 +30,7 @@ describe("application routing", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: /meetings stay understandable/i,
+        name: /keep every meeting grounded in context/i,
       }),
     ).toBeInTheDocument()
 

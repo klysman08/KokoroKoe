@@ -1,0 +1,46 @@
+{
+  "pageRequest": {
+    "limit": 24
+  },
+  "page": {
+    "items": [
+      {
+        "schemaVersion": 1,
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "name": "Weekly product meetings",
+        "folderName": "weekly-product-meetings--aaaaaaaa",
+        "description": "Planning and review meetings for the product team.",
+        "globalContext": "Focus on decisions, owners, risks, and open questions.",
+        "participants": ["Product lead", "Engineering lead"],
+        "tags": ["product", "weekly"],
+        "defaultPresetId": "00000000-0000-4000-8000-000000000001",
+        "defaultTranscriptionModelId": "whisper-tiny-multilingual",
+        "preferredLlmModels": {},
+        "createdAt": "2026-08-10T09:00:00Z",
+        "updatedAt": "2026-08-11T08:30:00Z",
+        "revision": 2
+      }
+    ],
+    "nextCursor": "p1:7:24"
+  },
+  "createInput": {
+    "name": "Customer discovery",
+    "description": "Customer interviews and research calls.",
+    "globalContext": "Capture needs, objections, decisions, and follow-up owners.",
+    "participants": ["Research lead"],
+    "tags": ["research", "customer"],
+    "defaultPresetId": "00000000-0000-4000-8000-000000000001",
+    "defaultTranscriptionModelId": "whisper-tiny-multilingual",
+    "preferredLlmModels": {}
+  },
+  "updateRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "expectedRevision": 2,
+    "value": {
+      "name": "Weekly product review",
+      "description": "Updated planning and review meetings.",
+      "participants": ["Product lead", "Engineering lead", "Design lead"],
+      "tags": ["product", "review"]
+    }
+  }
+}

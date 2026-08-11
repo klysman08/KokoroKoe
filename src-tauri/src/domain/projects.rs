@@ -43,6 +43,89 @@ pub(crate) struct LlmRoleModels {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CreateProjectInput {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) global_context: String,
+    pub(crate) participants: Vec<String>,
+    pub(crate) tags: Vec<String>,
+    pub(crate) default_preset_id: PresetId,
+    pub(crate) default_transcription_model_id: String,
+    pub(crate) preferred_llm_models: LlmRoleModels,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateProjectInput {
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) global_context: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) participants: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_preset_id: Option<PresetId>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_transcription_model_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) preferred_llm_models: Option<LlmRoleModels>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PageRequest {
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cursor: Option<String>,
+    pub(crate) limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ProjectPage {
+    pub(crate) items: Vec<Project>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawProjectPage {
+    items: Vec<Project>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    next_cursor: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ProjectPage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawProjectPage::deserialize(deserializer)?;
+        if raw.items.len() > 100 || !valid_cursor(raw.next_cursor.as_deref()) {
+            return Err(D::Error::custom("project_page_invalid"));
+        }
+        Ok(Self {
+            items: raw.items,
+            next_cursor: raw.next_cursor,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InsightType {
     SuggestedResponse,
@@ -343,6 +426,114 @@ impl Project {
         }
         Ok(())
     }
+
+    pub(crate) fn create(
+        input: CreateProjectInput,
+        created_at: String,
+    ) -> Result<Self, &'static str> {
+        parse_timestamp(&created_at).ok_or("project_contract_invalid")?;
+        let id = ProjectId(Uuid::new_v4());
+        let value = Self {
+            schema_version: 1,
+            id,
+            folder_name: Self::derive_folder_name(&input.name, id),
+            name: input.name,
+            description: input.description,
+            global_context: input.global_context,
+            participants: input.participants,
+            tags: input.tags,
+            default_preset_id: input.default_preset_id,
+            default_transcription_model_id: input.default_transcription_model_id,
+            preferred_llm_models: input.preferred_llm_models,
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            revision: 1,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub(crate) fn apply_update(
+        &self,
+        update: UpdateProjectInput,
+        updated_at: String,
+    ) -> Result<Self, &'static str> {
+        if update.is_empty() {
+            return Err("project_update_invalid");
+        }
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .filter(|revision| *revision <= JSON_SAFE_INTEGER_MAX)
+            .ok_or("project_revision_exhausted")?;
+        let current_time = parse_timestamp(&self.updated_at).ok_or("project_contract_invalid")?;
+        let requested_time = parse_timestamp(&updated_at).ok_or("project_contract_invalid")?;
+        let updated_at = if requested_time >= current_time {
+            updated_at
+        } else {
+            self.updated_at.clone()
+        };
+        let value = Self {
+            schema_version: self.schema_version,
+            id: self.id,
+            name: update.name.unwrap_or_else(|| self.name.clone()),
+            folder_name: self.folder_name.clone(),
+            description: update
+                .description
+                .unwrap_or_else(|| self.description.clone()),
+            global_context: update
+                .global_context
+                .unwrap_or_else(|| self.global_context.clone()),
+            participants: update
+                .participants
+                .unwrap_or_else(|| self.participants.clone()),
+            tags: update.tags.unwrap_or_else(|| self.tags.clone()),
+            default_preset_id: update
+                .default_preset_id
+                .unwrap_or_else(|| self.default_preset_id.clone()),
+            default_transcription_model_id: update
+                .default_transcription_model_id
+                .unwrap_or_else(|| self.default_transcription_model_id.clone()),
+            preferred_llm_models: update
+                .preferred_llm_models
+                .unwrap_or_else(|| self.preferred_llm_models.clone()),
+            created_at: self.created_at.clone(),
+            updated_at,
+            revision: next_revision,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+}
+
+impl UpdateProjectInput {
+    fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.description.is_none()
+            && self.global_context.is_none()
+            && self.participants.is_none()
+            && self.tags.is_none()
+            && self.default_preset_id.is_none()
+            && self.default_transcription_model_id.is_none()
+            && self.preferred_llm_models.is_none()
+    }
+}
+
+impl PageRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.limit == 0 || self.limit > 100 || !valid_cursor(self.cursor.as_deref()) {
+            return Err("project_page_invalid");
+        }
+        Ok(())
+    }
+}
+
+fn valid_cursor(cursor: Option<&str>) -> bool {
+    cursor.is_none_or(|cursor| {
+        !cursor.is_empty()
+            && cursor.len() <= 128
+            && cursor.chars().all(|character| !character.is_control())
+    })
 }
 
 impl Session {
@@ -578,9 +769,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
     use serde_json::Value;
 
-    use super::{Project, Session};
+    use super::{
+        CreateProjectInput, PageRequest, Project, ProjectId, ProjectPage, Session,
+        UpdateProjectInput,
+    };
     use crate::persistence::layout::PortableFolderContract;
 
     fn fixture() -> Value {
@@ -588,6 +783,30 @@ mod tests {
             "../../../fixtures/contracts/project-session-v1.json"
         ))
         .expect("project/session fixture should be valid JSON")
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct ProjectManagementFixture {
+        page_request: PageRequest,
+        page: ProjectPage,
+        create_input: CreateProjectInput,
+        update_request: ProjectUpdateRequest,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct ProjectUpdateRequest {
+        project_id: ProjectId,
+        expected_revision: u64,
+        value: UpdateProjectInput,
+    }
+
+    fn management_fixture() -> ProjectManagementFixture {
+        serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/project-management-v1.json"
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -669,5 +888,67 @@ mod tests {
         let mut unknown = base;
         unknown["unexpected"] = serde_json::json!(true);
         assert!(serde_json::from_value::<Session>(unknown).is_err());
+    }
+
+    #[test]
+    fn project_management_requests_and_page_match_the_shared_contract() {
+        let fixture = management_fixture();
+        fixture.page_request.validate().unwrap();
+        assert_eq!(fixture.page.items.len(), 1);
+        assert_eq!(fixture.update_request.expected_revision, 2);
+        assert_eq!(fixture.update_request.project_id, fixture.page.items[0].id);
+
+        let created =
+            Project::create(fixture.create_input, "2026-08-11T12:00:00Z".to_owned()).unwrap();
+        assert_eq!(created.revision, 1);
+        assert_eq!(
+            created.folder_name,
+            "customer-discovery--".to_owned() + &created.id.suffix()
+        );
+        let updated = fixture.page.items[0]
+            .apply_update(
+                fixture.update_request.value,
+                "2026-08-11T13:00:00Z".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(updated.revision, 3);
+        assert_eq!(updated.folder_name, fixture.page.items[0].folder_name);
+        assert_eq!(updated.name, "Weekly product review");
+    }
+
+    #[test]
+    fn project_management_rejects_empty_nullable_unknown_and_unbounded_requests() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/project-management-v1.json"
+        ))
+        .unwrap();
+        let base: Project = serde_json::from_value(fixture["page"]["items"][0].clone()).unwrap();
+        for invalid in [
+            serde_json::json!({"limit": 0}),
+            serde_json::json!({"limit": 101}),
+            serde_json::json!({"limit": 24, "cursor": null}),
+            serde_json::json!({"limit": 24, "unknown": true}),
+        ] {
+            let request: Result<PageRequest, _> = serde_json::from_value(invalid);
+            assert!(request.is_err() || request.unwrap().validate().is_err());
+        }
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"name": null}),
+            serde_json::json!({"unknown": true}),
+            serde_json::json!({"tags": ["same", "same"]}),
+        ] {
+            let update: Result<UpdateProjectInput, _> = serde_json::from_value(invalid);
+            if let Ok(update) = update {
+                assert!(
+                    base.apply_update(update, "2026-08-11T13:00:00Z".to_owned())
+                        .is_err()
+                );
+            }
+        }
+        let mut create = fixture["createInput"].clone();
+        create["name"] = serde_json::json!("");
+        let input: CreateProjectInput = serde_json::from_value(create).unwrap();
+        assert!(Project::create(input, "2026-08-11T12:00:00Z".to_owned()).is_err());
     }
 }

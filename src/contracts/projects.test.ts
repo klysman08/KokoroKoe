@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest"
 
 import fixture from "../../fixtures/contracts/project-session-v1.json"
+import managementFixture from "../../fixtures/contracts/project-management-v1.json"
 import {
+  createProjectInputSchema,
+  projectManagementFixtureSchema,
+  projectPageRequestSchema,
   projectSchema,
   projectSessionFixtureSchema,
+  projectUpdateRequestSchema,
   sessionSchema,
 } from "./projects"
 
@@ -70,5 +75,46 @@ describe("project and session contracts", () => {
         },
       }),
     ).toThrow()
+  })
+})
+
+describe("project management contracts", () => {
+  it("parses the shared request and page fixture", () => {
+    expect(projectManagementFixtureSchema.parse(managementFixture)).toEqual(
+      managementFixture,
+    )
+  })
+
+  it.each([
+    [{ limit: 0 }],
+    [{ limit: 101 }],
+    [{ limit: 24, cursor: null }],
+    [{ limit: 24, cursor: "wrong:cursor" }],
+    [{ limit: 24, unknown: true }],
+  ])("rejects an invalid page request", (value) => {
+    expect(() => projectPageRequestSchema.parse(value)).toThrow()
+  })
+
+  it.each([
+    [{ ...managementFixture.createInput, name: "" }],
+    [{ ...managementFixture.createInput, tags: ["same", "same"] }],
+    [
+      {
+        ...managementFixture.createInput,
+        preferredLlmModels: { insights: null },
+      },
+    ],
+    [{ ...managementFixture.createInput, unknown: true }],
+  ])("rejects invalid create input", (value) => {
+    expect(() => createProjectInputSchema.parse(value)).toThrow()
+  })
+
+  it.each([
+    [{ ...managementFixture.updateRequest, value: {} }],
+    [{ ...managementFixture.updateRequest, value: { name: null } }],
+    [{ ...managementFixture.updateRequest, expectedRevision: -1 }],
+    [{ ...managementFixture.updateRequest, unexpected: true }],
+  ])("rejects invalid versioned update input", (value) => {
+    expect(() => projectUpdateRequestSchema.parse(value)).toThrow()
   })
 })

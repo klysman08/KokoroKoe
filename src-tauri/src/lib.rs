@@ -14,7 +14,7 @@ use tauri::Manager;
 
 use audio::AudioDeviceTestService;
 use models::ModelService;
-use persistence::SettingsService;
+use persistence::{ProjectService, SettingsService};
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
 
@@ -55,9 +55,11 @@ pub fn run() {
                     .map_err(|_| io::Error::other("application settings initialization failed"))?;
             let models = ModelService::open(&app_data_directory, settings.clone())
                 .map_err(|_| io::Error::other("model service initialization failed"))?;
+            let projects = ProjectService::new(settings.clone(), app_data_directory.clone());
 
             app.manage(settings);
             app.manage(models);
+            app.manage(projects);
             app.manage(AudioDeviceTestService::default());
             #[cfg(windows)]
             {
@@ -75,6 +77,10 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::choose_workspace,
+            commands::projects::list_projects,
+            commands::projects::get_project,
+            commands::projects::create_project,
+            commands::projects::update_project,
             commands::models::list_transcription_models,
             commands::models::download_transcription_model,
             commands::models::cancel_model_download,

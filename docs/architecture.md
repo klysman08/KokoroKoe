@@ -557,6 +557,29 @@ type ModelInstallation = {
   lastError?: AppError
 }
 
+type LiveTranscriptionInput = {
+  acknowledgedCaptureConsent: boolean
+  microphoneSelection: DeviceSelection
+  systemOutputSelection: DeviceSelection
+}
+type LiveTranscriptionRunState = "idle" | "starting" | "running" | "stopping" | "stopped" | "failed"
+type LiveTranscriptionStatus = {
+  state: LiveTranscriptionRunState
+  requestId?: RequestId
+  startedAt?: Rfc3339Utc
+  stoppedAt?: Rfc3339Utc
+  error?: AppError
+}
+type LiveTranscriptSegment = {
+  id: SegmentId
+  source: AudioSource
+  startMs: number
+  endMs: number
+  text: string
+  status: SegmentStatus
+  language: string
+}
+
 type ModelDownloadJob = {
   requestId: RequestId
   modelId: string
@@ -685,6 +708,9 @@ Commands use these exact transport names and typed request/result forms:
 | `list_audio_devices` | none | `AudioDeviceList` |
 | `start_audio_device_test` | `DeviceTestInput & RequestContext` | `DeviceTestStatus` |
 | `stop_audio_device_test` | `{ requestId }` | `DeviceTestStatus` |
+| `start_live_transcription` | `LiveTranscriptionInput & RequestContext` | `LiveTranscriptionStatus` |
+| `get_live_transcription_status` | none | `LiveTranscriptionStatus` |
+| `stop_live_transcription` | `{ requestId }` | `LiveTranscriptionStatus` |
 | `get_transcript_page` | `{ sessionId } & PageRequest` | `Page<TranscriptSegment>` |
 | `search_transcript` | `TranscriptSearchQuery` | `Page<TranscriptSearchHit>` |
 | `edit_transcript_segment` | `{ segmentId } & Versioned<{ text: string }>` | `TranscriptSegment` |
@@ -740,6 +766,7 @@ type EventEnvelope<T> = {
 | `audio-level-updated` | `{ sessionId?: SessionId; testId?: RequestId; source: AudioSource; rmsDbfs: number; peakDbfs: number; clipping: boolean; muted: boolean; atMs: number }` |
 | `transcription-partial` | `{ segment: TranscriptSegment }` with stable ID and `status=partial` |
 | `transcription-final` | `{ segment: TranscriptSegment; replacesPartialId?: SegmentId }` |
+| `transcription-gap` | `{ source: AudioSource; startMs: number; endMs: number; code: string }` for the transient P3-015 live run |
 | `session-status-changed` | `{ sessionId; previous: SessionState; current: SessionState; reason?: string; recoverable: boolean; channelHealth; summaryStatus }` |
 | `insight-generated` | `{ insight: Insight }` after local validation |
 | `summary-updated` | `{ summary: SessionSummary; changedSections: string[] }` |
@@ -751,6 +778,8 @@ type EventEnvelope<T> = {
 | `session-recovered` | `{ session: Session; replayedEvents: number; restoredPartial: boolean }` |
 
 Use ordered Tauri Channels for high-frequency LLM deltas, model-download byte deltas, and optional combined session streams. Persist only complete locally validated LLM results, not raw streaming fragments.
+
+P3-015 uses the three `live_transcription` commands only for one transient Phase 3 run before Phase 4 project/session ownership exists. Its transcript envelopes require `requestId` and `sessionSequence`, target only the invoking `main` webview, and carry `LiveTranscriptSegment` without a persisted `sessionId`. The React surface holds at most 500 inert plain-text records. These commands are not aliases for the later architecture-defined project-backed `start_session`/pause/resume/stop lifecycle; the future session service will own persistence and wrap the same Rust audio/transcription coordinator. Missing native runtime assets fail with a fixed sanitized error and do not broaden frontend filesystem/process access.
 
 The bounded model manager is the exception to the optional combined-stream guidance: it emits the versioned `model-download-progress` semantic event directly to the exact `main` webview at a throttled rate. Event delivery failure is non-fatal to the Rust-owned download and verification job. Source URLs, hashes, local paths, and resume validators remain Rust-owned even though descriptor metadata is validated at the transport boundary; the Settings UI does not render those fields.
 

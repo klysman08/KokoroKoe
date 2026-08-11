@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-014 - Partial-transcription readiness
+- Task: P3-015 - Product transient live transcription
 - Date: 2026-08-11
-- Outcome: added bounded source-local active-speech snapshots on a fixed 500 ms cadence, carried one replaceable partial per source through the existing scheduler/coordinator, preserved stable provisional-to-final identity and final priority, and made provisional failures and lifecycle cleanup diagnostic-only without adding product commands/events/UI, persistence, retained audio, OpenRouter, or packaging scope.
-- Verification: Rust 1.88 locked fmt/Clippy, 120 ordinary tests plus 3 capability tests; Node 24 frontend gates and 76 Vitest tests; explicit selected-Tiny/CPU dual-endpoint `OpenAI.mp3` gate with 2,394 microphone packets, 2,399 system packets, one non-empty partial, one matching final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
-- Memory: [P3-014 checkpoint](docs/project-memory.md#p3-014---partial-transcription-readiness)
+- Outcome: exposed one consent-gated transient live run through three exact main-window commands and ordered partial/final/gap events, added stable provisional replacement and a 500-record inert transcript UI, and preserved the no-persistence/no-retained-audio/no-OpenRouter/no-packaging boundary.
+- Verification: Rust 1.88 locked fmt/Clippy, 126 ordinary tests plus 3 capability tests; Node 24 frontend gates and 83 Vitest tests; explicit selected-Tiny/CPU product gate with `OpenAI.mp3`, 45 partial updates, one matching final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
+- Memory: [P3-015 checkpoint](docs/project-memory.md#p3-015---product-transient-live-transcription)

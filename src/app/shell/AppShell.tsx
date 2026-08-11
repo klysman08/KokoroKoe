@@ -3,12 +3,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Home,
+  MessageSquareText,
   Settings,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
+import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
 import { cn } from "@/lib/utils"
 import {
   type AppRoute,
@@ -19,6 +21,7 @@ import { useShellStore } from "@/stores/shell-store"
 
 const navigation = [
   { label: "Home", route: "home", icon: Home },
+  { label: "Live transcript", route: "transcript", icon: MessageSquareText },
   { label: "Settings", route: "settings", icon: Settings },
 ] as const
 
@@ -115,7 +118,13 @@ export function AppShell() {
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl p-6 lg:p-8">
-          {activeRoute === "settings" ? <SettingsPage /> : <HomePage />}
+          {activeRoute === "settings" ? (
+            <SettingsPage />
+          ) : activeRoute === "transcript" ? (
+            <LiveTranscriptPage />
+          ) : (
+            <HomePage />
+          )}
         </main>
       </div>
     </div>

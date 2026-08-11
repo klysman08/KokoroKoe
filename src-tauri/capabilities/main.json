@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least-privilege settings, model-management, and audio-device-test capability for the KokoroKoe main window.",
+  "description": "Least-privilege settings, model-management, audio-device-test, and live-transcription capability for the KokoroKoe main window.",
   "windows": ["main"],
   "permissions": [
     "allow-get-settings",
@@ -15,6 +15,9 @@
     "allow-cancel-model-download",
     "allow-resume-model-download",
     "allow-delete-transcription-model",
-    "allow-set-default-transcription-model"
+    "allow-set-default-transcription-model",
+    "allow-start-live-transcription",
+    "allow-get-live-transcription-status",
+    "allow-stop-live-transcription"
   ]
 }

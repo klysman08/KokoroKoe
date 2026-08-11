@@ -1,9 +1,10 @@
 import { create } from "zustand"
 
-export type AppRoute = "home" | "settings"
+export type AppRoute = "home" | "transcript" | "settings"
 
 export const routeHref: Record<AppRoute, string> = {
   home: "#/",
+  transcript: "#/transcript",
   settings: "#/settings",
 }
 

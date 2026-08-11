@@ -100,6 +100,42 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn live_transcription_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "live_transcription_consent_required" => (
+                "Acknowledge the recording and transcription notice before starting.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "live_transcription_already_running" | "live_transcription_request_conflict" => (
+                "A live transcription run is already active.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "live_transcription_not_running" => (
+                "That live transcription run is no longer active.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "live_transcription_runtime_unavailable" => (
+                "The local transcription runtime is not available in this build.",
+                ErrorSeverity::Error,
+                false,
+            ),
+            "model_not_installed" | "installed_model_invalid" => (
+                "Install and select a verified transcription model before starting.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            _ => (
+                "KokoroKoe could not complete the live transcription operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn command_not_authorized() -> Self {
         Self::new(
             "command_not_authorized",

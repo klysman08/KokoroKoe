@@ -30,5 +30,5 @@ pub(crate) use vad::{
 #[cfg(windows)]
 pub(crate) use windows::{AudioDeviceTestObservation, AudioDeviceTestService, AudioPrototypeError};
 
-#[cfg(all(windows, test))]
+#[cfg(windows)]
 pub(crate) use windows::RunningAudioPrototype;

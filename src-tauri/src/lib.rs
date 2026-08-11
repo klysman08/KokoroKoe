@@ -15,6 +15,8 @@ use tauri::Manager;
 use audio::AudioDeviceTestService;
 use models::ModelService;
 use persistence::SettingsService;
+#[cfg(windows)]
+use transcription::LiveTranscriptionService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
 
@@ -57,6 +59,16 @@ pub fn run() {
             app.manage(settings);
             app.manage(models);
             app.manage(AudioDeviceTestService::default());
+            #[cfg(windows)]
+            {
+                let adapter_path = std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+                    .unwrap_or_else(|| app_data_directory.clone())
+                    .join("kokorokoe_whisper_adapter.dll");
+                let models = app.state::<ModelService>().inner().clone();
+                app.manage(LiveTranscriptionService::new(models, adapter_path));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,7 +83,13 @@ pub fn run() {
             commands::models::set_default_transcription_model,
             commands::audio::list_audio_devices,
             commands::audio::start_audio_device_test,
-            commands::audio::stop_audio_device_test
+            commands::audio::stop_audio_device_test,
+            #[cfg(windows)]
+            commands::transcription::start_live_transcription,
+            #[cfg(windows)]
+            commands::transcription::get_live_transcription_status,
+            #[cfg(windows)]
+            commands::transcription::stop_live_transcription
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

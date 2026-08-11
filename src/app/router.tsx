@@ -4,7 +4,9 @@ import { AppShell } from "@/app/shell/AppShell"
 import { useNavigationStore } from "@/stores/navigation-store"
 
 function routeFromHash(hash: string) {
-  return hash === "#/settings" ? "settings" : "home"
+  if (hash === "#/settings") return "settings"
+  if (hash === "#/transcript") return "transcript"
+  return "home"
 }
 
 export function AppRouter() {

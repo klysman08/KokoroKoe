@@ -2,6 +2,8 @@ mod fallback;
 mod integration;
 mod live;
 mod model;
+#[cfg(windows)]
+mod product;
 pub(crate) mod scheduler;
 
 #[cfg(windows)]
@@ -10,7 +12,12 @@ mod whisper;
 mod worker;
 
 #[cfg(windows)]
+pub(crate) use product::{LiveTranscriptionService, ProductTranscriptionEvent};
+#[cfg(windows)]
 pub(crate) use worker::{WORKER_MODE_ARGUMENT, run_worker_if_requested};
+
+pub(crate) use integration::LivePipelineEvent;
+pub(crate) use live::{load_verified_cpu_engine, spawn_live_coordinator};
 
 pub(crate) use model::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionError,

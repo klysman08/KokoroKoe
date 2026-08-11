@@ -233,6 +233,21 @@ pub(crate) enum SummaryStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CreateSessionSnapshotInput {
+    pub(crate) title: String,
+    pub(crate) objective: String,
+    pub(crate) session_context: String,
+    pub(crate) preset: PresetSnapshot,
+    pub(crate) language: String,
+    pub(crate) microphone: AudioDeviceSnapshot,
+    pub(crate) system_output: AudioDeviceSnapshot,
+    pub(crate) transcription_model_id: String,
+    pub(crate) llm_models: LlmRoleModels,
+    pub(crate) retain_audio: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Project {
@@ -552,6 +567,65 @@ impl Session {
         ))
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn create(
+        project_id: ProjectId,
+        input: CreateSessionSnapshotInput,
+        created_at: String,
+    ) -> Result<Self, &'static str> {
+        parse_timestamp(&created_at).ok_or("session_contract_invalid")?;
+        let id = SessionId(Uuid::new_v4());
+        let folder_name = Self::derive_folder_name(&input.title, id, &created_at)
+            .ok_or("session_contract_invalid")?;
+        let channel_health = ChannelHealthBySource {
+            microphone: ChannelHealth {
+                status: ChannelHealthStatus::Stopped,
+                endpoint_id: Some(input.microphone.endpoint_id.clone()),
+                detail_code: None,
+                updated_at: created_at.clone(),
+            },
+            system_output: ChannelHealth {
+                status: ChannelHealthStatus::Stopped,
+                endpoint_id: Some(input.system_output.endpoint_id.clone()),
+                detail_code: None,
+                updated_at: created_at.clone(),
+            },
+        };
+        let value = Self {
+            schema_version: 1,
+            id,
+            project_id,
+            folder_name,
+            title: input.title,
+            objective: input.objective,
+            session_context: input.session_context,
+            preset: input.preset,
+            language: input.language,
+            microphone: input.microphone,
+            system_output: input.system_output,
+            transcription_engine: TranscriptionEngine::Whisper,
+            transcription_model_id: input.transcription_model_id,
+            llm_models: input.llm_models,
+            retain_audio: input.retain_audio,
+            state: SessionState::Idle,
+            channel_health,
+            summary_status: SummaryStatus::NotRequested,
+            usage: UsageAggregate {
+                input_tokens: 0,
+                output_tokens: 0,
+                estimated_cost_usd: "0.00".to_owned(),
+                actual_cost_usd: "0.00".to_owned(),
+            },
+            created_at: created_at.clone(),
+            started_at: None,
+            ended_at: None,
+            updated_at: created_at,
+            revision: 1,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         let created_date = self.created_at.get(..10);
         if self.schema_version != 1
@@ -773,8 +847,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        CreateProjectInput, PageRequest, Project, ProjectId, ProjectPage, Session,
-        UpdateProjectInput,
+        CreateProjectInput, CreateSessionSnapshotInput, PageRequest, Project, ProjectId,
+        ProjectPage, Session, SessionState, SummaryStatus, UpdateProjectInput,
     };
     use crate::persistence::layout::PortableFolderContract;
 
@@ -830,6 +904,83 @@ mod tests {
         assert_eq!(
             Project::derive_folder_name("会議", project.id),
             "project--aaaaaaaa"
+        );
+    }
+
+    #[test]
+    fn session_creation_derives_idle_revision_one_state_from_resolved_snapshots() {
+        let fixture = fixture();
+        let project: Project = serde_json::from_value(fixture["project"].clone()).unwrap();
+        let source = &fixture["session"];
+        let input: CreateSessionSnapshotInput = serde_json::from_value(serde_json::json!({
+            "title": source["title"],
+            "objective": source["objective"],
+            "sessionContext": source["sessionContext"],
+            "preset": source["preset"],
+            "language": source["language"],
+            "microphone": source["microphone"],
+            "systemOutput": source["systemOutput"],
+            "transcriptionModelId": source["transcriptionModelId"],
+            "llmModels": source["llmModels"],
+            "retainAudio": true
+        }))
+        .unwrap();
+
+        let session =
+            Session::create(project.id, input, "2026-08-11T08:45:00Z".to_owned()).unwrap();
+
+        assert_eq!(session.state, SessionState::Idle);
+        assert_eq!(session.summary_status, SummaryStatus::NotRequested);
+        assert_eq!(session.revision, 1);
+        assert!(session.started_at.is_none());
+        assert!(session.ended_at.is_none());
+        assert!(session.retain_audio);
+        assert!(
+            session
+                .folder_name
+                .starts_with("2026-08-11-sprint-planning--")
+        );
+        assert_eq!(session.usage.estimated_cost_usd, "0.00");
+        assert!(session.validate().is_ok());
+    }
+
+    #[test]
+    fn session_creation_rejects_invalid_or_unknown_input() {
+        let fixture = fixture();
+        let project: Project = serde_json::from_value(fixture["project"].clone()).unwrap();
+        let source = &fixture["session"];
+        let mut input = serde_json::json!({
+            "title": source["title"],
+            "objective": source["objective"],
+            "sessionContext": source["sessionContext"],
+            "preset": source["preset"],
+            "language": source["language"],
+            "microphone": source["microphone"],
+            "systemOutput": source["systemOutput"],
+            "transcriptionModelId": source["transcriptionModelId"],
+            "llmModels": source["llmModels"],
+            "retainAudio": false
+        });
+        input["unknown"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<CreateSessionSnapshotInput>(input).is_err());
+
+        let mut input: CreateSessionSnapshotInput = serde_json::from_value(serde_json::json!({
+            "title": source["title"],
+            "objective": source["objective"],
+            "sessionContext": source["sessionContext"],
+            "preset": source["preset"],
+            "language": source["language"],
+            "microphone": source["microphone"],
+            "systemOutput": source["systemOutput"],
+            "transcriptionModelId": source["transcriptionModelId"],
+            "llmModels": source["llmModels"],
+            "retainAudio": false
+        }))
+        .unwrap();
+        input.title.clear();
+        assert_eq!(
+            Session::create(project.id, input, "2026-08-11T08:45:00Z".to_owned()),
+            Err("session_contract_invalid")
         );
     }
 

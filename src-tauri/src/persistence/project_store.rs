@@ -476,14 +476,20 @@ impl ProjectStore {
         result
     }
 
-    fn open_existing_project(
+    pub(super) fn open_existing_project(
         &self,
         locator: &ProjectLocator,
     ) -> Result<PinnedProjectDirectory, ProjectStoreError> {
         self.workspace.revalidate()?;
         let projects_path = self.workspace.path.join("projects");
+        if !projects_path.exists() {
+            return Err(ProjectStoreError::new("project_snapshot_missing"));
+        }
         let projects = PinnedDirectory::open(&projects_path)?;
         let project_path = projects_path.join(&locator.folder_name);
+        if !project_path.exists() {
+            return Err(ProjectStoreError::new("project_snapshot_missing"));
+        }
         let project = PinnedDirectory::open(&project_path)?;
         self.workspace.revalidate()?;
         projects.revalidate()?;
@@ -492,15 +498,20 @@ impl ProjectStore {
     }
 }
 
-struct PinnedProjectDirectory {
+pub(super) struct PinnedProjectDirectory {
     projects: PinnedDirectory,
     project: PinnedDirectory,
 }
 
 impl PinnedProjectDirectory {
-    fn revalidate(&self) -> Result<(), ProjectStoreError> {
+    pub(super) fn revalidate(&self) -> Result<(), ProjectStoreError> {
         self.projects.revalidate()?;
         self.project.revalidate()
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn path(&self) -> &Path {
+        &self.project.path
     }
 }
 
@@ -900,14 +911,14 @@ fn inject_fault(
     }
 }
 
-struct PinnedDirectory {
+pub(super) struct PinnedDirectory {
     path: PathBuf,
     file: File,
     identity: DirectoryIdentity,
 }
 
 impl PinnedDirectory {
-    fn open(path: &Path) -> Result<Self, ProjectStoreError> {
+    pub(super) fn open(path: &Path) -> Result<Self, ProjectStoreError> {
         reject_reparse_points(path).map_err(|_| ProjectStoreError::new("project_path_unsafe"))?;
         let file = open_directory_without_delete_share(path)?;
         let identity = directory_identity(&file)?;
@@ -921,7 +932,7 @@ impl PinnedDirectory {
         })
     }
 
-    fn revalidate(&self) -> Result<(), ProjectStoreError> {
+    pub(super) fn revalidate(&self) -> Result<(), ProjectStoreError> {
         reject_reparse_points(&self.path)
             .map_err(|_| ProjectStoreError::new("project_path_unsafe"))?;
         let current = open_directory_without_delete_share(&self.path)?;

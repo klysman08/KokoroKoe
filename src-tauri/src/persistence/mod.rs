@@ -2,6 +2,7 @@ pub(crate) mod layout;
 mod project_index;
 mod project_service;
 mod project_store;
+mod session_store;
 mod settings_store;
 
 #[allow(unused_imports)]
@@ -11,4 +12,6 @@ pub(crate) use project_service::ProjectService;
 pub(crate) use project_store::{ProjectCreateReceipt, ProjectStore, ProjectStoreError};
 #[allow(unused_imports)]
 pub(crate) use project_store::{ProjectLocator, ProjectSnapshot, ProjectSnapshotFingerprint};
+#[allow(unused_imports)]
+pub(crate) use session_store::{SessionCreateReceipt, SessionStore, SessionStoreError};
 pub(crate) use settings_store::SettingsService;

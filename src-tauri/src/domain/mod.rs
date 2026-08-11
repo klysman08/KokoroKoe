@@ -12,6 +12,8 @@ pub(crate) use models::{
     ModelDownloadProgress, ModelDownloadStatus, ModelInstallation, ModelInstallationStatus,
     PerformanceClass, RequestId, now_rfc3339,
 };
+#[allow(unused_imports)]
+pub(crate) use projects::CreateSessionSnapshotInput;
 pub(crate) use projects::{
     CreateProjectInput, LlmRoleModels, PageRequest, Project, ProjectId, ProjectPage, Session,
     UpdateProjectInput,

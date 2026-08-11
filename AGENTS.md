@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-005 - Product project-management boundary
+- Task: P4-006 - Pinned initial session and session.md snapshot
 - Date: 2026-08-11
-- Outcome: exposed strict exact-main list/get/create/update project commands over Markdown-authoritative persistence, serialized them with workspace changes, bound the rebuildable index to an opaque workspace identity, verified projection refresh after durable writes, and added a bounded Home list/create/versioned-edit UI.
-- Verification: Rust 1.88 locked fmt/Clippy, 163 ordinary tests plus 3 capability tests and 36 focused project tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-005 checkpoint](docs/project-memory.md#p4-005---product-project-management-boundary)
+- Outcome: added strict Rust-owned initial Session construction and pinned no-clobber publication of the sole derived `session.md` beneath an existing authoritative project, with bounded safe metadata, exact initial state, and invocation-owned fault cleanup.
+- Verification: 14 session-filtered tests including 10 new domain/store tests; Rust 1.88 locked fmt/Clippy, 173 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-006 checkpoint](docs/project-memory.md#p4-006---pinned-initial-session-and-sessionmd-snapshot)

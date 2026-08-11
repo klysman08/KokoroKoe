@@ -3,6 +3,7 @@
 .vscode
 dist
 docs
+fixtures/persistence/session-v1.md
 graphify-out
 node_modules
 src-tauri

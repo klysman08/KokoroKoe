@@ -4,25 +4,28 @@
 
 use std::{
     fmt,
-    fs::{self, OpenOptions},
-    io::Write,
-    path::Path,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
 };
 
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
-#[cfg(windows)]
-use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+use sha2::{Digest, Sha256};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::domain::{Project, Session};
+use crate::domain::{Project, ProjectId, Session, SessionId};
 
 use super::{
     layout::PortableFolderContract,
-    project_store::{PinnedDirectory, ProjectLocator, ProjectStore, ProjectStoreError},
+    project_store::{
+        PinnedDirectory, PinnedProjectDirectory, ProjectLocator, ProjectStore, ProjectStoreError,
+        atomic_publish_new, atomic_replace_existing, atomic_replace_with_backup,
+        open_snapshot_without_write_share,
+    },
 };
 
 const TEMP_SESSION_DOCUMENT: &str = ".session.md.tmp";
-const MAX_SESSION_DOCUMENT_BYTES: usize = 512 * 1024;
+const BACKUP_SESSION_DOCUMENT: &str = "session.md.bak";
+const MAX_SESSION_DOCUMENT_BYTES: u64 = 512 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SessionStoreError {
@@ -49,6 +52,45 @@ pub(crate) struct SessionCreateReceipt {
     pub(crate) bytes_written: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionLocator {
+    project: ProjectLocator,
+    project_id: ProjectId,
+    id: SessionId,
+    folder_name: String,
+}
+
+impl SessionLocator {
+    pub(crate) fn from_records(
+        project: &Project,
+        session: &Session,
+    ) -> Result<Self, SessionStoreError> {
+        project
+            .validate()
+            .map_err(|_| SessionStoreError::new("session_project_invalid"))?;
+        session
+            .validate()
+            .map_err(|_| SessionStoreError::new("session_contract_invalid"))?;
+        PortableFolderContract::for_records(project, session).map_err(map_contract_error)?;
+        Ok(Self {
+            project: ProjectLocator::from_project(project).map_err(map_project_error)?,
+            project_id: project.id,
+            id: session.id,
+            folder_name: session.folder_name.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionSnapshotFingerprint([u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionSnapshot {
+    pub(crate) session: Session,
+    pub(crate) fingerprint: SessionSnapshotFingerprint,
+    pub(crate) recovered_from_backup: bool,
+}
+
 pub(crate) struct SessionStore {
     projects: ProjectStore,
 }
@@ -65,6 +107,29 @@ impl SessionStore {
         session: &Session,
     ) -> Result<SessionCreateReceipt, SessionStoreError> {
         self.create_session_with_fault(project, session, None)
+    }
+
+    pub(crate) fn read_session(
+        &self,
+        locator: &SessionLocator,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        self.read_session_with_recovery(locator)
+    }
+
+    pub(crate) fn update_session(
+        &self,
+        locator: &SessionLocator,
+        updated: &Session,
+        expected_revision: u64,
+        expected_fingerprint: SessionSnapshotFingerprint,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        self.update_session_with_fault(
+            locator,
+            updated,
+            expected_revision,
+            expected_fingerprint,
+            None,
+        )
     }
 
     fn create_session_with_fault(
@@ -167,7 +232,8 @@ impl SessionStore {
 
             inject_fault(fault, CreateFault::TemporarySynced)?;
             session_directory.revalidate().map_err(map_path_error)?;
-            atomic_publish_new(&temporary_path, &document_path)?;
+            atomic_publish_new(&temporary_path, &document_path)
+                .map_err(map_snapshot_publish_error)?;
             inject_fault(fault, CreateFault::Published)?;
             pinned_project.revalidate().map_err(map_path_error)?;
             sessions.revalidate().map_err(map_path_error)?;
@@ -195,6 +261,183 @@ impl SessionStore {
             let _ = fs::remove_dir(&sessions_path);
         }
         result
+    }
+
+    fn read_session_with_recovery(
+        &self,
+        locator: &SessionLocator,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        let pinned = self.open_existing_session(locator)?;
+        let paths = SessionDocumentPaths::new(pinned.path());
+        match read_locked_snapshot(&paths.document, locator) {
+            Ok(snapshot) => {
+                let _ = fs::remove_file(&paths.temporary);
+                Ok(snapshot.into_public(false))
+            }
+            Err(error) if error.is_recoverable_snapshot_failure() => {
+                let main = match read_locked_snapshot_internal(&paths.document, Some(locator)) {
+                    Ok(snapshot) => return Ok(snapshot.into_public(false)),
+                    Err(error) => error,
+                };
+                if !main.error.is_recoverable_snapshot_failure() {
+                    return Err(main.error);
+                }
+                let missing = main.error.code == "session_snapshot_missing";
+                let backup = read_locked_snapshot(&paths.backup, locator)
+                    .map_err(|_| SessionStoreError::new("session_snapshot_recovery_failed"))?;
+                pinned.revalidate()?;
+                publish_recovery_bytes(&paths, &backup.bytes, !missing)?;
+                drop(main);
+                let restored = read_locked_snapshot(&paths.document, locator)
+                    .map_err(|_| SessionStoreError::new("session_snapshot_recovery_failed"))?;
+                Ok(restored.into_public(true))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn update_session_with_fault(
+        &self,
+        locator: &SessionLocator,
+        updated: &Session,
+        expected_revision: u64,
+        expected_fingerprint: SessionSnapshotFingerprint,
+        fault: Option<UpdateFault>,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        updated
+            .validate()
+            .map_err(|_| SessionStoreError::new("session_contract_invalid"))?;
+        let pinned = self.open_existing_session(locator)?;
+        let paths = SessionDocumentPaths::new(pinned.path());
+        let current = read_locked_snapshot(&paths.document, locator)?;
+
+        validate_session_update(
+            &current.session,
+            updated,
+            expected_revision,
+            expected_fingerprint,
+            current.fingerprint,
+        )?;
+        let document = render_session_document(updated)?;
+        write_synced_temporary(&paths.temporary, document.as_bytes())?;
+
+        let mut replaced = false;
+        let result = (|| {
+            inject_update_fault(fault, UpdateFault::TemporarySynced)?;
+            pinned.revalidate()?;
+            remove_if_file(&paths.backup)?;
+            atomic_replace_with_backup(&paths.temporary, &paths.document, &paths.backup)
+                .map_err(map_snapshot_publish_error)?;
+            replaced = true;
+            inject_update_fault(fault, UpdateFault::Replaced)?;
+            pinned.revalidate()?;
+            let snapshot = read_locked_snapshot(&paths.document, locator)?;
+            if snapshot.session != *updated {
+                return Err(SessionStoreError::new("session_snapshot_verify_failed"));
+            }
+            Ok(snapshot.into_public(false))
+        })();
+
+        drop(current);
+        if result.is_err() {
+            let _ = fs::remove_file(&paths.temporary);
+            if replaced {
+                let _ = restore_backup(&paths, locator);
+            }
+        }
+        result
+    }
+
+    fn open_existing_session(
+        &self,
+        locator: &SessionLocator,
+    ) -> Result<PinnedSessionDirectory, SessionStoreError> {
+        let project = self
+            .projects
+            .open_existing_project(&locator.project)
+            .map_err(map_project_error)?;
+        let authoritative = self
+            .projects
+            .read_project(&locator.project)
+            .map_err(map_project_error)?;
+        if authoritative.project.id != locator.project_id {
+            return Err(SessionStoreError::new("session_project_identity_mismatch"));
+        }
+        let sessions_path = project.path().join("sessions");
+        if !sessions_path.exists() {
+            return Err(SessionStoreError::new("session_snapshot_missing"));
+        }
+        let sessions = PinnedDirectory::open(&sessions_path).map_err(map_path_error)?;
+        let session_path = sessions_path.join(&locator.folder_name);
+        if !session_path.exists() {
+            return Err(SessionStoreError::new("session_snapshot_missing"));
+        }
+        let session = PinnedDirectory::open(&session_path).map_err(map_path_error)?;
+        project.revalidate().map_err(map_path_error)?;
+        sessions.revalidate().map_err(map_path_error)?;
+        session.revalidate().map_err(map_path_error)?;
+        Ok(PinnedSessionDirectory {
+            project,
+            sessions,
+            session,
+        })
+    }
+}
+
+struct PinnedSessionDirectory {
+    project: PinnedProjectDirectory,
+    sessions: PinnedDirectory,
+    session: PinnedDirectory,
+}
+
+impl PinnedSessionDirectory {
+    fn path(&self) -> &Path {
+        self.session.path()
+    }
+
+    fn revalidate(&self) -> Result<(), SessionStoreError> {
+        self.project.revalidate().map_err(map_path_error)?;
+        self.sessions.revalidate().map_err(map_path_error)?;
+        self.session.revalidate().map_err(map_path_error)
+    }
+}
+
+struct SessionDocumentPaths {
+    document: PathBuf,
+    temporary: PathBuf,
+    backup: PathBuf,
+}
+
+impl SessionDocumentPaths {
+    fn new(session_directory: &Path) -> Self {
+        Self {
+            document: session_directory.join("session.md"),
+            temporary: session_directory.join(TEMP_SESSION_DOCUMENT),
+            backup: session_directory.join(BACKUP_SESSION_DOCUMENT),
+        }
+    }
+}
+
+struct LockedSessionSnapshot {
+    _file: File,
+    bytes: Vec<u8>,
+    session: Session,
+    fingerprint: SessionSnapshotFingerprint,
+}
+
+#[derive(Debug)]
+struct LockedSnapshotReadError {
+    error: SessionStoreError,
+    _file: Option<File>,
+}
+
+impl LockedSessionSnapshot {
+    fn into_public(self, recovered_from_backup: bool) -> SessionSnapshot {
+        SessionSnapshot {
+            session: self.session,
+            fingerprint: self.fingerprint,
+            recovered_from_backup,
+        }
     }
 }
 
@@ -258,7 +501,10 @@ fn render_session_document(session: &Session) -> Result<String, SessionStoreErro
         push_yaml_field(&mut document, yaml_name, &scalar(json_name)?);
     }
     document.push_str("---\n");
-    if document.len() > MAX_SESSION_DOCUMENT_BYTES {
+    if u64::try_from(document.len())
+        .map_err(|_| SessionStoreError::new("session_snapshot_too_large"))?
+        > MAX_SESSION_DOCUMENT_BYTES
+    {
         return Err(SessionStoreError::new("session_snapshot_too_large"));
     }
     Ok(document)
@@ -296,6 +542,259 @@ fn render_yaml_flow(value: &serde_json::Value) -> Result<String, SessionStoreErr
     }
 }
 
+fn read_locked_snapshot(
+    path: &Path,
+    locator: &SessionLocator,
+) -> Result<LockedSessionSnapshot, SessionStoreError> {
+    read_locked_snapshot_internal(path, Some(locator)).map_err(|error| error.error)
+}
+
+fn read_locked_snapshot_internal(
+    path: &Path,
+    locator: Option<&SessionLocator>,
+) -> Result<LockedSessionSnapshot, LockedSnapshotReadError> {
+    let mut file = open_snapshot_without_write_share(path)
+        .map_err(map_snapshot_open_error)
+        .map_err(|error| LockedSnapshotReadError { error, _file: None })?;
+    let length = match file.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(_) => {
+            return Err(LockedSnapshotReadError {
+                error: SessionStoreError::new("session_snapshot_read_failed"),
+                _file: Some(file),
+            });
+        }
+    };
+    if length > MAX_SESSION_DOCUMENT_BYTES {
+        return Err(LockedSnapshotReadError {
+            error: SessionStoreError::new("session_snapshot_too_large"),
+            _file: Some(file),
+        });
+    }
+    let capacity = match usize::try_from(length) {
+        Ok(capacity) => capacity,
+        Err(_) => {
+            return Err(LockedSnapshotReadError {
+                error: SessionStoreError::new("session_snapshot_too_large"),
+                _file: Some(file),
+            });
+        }
+    };
+    let mut bytes = Vec::with_capacity(capacity);
+    if Read::by_ref(&mut file)
+        .take(MAX_SESSION_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Err(LockedSnapshotReadError {
+            error: SessionStoreError::new("session_snapshot_read_failed"),
+            _file: Some(file),
+        });
+    }
+    if u64::try_from(bytes.len()).map_or(true, |length| length > MAX_SESSION_DOCUMENT_BYTES) {
+        return Err(LockedSnapshotReadError {
+            error: SessionStoreError::new("session_snapshot_too_large"),
+            _file: Some(file),
+        });
+    }
+    let session = match parse_session_document(&bytes) {
+        Ok(session) => session,
+        Err(error) => {
+            return Err(LockedSnapshotReadError {
+                error,
+                _file: Some(file),
+            });
+        }
+    };
+    if locator.is_some_and(|locator| {
+        session.id != locator.id
+            || session.project_id != locator.project_id
+            || session.folder_name != locator.folder_name
+    }) {
+        return Err(LockedSnapshotReadError {
+            error: SessionStoreError::new("session_snapshot_identity_mismatch"),
+            _file: Some(file),
+        });
+    }
+    let fingerprint = SessionSnapshotFingerprint(Sha256::digest(&bytes).into());
+    Ok(LockedSessionSnapshot {
+        _file: file,
+        bytes,
+        session,
+        fingerprint,
+    })
+}
+
+fn parse_session_document(bytes: &[u8]) -> Result<Session, SessionStoreError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| SessionStoreError::new("session_snapshot_invalid"))?;
+    let normalized = text.replace("\r\n", "\n");
+    if normalized.contains('\r') {
+        return Err(SessionStoreError::new("session_snapshot_invalid"));
+    }
+    let mut lines = normalized.lines().peekable();
+    if lines.next() != Some("---") {
+        return Err(SessionStoreError::new("session_snapshot_invalid"));
+    }
+
+    let mut object = serde_json::Map::new();
+    for (yaml_name, json_name) in [
+        ("schema_version", "schemaVersion"),
+        ("document_type", "documentType"),
+        ("id", "id"),
+        ("project_id", "projectId"),
+        ("folder_name", "folderName"),
+        ("title", "title"),
+        ("objective", "objective"),
+        ("session_context", "sessionContext"),
+        ("preset", "preset"),
+        ("language", "language"),
+        ("microphone", "microphone"),
+        ("system_output", "systemOutput"),
+        ("transcription_engine", "transcriptionEngine"),
+        ("transcription_model_id", "transcriptionModelId"),
+        ("llm_models", "llmModels"),
+        ("retain_audio", "retainAudio"),
+        ("state", "state"),
+        ("channel_health", "channelHealth"),
+        ("summary_status", "summaryStatus"),
+        ("usage", "usage"),
+        ("created_at", "createdAt"),
+    ] {
+        parse_exact_field(&mut lines, &mut object, yaml_name, json_name)?;
+    }
+    for (yaml_name, json_name) in [("started_at", "startedAt"), ("ended_at", "endedAt")] {
+        if lines
+            .peek()
+            .is_some_and(|line| line.starts_with(&format!("{yaml_name}: ")))
+        {
+            parse_exact_field(&mut lines, &mut object, yaml_name, json_name)?;
+        }
+    }
+    for (yaml_name, json_name) in [("updated_at", "updatedAt"), ("revision", "revision")] {
+        parse_exact_field(&mut lines, &mut object, yaml_name, json_name)?;
+    }
+    if lines.next() != Some("---") || lines.next().is_some() {
+        return Err(SessionStoreError::new("session_snapshot_invalid"));
+    }
+    if object.remove("documentType") != Some(serde_json::json!("session")) {
+        return Err(SessionStoreError::new("session_snapshot_invalid"));
+    }
+    serde_json::from_value(serde_json::Value::Object(object))
+        .map_err(|_| SessionStoreError::new("session_snapshot_invalid"))
+}
+
+fn parse_exact_field<'a, I>(
+    lines: &mut std::iter::Peekable<I>,
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    yaml_name: &str,
+    json_name: &str,
+) -> Result<(), SessionStoreError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let line = lines
+        .next()
+        .ok_or_else(|| SessionStoreError::new("session_snapshot_invalid"))?;
+    let (name, encoded) = line
+        .split_once(": ")
+        .ok_or_else(|| SessionStoreError::new("session_snapshot_invalid"))?;
+    if name != yaml_name {
+        return Err(SessionStoreError::new("session_snapshot_invalid"));
+    }
+    let value = serde_json::from_str(encoded)
+        .map_err(|_| SessionStoreError::new("session_snapshot_invalid"))?;
+    object.insert(json_name.to_owned(), value);
+    Ok(())
+}
+
+fn validate_session_update(
+    current: &Session,
+    updated: &Session,
+    expected_revision: u64,
+    expected_fingerprint: SessionSnapshotFingerprint,
+    current_fingerprint: SessionSnapshotFingerprint,
+) -> Result<(), SessionStoreError> {
+    if current.revision != expected_revision {
+        return Err(SessionStoreError::new("session_revision_conflict"));
+    }
+    if expected_fingerprint != current_fingerprint {
+        return Err(SessionStoreError::new("session_external_modification"));
+    }
+    if current.id != updated.id
+        || current.project_id != updated.project_id
+        || current.folder_name != updated.folder_name
+        || current.created_at != updated.created_at
+    {
+        return Err(SessionStoreError::new("session_snapshot_identity_mismatch"));
+    }
+    if expected_revision.checked_add(1) != Some(updated.revision) {
+        return Err(SessionStoreError::new("session_revision_invalid"));
+    }
+    let current_updated = OffsetDateTime::parse(&current.updated_at, &Rfc3339)
+        .map_err(|_| SessionStoreError::new("session_snapshot_invalid"))?;
+    let next_updated = OffsetDateTime::parse(&updated.updated_at, &Rfc3339)
+        .map_err(|_| SessionStoreError::new("session_contract_invalid"))?;
+    if next_updated < current_updated {
+        return Err(SessionStoreError::new("session_revision_invalid"));
+    }
+    Ok(())
+}
+
+fn write_synced_temporary(path: &Path, bytes: &[u8]) -> Result<(), SessionStoreError> {
+    remove_if_file(path)?;
+    let mut temporary = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| SessionStoreError::new("session_snapshot_write_failed"))?;
+    temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.sync_all())
+        .map_err(|_| SessionStoreError::new("session_snapshot_write_failed"))
+}
+
+fn publish_recovery_bytes(
+    paths: &SessionDocumentPaths,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<(), SessionStoreError> {
+    write_synced_temporary(&paths.temporary, bytes)?;
+    let result = if replace_existing {
+        atomic_replace_existing(&paths.temporary, &paths.document)
+    } else {
+        atomic_publish_new(&paths.temporary, &paths.document)
+    };
+    result
+        .map_err(map_snapshot_publish_error)
+        .map_err(|_| SessionStoreError::new("session_snapshot_recovery_failed"))
+}
+
+fn restore_backup(
+    paths: &SessionDocumentPaths,
+    locator: &SessionLocator,
+) -> Result<(), SessionStoreError> {
+    let backup = read_locked_snapshot(&paths.backup, locator)?;
+    publish_recovery_bytes(paths, &backup.bytes, true)
+}
+
+fn remove_if_file(path: &Path) -> Result<(), SessionStoreError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(SessionStoreError::new("session_snapshot_cleanup_failed")),
+    }
+}
+
+impl SessionStoreError {
+    fn is_recoverable_snapshot_failure(self) -> bool {
+        matches!(
+            self.code,
+            "session_snapshot_missing" | "session_snapshot_invalid" | "session_snapshot_too_large"
+        )
+    }
+}
+
 fn map_contract_error(code: &'static str) -> SessionStoreError {
     match code {
         "session_project_identity_mismatch" => {
@@ -327,6 +826,38 @@ fn map_path_error(error: ProjectStoreError) -> SessionStoreError {
     }
 }
 
+fn map_snapshot_open_error(error: ProjectStoreError) -> SessionStoreError {
+    match error.code {
+        "project_snapshot_missing" => SessionStoreError::new("session_snapshot_missing"),
+        "project_path_unsafe" => SessionStoreError::new("session_path_unsafe"),
+        "project_path_identity_unavailable" => {
+            SessionStoreError::new("session_path_identity_unavailable")
+        }
+        _ => SessionStoreError::new("session_snapshot_read_failed"),
+    }
+}
+
+fn map_snapshot_publish_error(_error: ProjectStoreError) -> SessionStoreError {
+    SessionStoreError::new("session_snapshot_publish_failed")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateFault {
+    TemporarySynced,
+    Replaced,
+}
+
+fn inject_update_fault(
+    configured: Option<UpdateFault>,
+    current: UpdateFault,
+) -> Result<(), SessionStoreError> {
+    if configured == Some(current) {
+        Err(SessionStoreError::new("session_update_fault_injected"))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CreateFault {
     SessionDirectory,
@@ -345,45 +876,22 @@ fn inject_fault(
     }
 }
 
-#[cfg(windows)]
-fn atomic_publish_new(source: &Path, destination: &Path) -> Result<(), SessionStoreError> {
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // SAFETY: both paths are NUL-terminated UTF-16 values in the same pinned session
-    // directory. Omitting REPLACE_EXISTING ensures a pre-existing snapshot is untouched.
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(SessionStoreError::new("session_snapshot_publish_failed"))
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn atomic_publish_new(_source: &Path, _destination: &Path) -> Result<(), SessionStoreError> {
-    Err(SessionStoreError::new("session_windows_only"))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use crate::{
         domain::{CreateSessionSnapshotInput, Project, Session},
         persistence::ProjectStore,
     };
 
-    use super::{CreateFault, SessionStore, render_session_document};
+    use super::{
+        CreateFault, MAX_SESSION_DOCUMENT_BYTES, SessionLocator, SessionStore, UpdateFault,
+        parse_session_document, render_session_document,
+    };
 
     fn records() -> (Project, Session) {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -427,6 +935,39 @@ mod tests {
             .unwrap();
         let store = SessionStore::open(workspace.path()).unwrap();
         (workspace, project, store)
+    }
+
+    fn updated_session() -> Session {
+        let (_, session) = records();
+        let mut value = serde_json::to_value(session).unwrap();
+        value["title"] = serde_json::json!("Sprint planning updated");
+        value["updatedAt"] = serde_json::json!("2026-08-11T09:05:00Z");
+        value["revision"] = serde_json::json!(4);
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn workspace_with_session() -> (tempfile::TempDir, Project, Session, SessionStore) {
+        let (workspace, project, store) = workspace_with_project();
+        let (_, session) = records();
+        store.create_session(&project, &session).unwrap();
+        (workspace, project, session, store)
+    }
+
+    fn session_paths(
+        workspace: &Path,
+        project: &Project,
+        session: &Session,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let directory = workspace
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions")
+            .join(&session.folder_name);
+        (
+            directory.join("session.md"),
+            directory.join("session.md.bak"),
+            directory.join(".session.md.tmp"),
+        )
     }
 
     #[test]
@@ -586,6 +1127,281 @@ mod tests {
             assert!(sessions.is_dir());
             assert_eq!(fs::read_dir(&sessions).unwrap().count(), 0);
         }
+    }
+
+    #[test]
+    fn strict_session_parser_accepts_only_the_canonical_lf_or_crlf_shape() {
+        let (_, session) = records();
+        let document = render_session_document(&session).unwrap();
+        assert_eq!(
+            parse_session_document(document.as_bytes()).unwrap(),
+            session
+        );
+        let crlf = document.replace('\n', "\r\n");
+        assert_eq!(parse_session_document(crlf.as_bytes()).unwrap(), session);
+
+        let invalid = [
+            document.replace("document_type: \"session\"", "document_type: \"project\""),
+            document.replace("title: ", "unexpected_title: "),
+            document.replace("started_at: \"2026-08-11T09:00:00Z\"", "started_at: null"),
+            format!("{document}trailing"),
+            document.replace("\nrevision: 3\n", "\nrevision: 3\nunknown: true\n"),
+        ];
+        for value in invalid {
+            assert_eq!(
+                parse_session_document(value.as_bytes()).unwrap_err().code,
+                "session_snapshot_invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn update_requires_revision_and_fingerprint_and_keeps_a_valid_backup() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let initial = store.read_session(&locator).unwrap();
+
+        let updated = store
+            .update_session(
+                &locator,
+                &updated_session(),
+                initial.session.revision,
+                initial.fingerprint,
+            )
+            .unwrap();
+        let (document, backup, temporary) = session_paths(workspace.path(), &project, &session);
+
+        assert_eq!(updated.session, updated_session());
+        assert!(!updated.recovered_from_backup);
+        assert_eq!(
+            fs::read_to_string(backup).unwrap(),
+            render_session_document(&session).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(document).unwrap(),
+            render_session_document(&updated_session()).unwrap()
+        );
+        assert!(!temporary.exists());
+    }
+
+    #[test]
+    fn external_edits_and_revision_conflicts_never_get_overwritten() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let initial = store.read_session(&locator).unwrap();
+        let (document, _, _) = session_paths(workspace.path(), &project, &session);
+
+        let mut external_value = serde_json::to_value(&session).unwrap();
+        external_value["objective"] = serde_json::json!("External edit at the same revision");
+        let external: Session = serde_json::from_value(external_value).unwrap();
+        let external_bytes = render_session_document(&external).unwrap();
+        fs::write(&document, &external_bytes).unwrap();
+
+        assert_eq!(
+            store
+                .update_session(
+                    &locator,
+                    &updated_session(),
+                    session.revision,
+                    initial.fingerprint,
+                )
+                .unwrap_err()
+                .code,
+            "session_external_modification"
+        );
+        assert_eq!(fs::read_to_string(&document).unwrap(), external_bytes);
+
+        let external_snapshot = store.read_session(&locator).unwrap();
+        assert_eq!(
+            store
+                .update_session(
+                    &locator,
+                    &updated_session(),
+                    session.revision - 1,
+                    external_snapshot.fingerprint,
+                )
+                .unwrap_err()
+                .code,
+            "session_revision_conflict"
+        );
+        assert_eq!(fs::read_to_string(document).unwrap(), external_bytes);
+    }
+
+    #[test]
+    fn immutable_identity_revision_progression_and_time_order_are_enforced() {
+        let (_workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let initial = store.read_session(&locator).unwrap();
+
+        let mut identity_value = serde_json::to_value(updated_session()).unwrap();
+        identity_value["createdAt"] = serde_json::json!("2026-08-11T08:44:00Z");
+        let identity_change: Session = serde_json::from_value(identity_value).unwrap();
+        assert_eq!(
+            store
+                .update_session(
+                    &locator,
+                    &identity_change,
+                    session.revision,
+                    initial.fingerprint,
+                )
+                .unwrap_err()
+                .code,
+            "session_snapshot_identity_mismatch"
+        );
+
+        let mut revision_value = serde_json::to_value(updated_session()).unwrap();
+        revision_value["revision"] = serde_json::json!(5);
+        let skipped_revision: Session = serde_json::from_value(revision_value).unwrap();
+        assert_eq!(
+            store
+                .update_session(
+                    &locator,
+                    &skipped_revision,
+                    session.revision,
+                    initial.fingerprint,
+                )
+                .unwrap_err()
+                .code,
+            "session_revision_invalid"
+        );
+
+        let mut time_value = serde_json::to_value(updated_session()).unwrap();
+        time_value["updatedAt"] = serde_json::json!("2026-08-11T09:00:01Z");
+        let backwards_time: Session = serde_json::from_value(time_value).unwrap();
+        assert_eq!(
+            store
+                .update_session(
+                    &locator,
+                    &backwards_time,
+                    session.revision,
+                    initial.fingerprint,
+                )
+                .unwrap_err()
+                .code,
+            "session_revision_invalid"
+        );
+    }
+
+    #[test]
+    fn valid_backup_recovers_missing_malformed_and_oversized_documents() {
+        for failure in ["missing", "malformed", "oversized"] {
+            let (workspace, project, session, store) = workspace_with_session();
+            let locator = SessionLocator::from_records(&project, &session).unwrap();
+            let initial = store.read_session(&locator).unwrap();
+            store
+                .update_session(
+                    &locator,
+                    &updated_session(),
+                    session.revision,
+                    initial.fingerprint,
+                )
+                .unwrap();
+            let (document, backup, _) = session_paths(workspace.path(), &project, &session);
+            let backup_bytes = fs::read(&backup).unwrap();
+
+            match failure {
+                "missing" => fs::remove_file(&document).unwrap(),
+                "malformed" => fs::write(&document, b"---\ntorn").unwrap(),
+                "oversized" => fs::write(
+                    &document,
+                    vec![b'x'; usize::try_from(MAX_SESSION_DOCUMENT_BYTES + 1).unwrap()],
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+
+            let recovered = store
+                .read_session(&locator)
+                .unwrap_or_else(|error| panic!("{failure}: {error:?}"));
+            assert!(recovered.recovered_from_backup, "{failure}");
+            assert_eq!(recovered.session, session, "{failure}");
+            assert_eq!(fs::read(&document).unwrap(), backup_bytes, "{failure}");
+            assert_eq!(fs::read(&backup).unwrap(), backup_bytes, "{failure}");
+        }
+    }
+
+    #[test]
+    fn unrecoverable_input_is_preserved_and_torn_temp_is_cleaned_only_when_main_is_valid() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let (document, _, temporary) = session_paths(workspace.path(), &project, &session);
+
+        fs::write(&temporary, b"torn temp").unwrap();
+        store.read_session(&locator).unwrap();
+        assert!(!temporary.exists());
+
+        let malformed = b"---\ntorn";
+        fs::write(&document, malformed).unwrap();
+        assert_eq!(
+            store.read_session(&locator).unwrap_err().code,
+            "session_snapshot_recovery_failed"
+        );
+        assert_eq!(fs::read(document).unwrap(), malformed);
+    }
+
+    #[test]
+    fn update_faults_leave_the_last_acknowledged_snapshot_readable() {
+        for fault in [UpdateFault::TemporarySynced, UpdateFault::Replaced] {
+            let (workspace, project, session, store) = workspace_with_session();
+            let locator = SessionLocator::from_records(&project, &session).unwrap();
+            let initial = store.read_session(&locator).unwrap();
+
+            assert_eq!(
+                store
+                    .update_session_with_fault(
+                        &locator,
+                        &updated_session(),
+                        session.revision,
+                        initial.fingerprint,
+                        Some(fault),
+                    )
+                    .unwrap_err()
+                    .code,
+                "session_update_fault_injected"
+            );
+            let current = store.read_session(&locator).unwrap();
+            assert_eq!(current.session, session, "{fault:?}");
+            assert!(
+                !session_paths(workspace.path(), &project, &session)
+                    .2
+                    .exists(),
+                "{fault:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_identity_mismatch_and_reparse_substitution_fail_closed() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let (document, _, _) = session_paths(workspace.path(), &project, &session);
+        let mut other_value = serde_json::to_value(&session).unwrap();
+        other_value["id"] = serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        other_value["folderName"] = serde_json::json!("2026-08-11-sprint-planning--bbbbbbbb");
+        let other: Session = serde_json::from_value(other_value).unwrap();
+        fs::write(&document, render_session_document(&other).unwrap()).unwrap();
+        assert_eq!(
+            store.read_session(&locator).unwrap_err().code,
+            "session_snapshot_identity_mismatch"
+        );
+
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let session_directory = session_paths(workspace.path(), &project, &session)
+            .0
+            .parent()
+            .unwrap()
+            .to_owned();
+        fs::remove_file(session_directory.join("session.md")).unwrap();
+        fs::remove_dir(&session_directory).unwrap();
+        let target = tempfile::tempdir().unwrap();
+        junction::create(target.path(), &session_directory).unwrap();
+
+        assert_eq!(
+            store.read_session(&locator).unwrap_err().code,
+            "session_path_unsafe"
+        );
+        assert_eq!(fs::read_dir(target.path()).unwrap().count(), 0);
     }
 
     #[test]

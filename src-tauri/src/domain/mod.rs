@@ -16,7 +16,7 @@ pub(crate) use models::{
 pub(crate) use projects::CreateSessionSnapshotInput;
 pub(crate) use projects::{
     CreateProjectInput, LlmRoleModels, PageRequest, Project, ProjectId, ProjectPage, Session,
-    UpdateProjectInput,
+    SessionId, UpdateProjectInput,
 };
 pub(crate) use settings::{AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceStatus};
 pub(crate) use transcription::{

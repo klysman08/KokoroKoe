@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-006 - Pinned initial session and session.md snapshot
+- Task: P4-007 - Bounded session snapshot read, update, and recovery
 - Date: 2026-08-11
-- Outcome: added strict Rust-owned initial Session construction and pinned no-clobber publication of the sole derived `session.md` beneath an existing authoritative project, with bounded safe metadata, exact initial state, and invocation-owned fault cleanup.
-- Verification: 14 session-filtered tests including 10 new domain/store tests; Rust 1.88 locked fmt/Clippy, 173 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-006 checkpoint](docs/project-memory.md#p4-006---pinned-initial-session-and-sessionmd-snapshot)
+- Outcome: added a strict bounded `session.md` reader, exact-byte fingerprint conflicts, immutable-identity revision updates, write-locked atomic `.bak` replacement, and no-clobber recovery from a valid prior snapshot.
+- Verification: 16 session-store tests including 8 new parser/conflict/recovery/fault tests; Rust 1.88 locked fmt/Clippy, 181 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-007 checkpoint](docs/project-memory.md#p4-007---bounded-session-snapshot-read-update-and-recovery)

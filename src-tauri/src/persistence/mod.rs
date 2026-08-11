@@ -13,5 +13,8 @@ pub(crate) use project_store::{ProjectCreateReceipt, ProjectStore, ProjectStoreE
 #[allow(unused_imports)]
 pub(crate) use project_store::{ProjectLocator, ProjectSnapshot, ProjectSnapshotFingerprint};
 #[allow(unused_imports)]
-pub(crate) use session_store::{SessionCreateReceipt, SessionStore, SessionStoreError};
+pub(crate) use session_store::{
+    SessionCreateReceipt, SessionLocator, SessionSnapshot, SessionSnapshotFingerprint,
+    SessionStore, SessionStoreError,
+};
 pub(crate) use settings_store::SettingsService;

@@ -946,6 +946,10 @@ impl PinnedDirectory {
         }
         Ok(())
     }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -966,7 +970,7 @@ fn open_directory_without_delete_share(path: &Path) -> Result<File, ProjectStore
 }
 
 #[cfg(windows)]
-fn open_snapshot_without_write_share(path: &Path) -> Result<File, ProjectStoreError> {
+pub(super) fn open_snapshot_without_write_share(path: &Path) -> Result<File, ProjectStoreError> {
     let file = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
@@ -986,7 +990,7 @@ fn open_snapshot_without_write_share(path: &Path) -> Result<File, ProjectStoreEr
 }
 
 #[cfg(not(windows))]
-fn open_snapshot_without_write_share(_path: &Path) -> Result<File, ProjectStoreError> {
+pub(super) fn open_snapshot_without_write_share(_path: &Path) -> Result<File, ProjectStoreError> {
     Err(ProjectStoreError::new("project_windows_only"))
 }
 
@@ -1047,7 +1051,10 @@ fn atomic_replace(_source: &Path, _destination: &Path) -> Result<(), ProjectStor
 }
 
 #[cfg(windows)]
-fn atomic_publish_new(source: &Path, destination: &Path) -> Result<(), ProjectStoreError> {
+pub(super) fn atomic_publish_new(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), ProjectStoreError> {
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
     let destination: Vec<u16> = destination
         .as_os_str()
@@ -1071,12 +1078,18 @@ fn atomic_publish_new(source: &Path, destination: &Path) -> Result<(), ProjectSt
 }
 
 #[cfg(not(windows))]
-fn atomic_publish_new(_source: &Path, _destination: &Path) -> Result<(), ProjectStoreError> {
+pub(super) fn atomic_publish_new(
+    _source: &Path,
+    _destination: &Path,
+) -> Result<(), ProjectStoreError> {
     Err(ProjectStoreError::new("project_windows_only"))
 }
 
 #[cfg(windows)]
-fn atomic_replace_existing(source: &Path, destination: &Path) -> Result<(), ProjectStoreError> {
+pub(super) fn atomic_replace_existing(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), ProjectStoreError> {
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
     let destination: Vec<u16> = destination
         .as_os_str()
@@ -1103,12 +1116,15 @@ fn atomic_replace_existing(source: &Path, destination: &Path) -> Result<(), Proj
 }
 
 #[cfg(not(windows))]
-fn atomic_replace_existing(_source: &Path, _destination: &Path) -> Result<(), ProjectStoreError> {
+pub(super) fn atomic_replace_existing(
+    _source: &Path,
+    _destination: &Path,
+) -> Result<(), ProjectStoreError> {
     Err(ProjectStoreError::new("project_windows_only"))
 }
 
 #[cfg(windows)]
-fn atomic_replace_with_backup(
+pub(super) fn atomic_replace_with_backup(
     source: &Path,
     destination: &Path,
     backup: &Path,
@@ -1140,7 +1156,7 @@ fn atomic_replace_with_backup(
 }
 
 #[cfg(not(windows))]
-fn atomic_replace_with_backup(
+pub(super) fn atomic_replace_with_backup(
     _source: &Path,
     _destination: &Path,
     _backup: &Path,

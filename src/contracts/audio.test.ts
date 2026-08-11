@@ -1,36 +1,18 @@
 import { describe, expect, it } from "vitest"
 
-import startFixture from "../../fixtures/contracts/audio-prototype-start-v1.json"
-import statusFixture from "../../fixtures/contracts/audio-prototype-status-v1.json"
+import fixture from "../../fixtures/contracts/audio-device-test-v1.json"
 import {
+  audioDeviceListSchema,
   audioDeviceSchema,
-  audioPrototypeStartRequestSchema,
-  audioPrototypeStatusSchema,
+  audioLevelUpdatedEnvelopeSchema,
   deviceSelectionSchema,
+  deviceTestStatusSchema,
+  productAudioFixtureSchema,
 } from "./audio"
 
-describe("audio prototype contracts", () => {
-  it("parses the shared start fixture", () => {
-    expect(audioPrototypeStartRequestSchema.parse(startFixture)).toEqual(
-      startFixture,
-    )
-  })
-
-  it("parses the shared normalized-processing status fixture", () => {
-    expect(audioPrototypeStatusSchema.parse(statusFixture)).toEqual(
-      statusFixture,
-    )
-  })
-
-  it.each([
-    [{ ...startFixture, acknowledgedCaptureConsent: false }],
-    [{ ...startFixture, queueCapacityPacketsPerSource: 3 }],
-    [{ ...startFixture, queueCapacityPacketsPerSource: 257 }],
-    [{ ...startFixture, extra: true }],
-  ])("rejects unsafe or unknown start input", (candidate) => {
-    expect(audioPrototypeStartRequestSchema.safeParse(candidate).success).toBe(
-      false,
-    )
+describe("product audio contracts", () => {
+  it("parses the shared device, test, and event fixture", () => {
+    expect(productAudioFixtureSchema.parse(fixture)).toEqual(fixture)
   })
 
   it.each([
@@ -43,51 +25,56 @@ describe("audio prototype contracts", () => {
     expect(deviceSelectionSchema.safeParse(selection).success).toBe(false)
   })
 
-  it("rejects control characters in returned endpoint metadata", () => {
+  it("rejects control characters and inconsistent device directions", () => {
     expect(
       audioDeviceSchema.safeParse({
-        endpointId: "synthetic-endpoint",
+        ...fixture.deviceList.inputs[0],
         friendlyName: "bad\ndevice name",
-        direction: "input",
-        isDefaultConsole: true,
-        isDefaultMultimedia: false,
-        isDefaultCommunications: false,
-        nativeFormat: null,
+      }).success,
+    ).toBe(false)
+    expect(
+      audioDeviceListSchema.safeParse({
+        inputs: [{ ...fixture.deviceList.inputs[0], direction: "output" }],
+        outputs: [],
       }).success,
     ).toBe(false)
   })
 
-  it("rejects non-finite, out-of-range, and unknown level diagnostics", () => {
+  it("rejects invalid status/error combinations and source directions", () => {
     expect(
-      audioPrototypeStatusSchema.safeParse({
-        ...statusFixture,
-        microphone: {
-          ...statusFixture.microphone,
-          latestLevel: {
-            ...statusFixture.microphone.latestLevel,
-            peakDbfs: Number.NaN,
-          },
+      deviceTestStatusSchema.safeParse({
+        ...fixture.status,
+        status: "failed",
+      }).success,
+    ).toBe(false)
+    expect(
+      deviceTestStatusSchema.safeParse({
+        ...fixture.status,
+        source: "system_output",
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects non-finite levels, request mismatches, and unknown sample data", () => {
+    expect(
+      audioLevelUpdatedEnvelopeSchema.safeParse({
+        ...fixture.levelEvent,
+        payload: { ...fixture.levelEvent.payload, peakDbfs: Number.NaN },
+      }).success,
+    ).toBe(false)
+    expect(
+      audioLevelUpdatedEnvelopeSchema.safeParse({
+        ...fixture.levelEvent,
+        payload: {
+          ...fixture.levelEvent.payload,
+          testId: "5c188d9d-b772-48da-b4ec-b8f89d362a57",
         },
       }).success,
     ).toBe(false)
     expect(
-      audioPrototypeStatusSchema.safeParse({
-        ...statusFixture,
-        systemOutput: {
-          ...statusFixture.systemOutput,
-          latestLevel: {
-            rmsDbfs: -121,
-            peakDbfs: -30,
-            clipping: false,
-            atMs: 100,
-          },
-        },
-      }).success,
-    ).toBe(false)
-    expect(
-      audioPrototypeStatusSchema.safeParse({
-        ...statusFixture,
-        unexpectedAudio: true,
+      audioLevelUpdatedEnvelopeSchema.safeParse({
+        ...fixture.levelEvent,
+        payload: { ...fixture.levelEvent.payload, samples: [] },
       }).success,
     ).toBe(false)
   })

@@ -14,6 +14,9 @@ import { SettingsPage } from "@/features/settings/SettingsPage"
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }))
+vi.mock("@/features/settings/AudioDeviceSettings", () => ({
+  AudioDeviceSettings: () => null,
+}))
 
 const invokeMock = vi.mocked(invoke)
 const conflictError = {

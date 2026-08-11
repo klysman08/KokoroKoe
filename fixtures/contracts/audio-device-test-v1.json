@@ -1,0 +1,84 @@
+{
+  "deviceList": {
+    "inputs": [
+      {
+        "endpointId": "synthetic-microphone",
+        "friendlyName": "Synthetic microphone",
+        "direction": "input",
+        "state": "active",
+        "isDefaultConsole": true,
+        "isDefaultMultimedia": true,
+        "isDefaultCommunications": false,
+        "sampleRate": 48000,
+        "channels": 2
+      }
+    ],
+    "outputs": [
+      {
+        "endpointId": "synthetic-output",
+        "friendlyName": "Synthetic output",
+        "direction": "output",
+        "state": "active",
+        "isDefaultConsole": true,
+        "isDefaultMultimedia": true,
+        "isDefaultCommunications": false,
+        "sampleRate": 48000,
+        "channels": 2
+      }
+    ]
+  },
+  "input": {
+    "source": "microphone",
+    "selection": { "kind": "default", "role": "communications" }
+  },
+  "status": {
+    "requestId": "a36674bb-cd46-4c72-9615-95069cb7e14f",
+    "source": "microphone",
+    "status": "active",
+    "device": {
+      "endpointId": "synthetic-microphone",
+      "friendlyName": "Synthetic microphone",
+      "direction": "input",
+      "state": "active",
+      "isDefaultConsole": true,
+      "isDefaultMultimedia": true,
+      "isDefaultCommunications": false,
+      "sampleRate": 48000,
+      "channels": 2
+    }
+  },
+  "levelEvent": {
+    "schemaVersion": 1,
+    "eventId": "51491357-f1e4-4734-89b2-cd751f65c88a",
+    "emittedAt": "2026-08-11T10:00:00Z",
+    "requestId": "a36674bb-cd46-4c72-9615-95069cb7e14f",
+    "payload": {
+      "testId": "a36674bb-cd46-4c72-9615-95069cb7e14f",
+      "source": "microphone",
+      "rmsDbfs": -24.5,
+      "peakDbfs": -8.25,
+      "clipping": false,
+      "muted": false,
+      "atMs": 1200
+    }
+  },
+  "healthEvent": {
+    "schemaVersion": 1,
+    "eventId": "64f050b3-a688-44ba-ae0b-96b7ce13c880",
+    "emittedAt": "2026-08-11T10:00:00Z",
+    "requestId": "a36674bb-cd46-4c72-9615-95069cb7e14f",
+    "payload": {
+      "source": "microphone",
+      "previous": {
+        "status": "starting",
+        "updatedAt": "2026-08-11T10:00:00Z"
+      },
+      "current": {
+        "status": "active",
+        "endpointId": "synthetic-microphone",
+        "updatedAt": "2026-08-11T10:00:00Z"
+      },
+      "isDefaultChange": false
+    }
+  }
+}

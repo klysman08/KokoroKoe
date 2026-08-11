@@ -1,144 +1,80 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { vi } from "vitest"
 
+import fixture from "../../../fixtures/contracts/audio-device-test-v1.json"
 import commandErrorFixture from "../../../fixtures/contracts/command-error-v1.json"
-import startFixture from "../../../fixtures/contracts/audio-prototype-start-v1.json"
 
-import { audioPrototypeStartRequestSchema } from "@/contracts/audio"
+import { deviceTestInputSchema } from "@/contracts/audio"
+import { requestIdSchema } from "@/contracts/models"
 import {
-  getAudioCapturePrototypeStatus,
+  AUDIO_DEVICE_STATUS_CHANGED_EVENT,
+  AUDIO_LEVEL_UPDATED_EVENT,
   listAudioDevices,
-  startAudioCapturePrototype,
-  stopAudioCapturePrototype,
+  listenToAudioDeviceStatus,
+  listenToAudioLevels,
+  startAudioDeviceTest,
+  stopAudioDeviceTest,
 } from "@/lib/tauri/audio"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }))
 
 const invokeMock = vi.mocked(invoke)
-const validStart = audioPrototypeStartRequestSchema.parse(startFixture)
-const nativeFormat = {
-  sampleRate: 48_000,
-  channels: 2,
-  bitsPerSample: 32,
-  validBitsPerSample: 32,
-  blockAlign: 8,
-  channelMask: 3,
-  sampleType: "float" as const,
-}
-const channel = {
-  status: "active" as const,
-  endpointId: "synthetic-endpoint",
-  nativeFormat,
-  captureAttempts: 1,
-  captureFailures: 0,
-  recoveryGaps: 0,
-  recoveryGapMs: 0,
-  recoveryPendingSinceMs: null,
-  lastRecoveryGapMs: null,
-  lastCaptureFailureCode: null,
-  packetsCaptured: 2,
-  framesCaptured: 960,
-  packetsConsumed: 2,
-  framesConsumed: 960,
-  bytesConsumed: 7680,
-  queueDrops: 0,
-  nativeFramesDecoded: 960,
-  normalizedChunksProduced: 2,
-  normalizedSamplesProduced: 320,
-  normalizedChunksConsumed: 2,
-  normalizedSamplesConsumed: 320,
-  processingQueueDrops: 0,
-  processingErrors: 0,
-  nonFiniteSamplesSanitized: 0,
-  formatChanges: 0,
-  resamplerDelayFrames: 128,
-  pendingNativeFrames: 0,
-  pendingNormalizedSamples: 0,
-  levelUpdates: 1,
-  latestLevel: {
-    rmsDbfs: -24,
-    peakDbfs: -12,
-    clipping: false,
-    atMs: 20,
-  },
-  vadFramesAnalyzed: 10,
-  vadSpeechFrames: 4,
-  vadSilenceFrames: 6,
-  utterancesFinalized: 1,
-  utteranceSamplesFinalized: 6400,
-  shortUtterancesRejected: 0,
-  forcedSplits: 0,
-  vadResets: 0,
-  vadPendingSamples: 0,
-  vadBufferedSamples: 4800,
-  latestUtterance: {
-    startMs: 10,
-    endMs: 410,
-    durationMs: 400,
-    endReason: "trailing_silence" as const,
-  },
-  dataDiscontinuities: 0,
-  timestampErrors: 0,
-  timestampRegressions: 0,
-  firstPacketMs: 10,
-  lastPacketMs: 20,
-  lastErrorCode: null,
-  lastProcessingErrorCode: null,
-}
-const validStatus = {
-  state: "capturing" as const,
-  elapsedMs: 25,
-  queueCapacityPacketsPerSource: 64,
-  processingQueueCapacityChunksPerSource: 64,
-  microphone: { ...channel, source: "microphone" as const },
-  systemOutput: { ...channel, source: "system_output" as const },
-}
+const listenMock = vi.mocked(listen)
+const requestId = requestIdSchema.parse(fixture.status.requestId)
+const validInput = deviceTestInputSchema.parse(fixture.input)
 
-describe("audio prototype Tauri adapter", () => {
-  beforeEach(() => invokeMock.mockReset())
+describe("audio device Tauri adapter", () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    listenMock.mockReset()
+  })
 
-  it("lists devices through the exact command and validates diagnostics", async () => {
-    const devices = {
-      inputs: [
-        {
-          endpointId: "synthetic-input",
-          friendlyName: "Synthetic microphone",
-          direction: "input",
-          isDefaultConsole: true,
-          isDefaultMultimedia: true,
-          isDefaultCommunications: false,
-          nativeFormat,
-        },
-      ],
-      outputs: [],
-    }
-    invokeMock.mockResolvedValue(devices)
-
-    await expect(listAudioDevices()).resolves.toEqual(devices)
+  it("lists devices through the exact command", async () => {
+    invokeMock.mockResolvedValue(fixture.deviceList)
+    await expect(listAudioDevices()).resolves.toEqual(fixture.deviceList)
     expect(invokeMock).toHaveBeenCalledWith("list_audio_devices", undefined)
   })
 
-  it("requires a valid explicit-consent request before invoking Rust", async () => {
-    await expect(
-      startAudioCapturePrototype({
-        ...validStart,
-        acknowledgedCaptureConsent: false,
-      } as never),
-    ).rejects.toMatchObject({ details: { code: "invalid_request_contract" } })
-    expect(invokeMock).not.toHaveBeenCalled()
+  it("starts and stops through the exact product commands", async () => {
+    invokeMock.mockResolvedValueOnce({ ...fixture.status, status: "starting" })
+    await expect(startAudioDeviceTest(validInput, requestId)).resolves.toEqual({
+      ...fixture.status,
+      status: "starting",
+    })
+    expect(invokeMock).toHaveBeenCalledWith("start_audio_device_test", {
+      input: validInput,
+      requestId,
+    })
+
+    invokeMock.mockResolvedValueOnce({ ...fixture.status, status: "stopped" })
+    await expect(stopAudioDeviceTest(requestId)).resolves.toMatchObject({
+      status: "stopped",
+    })
+    expect(invokeMock).toHaveBeenLastCalledWith("stop_audio_device_test", {
+      requestId,
+    })
   })
 
-  it("starts, reads, and stops only through the prototype commands", async () => {
-    invokeMock.mockResolvedValue(validStatus)
+  it("rejects invalid requests and mismatched responses", async () => {
+    await expect(
+      startAudioDeviceTest(
+        { ...validInput, selection: { kind: "fixed", endpointId: "" } },
+        requestId,
+      ),
+    ).rejects.toMatchObject({ details: { code: "invalid_request_contract" } })
+    expect(invokeMock).not.toHaveBeenCalled()
 
-    await expect(startAudioCapturePrototype(validStart)).resolves.toEqual(
-      validStatus,
-    )
-    expect(invokeMock).toHaveBeenCalledWith("start_audio_capture_prototype", {
-      request: validStart,
+    invokeMock.mockResolvedValue({
+      ...fixture.status,
+      requestId: "5c188d9d-b772-48da-b4ec-b8f89d362a57",
     })
-    await expect(getAudioCapturePrototypeStatus()).resolves.toEqual(validStatus)
-    await expect(stopAudioCapturePrototype()).resolves.toEqual(validStatus)
+    await expect(
+      startAudioDeviceTest(validInput, requestId),
+    ).rejects.toMatchObject({
+      details: { code: "invalid_backend_contract" },
+    })
   })
 
   it("normalizes command rejection and malformed success data", async () => {
@@ -146,10 +82,30 @@ describe("audio prototype Tauri adapter", () => {
     await expect(listAudioDevices()).rejects.toMatchObject({
       details: { code: commandErrorFixture.error.code },
     })
-
     invokeMock.mockResolvedValueOnce({ rawAudio: "secret-canary" })
-    await expect(getAudioCapturePrototypeStatus()).rejects.toMatchObject({
+    await expect(listAudioDevices()).rejects.toMatchObject({
       details: { code: "invalid_backend_contract" },
     })
+  })
+
+  it("delivers only strictly validated aggregate audio events", async () => {
+    const callbacks = new Map<string, (event: { payload: unknown }) => void>()
+    listenMock.mockImplementation(async (name, callback) => {
+      callbacks.set(name, callback as (event: { payload: unknown }) => void)
+      return () => undefined
+    })
+    const levels = vi.fn()
+    const health = vi.fn()
+    await listenToAudioLevels(levels)
+    await listenToAudioDeviceStatus(health)
+
+    callbacks.get(AUDIO_LEVEL_UPDATED_EVENT)?.({ payload: fixture.levelEvent })
+    callbacks.get(AUDIO_DEVICE_STATUS_CHANGED_EVENT)?.({
+      payload: fixture.healthEvent,
+    })
+    callbacks.get(AUDIO_LEVEL_UPDATED_EVENT)?.({ payload: { samples: [1] } })
+
+    expect(levels).toHaveBeenCalledOnce()
+    expect(health).toHaveBeenCalledOnce()
   })
 })

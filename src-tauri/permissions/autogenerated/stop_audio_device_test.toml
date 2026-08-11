@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-audio-device-test"
+description = "Enables the stop_audio_device_test command without any pre-configured scope."
+commands.allow = ["stop_audio_device_test"]
+
+[[permission]]
+identifier = "deny-stop-audio-device-test"
+description = "Denies the stop_audio_device_test command without any pre-configured scope."
+commands.deny = ["stop_audio_device_test"]

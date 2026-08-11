@@ -8,9 +8,11 @@ mod vad;
 mod windows;
 
 pub(crate) use model::{
-    AudioDevice, AudioDeviceList, AudioDirection, AudioPrototypeConfig, AudioPrototypeStartRequest,
-    AudioPrototypeStatus, AudioSource, ChannelStatus, DeviceRole, DeviceSelection,
-    LevelDiagnostics, NativeAudioFormat, NativeSampleType, PrototypeRunState, UtteranceDiagnostics,
+    AudioDevice, AudioDeviceList, AudioDeviceState, AudioDeviceStatusChanged, AudioDirection,
+    AudioEventEnvelope, AudioLevelUpdated, AudioPrototypeConfig, AudioPrototypeStatus, AudioSource,
+    ChannelDiagnostics, ChannelHealth, ChannelHealthStatus, ChannelStatus, DeviceRole,
+    DeviceSelection, DeviceTestInput, DeviceTestRunStatus, DeviceTestStatus, LevelDiagnostics,
+    NativeAudioFormat, NativeSampleType, PrototypeRunState, UtteranceDiagnostics,
 };
 pub(crate) use processing::{ProcessedAudioChunk, ProcessingOutcome, SourceProcessor};
 pub(crate) use queue::{
@@ -21,4 +23,4 @@ pub(crate) use timeline::{QpcEpoch, qpc_ticks_to_100ns};
 pub(crate) use vad::{DetectedUtterance, UtteranceEndReason, VadProcessOutcome, VadSegmenter};
 
 #[cfg(windows)]
-pub(crate) use windows::{AudioPrototypeError, AudioPrototypeService};
+pub(crate) use windows::{AudioDeviceTestObservation, AudioDeviceTestService, AudioPrototypeError};

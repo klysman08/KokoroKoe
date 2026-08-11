@@ -1,5 +1,8 @@
 import { z } from "zod"
 
+import { appErrorSchema } from "@/contracts/app-error"
+import { requestIdSchema } from "@/contracts/models"
+
 const safeCounterSchema = z
   .number()
   .int()
@@ -20,6 +23,7 @@ const friendlyNameSchema = z
   .min(1)
   .max(512)
   .refine(hasNoControlCharacters)
+const timestampSchema = z.iso.datetime({ offset: true })
 
 export const audioSourceSchema = z.enum(["microphone", "system_output"])
 export const deviceRoleSchema = z.enum([
@@ -30,137 +34,163 @@ export const deviceRoleSchema = z.enum([
 
 export const deviceSelectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("default"), role: deviceRoleSchema }),
-  z.strictObject({
-    kind: z.literal("fixed"),
-    endpointId: endpointIdSchema,
-  }),
+  z.strictObject({ kind: z.literal("fixed"), endpointId: endpointIdSchema }),
 ])
-
-export const audioPrototypeStartRequestSchema = z.strictObject({
-  acknowledgedCaptureConsent: z.literal(true),
-  microphone: deviceSelectionSchema,
-  systemOutput: deviceSelectionSchema,
-  queueCapacityPacketsPerSource: z.number().int().min(4).max(256),
-})
-
-export const nativeAudioFormatSchema = z.strictObject({
-  sampleRate: z.number().int().positive().max(0xffff_ffff),
-  channels: z.number().int().positive().max(0xffff),
-  bitsPerSample: z.number().int().positive().max(0xffff),
-  validBitsPerSample: z.number().int().nonnegative().max(0xffff),
-  blockAlign: z.number().int().positive().max(0xffff_ffff),
-  channelMask: z.number().int().nonnegative().max(0xffff_ffff),
-  sampleType: z.enum(["float", "integer", "unknown"]),
-})
 
 export const audioDeviceSchema = z.strictObject({
   endpointId: endpointIdSchema,
   friendlyName: friendlyNameSchema,
   direction: z.enum(["input", "output"]),
+  state: z.enum(["active", "disabled", "not_present", "unplugged"]),
   isDefaultConsole: z.boolean(),
   isDefaultMultimedia: z.boolean(),
   isDefaultCommunications: z.boolean(),
-  nativeFormat: nativeAudioFormatSchema.nullable(),
+  sampleRate: z.number().int().positive().max(0xffff_ffff).optional(),
+  channels: z.number().int().positive().max(0xffff).optional(),
 })
 
-export const audioDeviceListSchema = z.strictObject({
-  inputs: z.array(audioDeviceSchema).max(256),
-  outputs: z.array(audioDeviceSchema).max(256),
-})
+export const audioDeviceListSchema = z
+  .strictObject({
+    inputs: z.array(audioDeviceSchema).max(256),
+    outputs: z.array(audioDeviceSchema).max(256),
+  })
+  .superRefine((value, context) => {
+    for (const [index, device] of value.inputs.entries()) {
+      if (device.direction !== "input") {
+        context.addIssue({
+          code: "custom",
+          path: ["inputs", index, "direction"],
+          message: "Input device direction is inconsistent.",
+        })
+      }
+    }
+    for (const [index, device] of value.outputs.entries()) {
+      if (device.direction !== "output") {
+        context.addIssue({
+          code: "custom",
+          path: ["outputs", index, "direction"],
+          message: "Output device direction is inconsistent.",
+        })
+      }
+    }
+  })
 
-const channelDiagnosticsSchema = z.strictObject({
+export const deviceTestInputSchema = z.strictObject({
   source: audioSourceSchema,
+  selection: deviceSelectionSchema,
+})
+
+export const deviceTestStatusSchema = z
+  .strictObject({
+    requestId: requestIdSchema,
+    source: audioSourceSchema,
+    status: z.enum(["starting", "active", "stopped", "failed"]),
+    device: audioDeviceSchema.optional(),
+    error: appErrorSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.status === "failed" && value.error === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Failed tests require an error.",
+      })
+    }
+    if (value.status !== "failed" && value.error !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Only failed tests may carry an error.",
+      })
+    }
+    if (
+      value.device !== undefined &&
+      ((value.source === "microphone" && value.device.direction !== "input") ||
+        (value.source === "system_output" &&
+          value.device.direction !== "output"))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Test device direction is inconsistent.",
+      })
+    }
+  })
+
+export const channelHealthSchema = z.strictObject({
   status: z.enum([
     "starting",
     "active",
+    "silent",
     "reconnecting",
     "unavailable",
     "stopped",
   ]),
-  endpointId: endpointIdSchema.nullable(),
-  nativeFormat: nativeAudioFormatSchema.nullable(),
-  captureAttempts: safeCounterSchema,
-  captureFailures: safeCounterSchema,
-  recoveryGaps: safeCounterSchema,
-  recoveryGapMs: safeCounterSchema,
-  recoveryPendingSinceMs: safeCounterSchema.nullable(),
-  lastRecoveryGapMs: safeCounterSchema.nullable(),
-  lastCaptureFailureCode: z.string().min(1).max(128).nullable(),
-  packetsCaptured: safeCounterSchema,
-  framesCaptured: safeCounterSchema,
-  packetsConsumed: safeCounterSchema,
-  framesConsumed: safeCounterSchema,
-  bytesConsumed: safeCounterSchema,
-  queueDrops: safeCounterSchema,
-  nativeFramesDecoded: safeCounterSchema,
-  normalizedChunksProduced: safeCounterSchema,
-  normalizedSamplesProduced: safeCounterSchema,
-  normalizedChunksConsumed: safeCounterSchema,
-  normalizedSamplesConsumed: safeCounterSchema,
-  processingQueueDrops: safeCounterSchema,
-  processingErrors: safeCounterSchema,
-  nonFiniteSamplesSanitized: safeCounterSchema,
-  formatChanges: safeCounterSchema,
-  resamplerDelayFrames: safeCounterSchema,
-  pendingNativeFrames: safeCounterSchema,
-  pendingNormalizedSamples: safeCounterSchema,
-  levelUpdates: safeCounterSchema,
-  latestLevel: z
-    .strictObject({
+  endpointId: endpointIdSchema.optional(),
+  detailCode: z.string().min(1).max(128).optional(),
+  updatedAt: timestampSchema,
+})
+
+const eventEnvelopeFields = {
+  schemaVersion: z.literal(1),
+  eventId: z.uuid(),
+  emittedAt: timestampSchema,
+  requestId: requestIdSchema,
+}
+
+export const audioLevelUpdatedEnvelopeSchema = z
+  .strictObject({
+    ...eventEnvelopeFields,
+    payload: z.strictObject({
+      testId: requestIdSchema,
+      source: audioSourceSchema,
       rmsDbfs: z.number().finite().min(-120).max(0),
       peakDbfs: z.number().finite().min(-120).max(0),
       clipping: z.boolean(),
+      muted: z.boolean(),
       atMs: safeCounterSchema,
-    })
-    .nullable(),
-  vadFramesAnalyzed: safeCounterSchema,
-  vadSpeechFrames: safeCounterSchema,
-  vadSilenceFrames: safeCounterSchema,
-  utterancesFinalized: safeCounterSchema,
-  utteranceSamplesFinalized: safeCounterSchema,
-  shortUtterancesRejected: safeCounterSchema,
-  forcedSplits: safeCounterSchema,
-  vadResets: safeCounterSchema,
-  vadPendingSamples: safeCounterSchema.max(255),
-  vadBufferedSamples: safeCounterSchema.max(485055),
-  latestUtterance: z
-    .strictObject({
-      startMs: safeCounterSchema,
-      endMs: safeCounterSchema,
-      durationMs: safeCounterSchema.max(30_000),
-      endReason: z.enum([
-        "trailing_silence",
-        "forced_split",
-        "format_change",
-        "timeline_discontinuity",
-        "end_of_stream",
-      ]),
-    })
-    .nullable(),
-  dataDiscontinuities: safeCounterSchema,
-  timestampErrors: safeCounterSchema,
-  timestampRegressions: safeCounterSchema,
-  firstPacketMs: safeCounterSchema.nullable(),
-  lastPacketMs: safeCounterSchema.nullable(),
-  lastErrorCode: z.string().min(1).max(128).nullable(),
-  lastProcessingErrorCode: z.string().min(1).max(128).nullable(),
-})
+    }),
+  })
+  .superRefine((value, context) => {
+    if (value.requestId !== value.payload.testId) {
+      context.addIssue({
+        code: "custom",
+        message: "Audio level request identity differs.",
+      })
+    }
+    if (value.payload.rmsDbfs > value.payload.peakDbfs) {
+      context.addIssue({
+        code: "custom",
+        message: "RMS cannot exceed peak level.",
+      })
+    }
+  })
 
-export const audioPrototypeStatusSchema = z.strictObject({
-  state: z.enum(["starting", "capturing", "stopping", "stopped"]),
-  elapsedMs: safeCounterSchema,
-  queueCapacityPacketsPerSource: z.number().int().min(4).max(256),
-  processingQueueCapacityChunksPerSource: z.number().int().min(4).max(256),
-  microphone: channelDiagnosticsSchema.extend({
-    source: z.literal("microphone"),
-  }),
-  systemOutput: channelDiagnosticsSchema.extend({
-    source: z.literal("system_output"),
+export const audioDeviceStatusChangedEnvelopeSchema = z.strictObject({
+  ...eventEnvelopeFields,
+  payload: z.strictObject({
+    source: audioSourceSchema,
+    previous: channelHealthSchema,
+    current: channelHealthSchema,
+    isDefaultChange: z.boolean(),
   }),
 })
 
-export type AudioPrototypeStartRequest = z.infer<
-  typeof audioPrototypeStartRequestSchema
->
+export const productAudioFixtureSchema = z.strictObject({
+  deviceList: audioDeviceListSchema,
+  input: deviceTestInputSchema,
+  status: deviceTestStatusSchema,
+  levelEvent: audioLevelUpdatedEnvelopeSchema,
+  healthEvent: audioDeviceStatusChangedEnvelopeSchema,
+})
+
+export type AudioSource = z.infer<typeof audioSourceSchema>
+export type DeviceRole = z.infer<typeof deviceRoleSchema>
+export type DeviceSelection = z.infer<typeof deviceSelectionSchema>
+export type AudioDevice = z.infer<typeof audioDeviceSchema>
 export type AudioDeviceList = z.infer<typeof audioDeviceListSchema>
-export type AudioPrototypeStatus = z.infer<typeof audioPrototypeStatusSchema>
+export type DeviceTestInput = z.infer<typeof deviceTestInputSchema>
+export type DeviceTestStatus = z.infer<typeof deviceTestStatusSchema>
+export type AudioLevelUpdatedEnvelope = z.infer<
+  typeof audioLevelUpdatedEnvelopeSchema
+>
+export type AudioDeviceStatusChangedEnvelope = z.infer<
+  typeof audioDeviceStatusChangedEnvelopeSchema
+>

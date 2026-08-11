@@ -12,7 +12,7 @@ use std::io;
 
 use tauri::Manager;
 
-use audio::AudioPrototypeService;
+use audio::AudioDeviceTestService;
 use models::ModelService;
 use persistence::SettingsService;
 
@@ -56,7 +56,7 @@ pub fn run() {
 
             app.manage(settings);
             app.manage(models);
-            app.manage(AudioPrototypeService::default());
+            app.manage(AudioDeviceTestService::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,9 +70,8 @@ pub fn run() {
             commands::models::delete_transcription_model,
             commands::models::set_default_transcription_model,
             commands::audio::list_audio_devices,
-            commands::audio::start_audio_capture_prototype,
-            commands::audio::get_audio_capture_prototype_status,
-            commands::audio::stop_audio_capture_prototype
+            commands::audio::start_audio_device_test,
+            commands::audio::stop_audio_device_test
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

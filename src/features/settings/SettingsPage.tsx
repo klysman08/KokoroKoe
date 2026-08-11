@@ -14,6 +14,7 @@ import { Separator } from "@/components/ui/separator"
 import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
 import { ApplicationError } from "@/contracts/app-error"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { AudioDeviceSettings } from "@/features/settings/AudioDeviceSettings"
 import {
   useChooseWorkspaceMutation,
   useUpdateSettingsMutation,
@@ -119,6 +120,8 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AudioDeviceSettings />
 
       {settingsQuery.isSuccess && (
         <ModelManagement settings={settingsQuery.data} />

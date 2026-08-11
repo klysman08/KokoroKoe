@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -15,13 +16,15 @@ use wasapi::{
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
 use super::{
-    AudioDevice, AudioDeviceList, AudioDirection, AudioPacket, AudioPrototypeConfig,
-    AudioPrototypeStartRequest, AudioPrototypeStatus, AudioSource, BoundedReceiver, BoundedSender,
-    ChannelStatus, DeviceRole, DeviceSelection, EnqueueResult, NativeAudioFormat, NativeSampleType,
-    PacketReceiver, PacketSender, ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState,
-    QpcEpoch, SourceProcessor, UtteranceDiagnostics, bounded_queue, packet_queue,
-    qpc_ticks_to_100ns,
+    AudioDevice, AudioDeviceList, AudioDeviceState, AudioDirection, AudioPacket,
+    AudioPrototypeConfig, AudioPrototypeStatus, AudioSource, BoundedReceiver, BoundedSender,
+    ChannelDiagnostics, ChannelHealth, ChannelHealthStatus, ChannelStatus, DeviceRole,
+    DeviceSelection, DeviceTestInput, DeviceTestRunStatus, DeviceTestStatus, EnqueueResult,
+    LevelDiagnostics, NativeAudioFormat, NativeSampleType, PacketReceiver, PacketSender,
+    ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState, QpcEpoch, SourceProcessor,
+    UtteranceDiagnostics, bounded_queue, packet_queue, qpc_ticks_to_100ns,
 };
+use crate::domain::{AppError, RequestId, now_rfc3339};
 
 const EVENT_WAIT_MS: u32 = 100;
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -82,72 +85,357 @@ impl AudioPrototypeError {
     }
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct AudioPrototypeService {
-    running: Arc<Mutex<Option<RunningAudioPrototype>>>,
-    last_status: Arc<Mutex<Option<AudioPrototypeStatus>>>,
+const DEVICE_TEST_QUEUE_CAPACITY: usize = 32;
+const RETAINED_DEVICE_TESTS: usize = 16;
+
+#[derive(Debug, Clone)]
+pub(crate) struct AudioDeviceTestObservation {
+    pub(crate) status: DeviceTestStatus,
+    pub(crate) health: ChannelHealth,
+    pub(crate) latest_level: Option<LevelDiagnostics>,
+    pub(crate) follows_default: bool,
+    pub(crate) finished: bool,
 }
 
-impl AudioPrototypeService {
+struct RunningDeviceTestRecord {
+    request_id: RequestId,
+    selection: DeviceSelection,
+    device: AudioDevice,
+    running: RunningAudioDeviceTest,
+}
+
+#[derive(Default)]
+struct AudioDeviceTestState {
+    running: HashMap<AudioSource, RunningDeviceTestRecord>,
+    completed: HashMap<RequestId, AudioDeviceTestObservation>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct AudioDeviceTestService {
+    state: Arc<Mutex<AudioDeviceTestState>>,
+}
+
+impl AudioDeviceTestService {
     pub(crate) fn list_devices(&self) -> Result<AudioDeviceList, AudioPrototypeError> {
-        thread::Builder::new()
+        let devices = thread::Builder::new()
             .name("audio-device-enumeration".to_owned())
             .spawn(list_audio_devices)
             .map_err(|_| AudioPrototypeError::new("audio_enumeration_thread_unavailable"))?
             .join()
-            .map_err(|_| AudioPrototypeError::new("audio_enumeration_thread_failed"))?
+            .map_err(|_| AudioPrototypeError::new("audio_enumeration_thread_failed"))??;
+        devices.validate().map_err(AudioPrototypeError::new)?;
+        Ok(devices)
     }
 
     pub(crate) fn start(
         &self,
-        request: AudioPrototypeStartRequest,
-    ) -> Result<AudioPrototypeStatus, AudioPrototypeError> {
-        let config = request.validate().map_err(AudioPrototypeError::new)?;
-        let mut running = self
-            .running
+        input: DeviceTestInput,
+        request_id: RequestId,
+    ) -> Result<DeviceTestStatus, AudioPrototypeError> {
+        input.validate().map_err(AudioPrototypeError::new)?;
+        let device = resolve_selected_product_device(input.source, &input.selection)?;
+        let mut state = self
+            .state
             .lock()
-            .map_err(|_| AudioPrototypeError::new("audio_prototype_state_unavailable"))?;
-        if running.is_some() {
-            return Err(AudioPrototypeError::new("audio_prototype_already_running"));
+            .map_err(|_| AudioPrototypeError::new("audio_device_test_state_unavailable"))?;
+        if state.running.contains_key(&input.source) {
+            return Err(AudioPrototypeError::new(
+                "audio_device_test_already_running",
+            ));
         }
-        let prototype = RunningAudioPrototype::start(config)?;
-        let status = prototype.snapshot();
-        *running = Some(prototype);
+        if state.completed.contains_key(&request_id)
+            || state
+                .running
+                .values()
+                .any(|record| record.request_id == request_id)
+        {
+            return Err(AudioPrototypeError::new(
+                "audio_device_test_request_conflict",
+            ));
+        }
+
+        let running = RunningAudioDeviceTest::start(input.source, input.selection.clone())?;
+        let status = DeviceTestStatus {
+            request_id,
+            source: input.source,
+            status: DeviceTestRunStatus::Starting,
+            device: Some(device.clone()),
+            error: None,
+        };
+        status.validate().map_err(AudioPrototypeError::new)?;
+        state.running.insert(
+            input.source,
+            RunningDeviceTestRecord {
+                request_id,
+                selection: input.selection,
+                device,
+                running,
+            },
+        );
         Ok(status)
     }
 
-    pub(crate) fn status(&self) -> Result<AudioPrototypeStatus, AudioPrototypeError> {
-        let running = self
-            .running
+    pub(crate) fn stop(
+        &self,
+        request_id: RequestId,
+    ) -> Result<DeviceTestStatus, AudioPrototypeError> {
+        let mut state = self
+            .state
             .lock()
-            .map_err(|_| AudioPrototypeError::new("audio_prototype_state_unavailable"))?;
-        if let Some(prototype) = running.as_ref() {
-            return Ok(prototype.snapshot());
+            .map_err(|_| AudioPrototypeError::new("audio_device_test_state_unavailable"))?;
+        if let Some(completed) = state.completed.get(&request_id) {
+            return Ok(completed.status.clone());
         }
-        self.last_status
-            .lock()
-            .map_err(|_| AudioPrototypeError::new("audio_prototype_state_unavailable"))?
-            .clone()
-            .ok_or_else(|| AudioPrototypeError::new("audio_prototype_not_started"))
+        let source = state
+            .running
+            .iter()
+            .find_map(|(source, record)| (record.request_id == request_id).then_some(*source))
+            .ok_or_else(|| AudioPrototypeError::new("audio_device_test_not_running"))?;
+        let record = state
+            .running
+            .remove(&source)
+            .expect("located audio test must remain present");
+        let snapshot = record.running.stop();
+        let status = DeviceTestStatus {
+            request_id,
+            source,
+            status: DeviceTestRunStatus::Stopped,
+            device: Some(record.device),
+            error: None,
+        };
+        status.validate().map_err(AudioPrototypeError::new)?;
+        let observation =
+            observation_from_snapshot(status.clone(), &record.selection, snapshot, true);
+        retain_completed(&mut state.completed, request_id, observation);
+        Ok(status)
     }
 
-    pub(crate) fn stop(&self) -> Result<AudioPrototypeStatus, AudioPrototypeError> {
-        let prototype = self
+    pub(crate) fn observe(
+        &self,
+        request_id: RequestId,
+    ) -> Result<AudioDeviceTestObservation, AudioPrototypeError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| AudioPrototypeError::new("audio_device_test_state_unavailable"))?;
+        if let Some(completed) = state.completed.get(&request_id) {
+            return Ok(completed.clone());
+        }
+        let record = state
             .running
-            .lock()
-            .map_err(|_| AudioPrototypeError::new("audio_prototype_state_unavailable"))?
-            .take()
-            .ok_or_else(|| AudioPrototypeError::new("audio_prototype_not_running"))?;
-        let status = prototype.stop();
-        *self
-            .last_status
-            .lock()
-            .map_err(|_| AudioPrototypeError::new("audio_prototype_state_unavailable"))? =
-            Some(status.clone());
-        Ok(status)
+            .values()
+            .find(|record| record.request_id == request_id)
+            .ok_or_else(|| AudioPrototypeError::new("audio_device_test_not_running"))?;
+        let snapshot = record.running.snapshot();
+        let channel = channel_snapshot(&snapshot, record.running.source);
+        let run_status = match channel.status {
+            ChannelStatus::Starting | ChannelStatus::Reconnecting => DeviceTestRunStatus::Starting,
+            ChannelStatus::Active => DeviceTestRunStatus::Active,
+            ChannelStatus::Unavailable => DeviceTestRunStatus::Failed,
+            ChannelStatus::Stopped => DeviceTestRunStatus::Stopped,
+        };
+        let error = (run_status == DeviceTestRunStatus::Failed).then(|| {
+            AppError::audio_operation_failed(
+                channel
+                    .last_error_code
+                    .as_deref()
+                    .unwrap_or("audio_device_unavailable"),
+            )
+        });
+        let status = DeviceTestStatus {
+            request_id,
+            source: record.running.source,
+            status: run_status,
+            device: Some(record.device.clone()),
+            error,
+        };
+        Ok(observation_from_snapshot(
+            status,
+            &record.selection,
+            snapshot,
+            false,
+        ))
     }
 }
 
+fn retain_completed(
+    completed: &mut HashMap<RequestId, AudioDeviceTestObservation>,
+    request_id: RequestId,
+    observation: AudioDeviceTestObservation,
+) {
+    if completed.len() >= RETAINED_DEVICE_TESTS
+        && let Some(oldest) = completed.keys().next().copied()
+    {
+        completed.remove(&oldest);
+    }
+    completed.insert(request_id, observation);
+}
+
+fn resolve_selected_product_device(
+    source: AudioSource,
+    selection: &DeviceSelection,
+) -> Result<AudioDevice, AudioPrototypeError> {
+    let devices = list_audio_devices()?;
+    let candidates = match source {
+        AudioSource::Microphone => devices.inputs,
+        AudioSource::SystemOutput => devices.outputs,
+    };
+    let selected = candidates.into_iter().find(|device| match selection {
+        DeviceSelection::Default { role } => match role {
+            DeviceRole::Console => device.is_default_console,
+            DeviceRole::Multimedia => device.is_default_multimedia,
+            DeviceRole::Communications => device.is_default_communications,
+        },
+        DeviceSelection::Fixed { endpoint_id } => device.endpoint_id == *endpoint_id,
+    });
+    selected.ok_or_else(|| AudioPrototypeError::new("audio_device_unavailable"))
+}
+
+fn channel_snapshot(status: &AudioPrototypeStatus, source: AudioSource) -> &ChannelDiagnostics {
+    match source {
+        AudioSource::Microphone => &status.microphone,
+        AudioSource::SystemOutput => &status.system_output,
+    }
+}
+
+fn observation_from_snapshot(
+    status: DeviceTestStatus,
+    selection: &DeviceSelection,
+    snapshot: AudioPrototypeStatus,
+    finished: bool,
+) -> AudioDeviceTestObservation {
+    let channel = channel_snapshot(&snapshot, status.source);
+    let health_status = if finished {
+        ChannelHealthStatus::Stopped
+    } else {
+        match channel.status {
+            ChannelStatus::Starting => ChannelHealthStatus::Starting,
+            ChannelStatus::Active
+                if channel
+                    .latest_level
+                    .as_ref()
+                    .is_some_and(|level| level.rms_dbfs <= -90.0) =>
+            {
+                ChannelHealthStatus::Silent
+            }
+            ChannelStatus::Active => ChannelHealthStatus::Active,
+            ChannelStatus::Reconnecting => ChannelHealthStatus::Reconnecting,
+            ChannelStatus::Unavailable => ChannelHealthStatus::Unavailable,
+            ChannelStatus::Stopped => ChannelHealthStatus::Stopped,
+        }
+    };
+    AudioDeviceTestObservation {
+        status,
+        health: ChannelHealth {
+            status: health_status,
+            endpoint_id: channel.endpoint_id.clone(),
+            detail_code: channel
+                .last_error_code
+                .clone()
+                .or_else(|| channel.last_processing_error_code.clone()),
+            updated_at: now_rfc3339().unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+        },
+        latest_level: channel.latest_level.clone(),
+        follows_default: matches!(selection, DeviceSelection::Default { .. }),
+        finished,
+    }
+}
+
+struct RunningAudioDeviceTest {
+    source: AudioSource,
+    stop: Arc<AtomicBool>,
+    status: Arc<Mutex<AudioPrototypeStatus>>,
+    started: Instant,
+    handles: Vec<JoinHandle<()>>,
+}
+
+impl RunningAudioDeviceTest {
+    fn start(source: AudioSource, selection: DeviceSelection) -> Result<Self, AudioPrototypeError> {
+        let started = Instant::now();
+        let epoch = QpcEpoch::from_100ns(current_qpc_100ns()?);
+        let stop = Arc::new(AtomicBool::new(false));
+        let status = Arc::new(Mutex::new(AudioPrototypeStatus::new(
+            DEVICE_TEST_QUEUE_CAPACITY,
+        )));
+        let (packet_sender, packet_receiver) = packet_queue(DEVICE_TEST_QUEUE_CAPACITY);
+        let (processed_sender, processed_receiver) = bounded_queue(DEVICE_TEST_QUEUE_CAPACITY);
+        let sink = spawn_single_processed_sink(Arc::clone(&status), processed_receiver)?;
+        let processor = match spawn_processor(
+            source,
+            Arc::clone(&status),
+            packet_receiver,
+            processed_sender,
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                drop(packet_sender);
+                let _ = sink.join();
+                return Err(error);
+            }
+        };
+        let supervisor = match spawn_supervisor(
+            source,
+            selection,
+            epoch,
+            Arc::clone(&stop),
+            Arc::clone(&status),
+            packet_sender,
+            CaptureControl::default(),
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                stop.store(true, Ordering::Release);
+                let _ = processor.join();
+                let _ = sink.join();
+                return Err(error);
+            }
+        };
+        status.lock().expect("audio status lock poisoned").state = PrototypeRunState::Capturing;
+        Ok(Self {
+            source,
+            stop,
+            status,
+            started,
+            handles: vec![supervisor, processor, sink],
+        })
+    }
+
+    fn snapshot(&self) -> AudioPrototypeStatus {
+        let mut snapshot = self
+            .status
+            .lock()
+            .expect("audio status lock poisoned")
+            .clone();
+        snapshot.elapsed_ms = duration_ms(self.started.elapsed());
+        snapshot
+    }
+
+    fn stop(mut self) -> AudioPrototypeStatus {
+        self.stop.store(true, Ordering::Release);
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+        let mut snapshot = self
+            .status
+            .lock()
+            .expect("audio status lock poisoned")
+            .clone();
+        snapshot.elapsed_ms = duration_ms(self.started.elapsed());
+        snapshot.channel_mut(self.source).status = ChannelStatus::Stopped;
+        snapshot
+    }
+}
+
+impl Drop for RunningAudioDeviceTest {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct RunningAudioPrototype {
     stop: Arc<AtomicBool>,
     status: Arc<Mutex<AudioPrototypeStatus>>,
@@ -155,6 +443,7 @@ pub(crate) struct RunningAudioPrototype {
     handles: Vec<JoinHandle<()>>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl RunningAudioPrototype {
     pub(crate) fn start(config: AudioPrototypeConfig) -> Result<Self, AudioPrototypeError> {
         Self::start_inner(config, CaptureControl::default())
@@ -380,7 +669,9 @@ fn enumerate_direction(
             endpoint_id,
             friendly_name,
             direction: public_direction,
-            native_format,
+            state: AudioDeviceState::Active,
+            sample_rate: native_format.as_ref().map(|format| format.sample_rate),
+            channels: native_format.as_ref().map(|format| format.channels),
         });
     }
 
@@ -820,6 +1111,7 @@ fn record_processing_outcome(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn spawn_processed_sink(
     status: Arc<Mutex<AudioPrototypeStatus>>,
     microphone: BoundedReceiver<ProcessedAudioChunk>,
@@ -831,6 +1123,34 @@ fn spawn_processed_sink(
         .map_err(|_| AudioPrototypeError::new("audio_processing_sink_unavailable"))
 }
 
+fn spawn_single_processed_sink(
+    status: Arc<Mutex<AudioPrototypeStatus>>,
+    receiver: BoundedReceiver<ProcessedAudioChunk>,
+) -> Result<JoinHandle<()>, AudioPrototypeError> {
+    thread::Builder::new()
+        .name("audio-device-test-sink".to_owned())
+        .spawn(move || {
+            loop {
+                match receiver.receiver().try_recv() {
+                    Ok(chunk) => {
+                        let mut current = status.lock().expect("audio status lock poisoned");
+                        let channel = current.channel_mut(chunk.source);
+                        channel.normalized_chunks_consumed =
+                            channel.normalized_chunks_consumed.saturating_add(1);
+                        channel.normalized_samples_consumed = channel
+                            .normalized_samples_consumed
+                            .saturating_add(chunk.samples.len() as u64);
+                        let _ = chunk.start_ms;
+                    }
+                    Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(2)),
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+        })
+        .map_err(|_| AudioPrototypeError::new("audio_processing_sink_unavailable"))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn consume_processed_chunks(
     status: Arc<Mutex<AudioPrototypeStatus>>,
     microphone: BoundedReceiver<ProcessedAudioChunk>,
@@ -1085,10 +1405,13 @@ mod tests {
     use windows_sys::Win32::System::Diagnostics::Debug::Beep;
 
     use super::{
-        AudioPrototypeConfig, AudioPrototypeError, AudioPrototypeStatus, AudioSource,
-        ChannelStatus, QpcEpoch, RunningAudioPrototype, TestCaptureFault, bounded_device_name,
-        list_audio_devices, record_failure, supervise_attempts, valid_endpoint_id,
+        AudioDeviceTestService, AudioPrototypeConfig, AudioPrototypeError, AudioPrototypeStatus,
+        AudioSource, ChannelStatus, DeviceRole, DeviceSelection, DeviceTestInput,
+        DeviceTestRunStatus, QpcEpoch, RunningAudioPrototype, TestCaptureFault,
+        bounded_device_name, list_audio_devices, record_failure, supervise_attempts,
+        valid_endpoint_id,
     };
+    use crate::domain::RequestId;
 
     #[test]
     fn one_channel_failure_does_not_mutate_the_other_channel() {
@@ -1170,6 +1493,76 @@ mod tests {
         assert_eq!(channel.capture_attempts, 2);
         assert_eq!(channel.capture_failures, 1);
         assert_eq!(channel.status, ChannelStatus::Stopped);
+    }
+
+    #[test]
+    #[ignore = "requires active Windows microphone and render endpoints"]
+    fn hardware_probe_product_device_tests_are_independent_and_discard_samples() {
+        let service = AudioDeviceTestService::default();
+        let microphone_id = RequestId::new();
+        let output_id = RequestId::new();
+        service
+            .start(
+                DeviceTestInput {
+                    source: AudioSource::Microphone,
+                    selection: DeviceSelection::Default {
+                        role: DeviceRole::Console,
+                    },
+                },
+                microphone_id,
+            )
+            .expect("microphone test should start");
+        service
+            .start(
+                DeviceTestInput {
+                    source: AudioSource::SystemOutput,
+                    selection: DeviceSelection::Default {
+                        role: DeviceRole::Console,
+                    },
+                },
+                output_id,
+            )
+            .expect("system-output test should start independently");
+
+        unsafe {
+            Beep(880, 750);
+        }
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let (microphone, output) = loop {
+            let microphone = service.observe(microphone_id).expect("microphone status");
+            let output = service.observe(output_id).expect("system-output status");
+            if microphone.status.status == DeviceTestRunStatus::Active
+                && output.status.status == DeviceTestRunStatus::Active
+                && microphone.latest_level.is_some()
+                && output.latest_level.is_some()
+            {
+                break (microphone, output);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "both product tests should become active and emit aggregate levels"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(microphone.status.source, AudioSource::Microphone);
+        assert_eq!(output.status.source, AudioSource::SystemOutput);
+        assert_eq!(microphone.status.request_id, microphone_id);
+        assert_eq!(output.status.request_id, output_id);
+
+        service.stop(microphone_id).expect("microphone should stop");
+        let before = output.latest_level.expect("output level before stop").at_ms;
+        unsafe {
+            Beep(990, 500);
+        }
+        let after = service
+            .observe(output_id)
+            .expect("output test must remain active")
+            .latest_level
+            .expect("output level after microphone stop")
+            .at_ms;
+        assert!(after > before, "unaffected source must continue advancing");
+        let stopped = service.stop(output_id).expect("output should stop");
+        assert_eq!(stopped.status, DeviceTestRunStatus::Stopped);
     }
 
     #[test]

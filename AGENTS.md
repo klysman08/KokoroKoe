@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-011 - Product model-management integration
-- Date: 2026-08-10
-- Outcome: integrated the curated Tiny/Base manager through six exact-main commands, a versioned main-targeted progress event, bounded SQLite job/install state, verified revisioned selection, dedicated blocking work, strict shared Rust/Zod contracts, and the Settings model-management UI without exposing model paths/URLs/hashes or adding live-session/native-package scope.
-- Verification: Rust 1.88 locked fmt/Clippy, 109 ordinary tests plus 3 capability tests; Node 24 frontend gates and 77 Vitest tests; clean npm audit and Cargo policy/audit with existing allowed warnings; locked x64 release build and bounded native launch health smoke. Native visual automation was unavailable and is recorded as a limitation in project memory.
-- Memory: [P3-011 checkpoint](docs/project-memory.md#p3-011---product-model-management-integration)
+- Task: P3-012 - Product audio-device listing and independent tests
+- Date: 2026-08-11
+- Outcome: replaced exposed prototype commands with the three exact product audio commands, strict shared Rust/Zod contracts, independent bounded microphone/system-output test pipelines, exact-main aggregate level/health events, least-privilege ACLs, and transient default/fixed device controls in Settings without exposing samples or starting/persisting a meeting.
+- Verification: Rust 1.88 locked fmt/Clippy, 111 ordinary tests plus 3 capability tests and one explicit live product hardware test; Node 24 frontend gates and 76 Vitest tests; clean npm audit and Cargo policy/audit with 17 existing allowed warnings; locked x64 release build and bounded native launch health smoke.
+- Memory: [P3-012 checkpoint](docs/project-memory.md#p3-012---product-audio-device-listing-and-independent-tests)

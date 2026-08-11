@@ -110,30 +110,35 @@ impl AppError {
         )
     }
 
-    pub(crate) fn audio_prototype_failed(code: &str) -> Self {
+    pub(crate) fn audio_operation_failed(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
-            "audio_capture_consent_required" => (
-                "Confirm the recording and transcription consent notice before starting capture.",
+            "audio_endpoint_id_invalid" | "audio_source_direction_mismatch" => (
+                "The selected audio device is not valid for this test.",
                 ErrorSeverity::Warning,
                 false,
             ),
-            "audio_prototype_already_running" => (
-                "An audio capture prototype is already running.",
+            "audio_device_test_already_running" => (
+                "A test is already running for this audio source.",
                 ErrorSeverity::Info,
                 false,
             ),
-            "audio_prototype_not_started" | "audio_prototype_not_running" => (
-                "No audio capture prototype is currently running.",
-                ErrorSeverity::Info,
-                false,
-            ),
-            "audio_queue_capacity_invalid" | "audio_endpoint_id_invalid" => (
-                "The audio capture prototype configuration is not valid.",
+            "audio_device_test_request_conflict" => (
+                "That audio test request has already been used.",
                 ErrorSeverity::Warning,
                 false,
+            ),
+            "audio_device_test_not_running" => (
+                "That audio device test is no longer running.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "audio_device_unavailable" => (
+                "The selected audio device is unavailable.",
+                ErrorSeverity::Warning,
+                true,
             ),
             _ => (
-                "The Windows audio capture prototype could not complete the operation.",
+                "Windows could not complete the audio device operation.",
                 ErrorSeverity::Error,
                 true,
             ),

@@ -7,6 +7,7 @@ mod session_journal;
 mod session_service;
 mod session_store;
 mod settings_store;
+mod transcript_store;
 
 #[allow(unused_imports)]
 pub(crate) use project_index::{ProjectCatalog, ProjectIndexRebuildReport};
@@ -29,3 +30,7 @@ pub(crate) use session_store::{
     SessionLocator, SessionSnapshot, SessionSnapshotFingerprint, SessionStore, SessionStoreError,
 };
 pub(crate) use settings_store::SettingsService;
+#[allow(unused_imports)]
+pub(crate) use transcript_store::{
+    TranscriptSnapshot, TranscriptSnapshotFingerprint, TranscriptStore, TranscriptStoreError,
+};

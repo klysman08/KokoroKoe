@@ -74,7 +74,9 @@ impl FinalizedTranscriptSegment {
             || self.end_ms > JSON_SAFE_INTEGER_MAX
             || self.text.is_empty()
             || self.text.len() > MAX_SEGMENT_TEXT_BYTES
-            || self.text.contains('\0')
+            || self.text.chars().any(|value| {
+                value == '\r' || (value.is_control() && value != '\n' && value != '\t')
+            })
             || self.language.is_empty()
             || self.language.len() > MAX_LANGUAGE_BYTES
             || self.language.chars().any(char::is_control)
@@ -139,6 +141,8 @@ impl JournalAppend {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JournalReplay {
     pub(crate) last_sequence: u64,
+    pub(crate) last_checksum: Option<String>,
+    pub(crate) last_recorded_at: Option<String>,
     pub(crate) applied_events: usize,
     pub(crate) ignored_duplicate_events: usize,
     pub(crate) discarded_torn_tail: bool,
@@ -345,6 +349,44 @@ impl SessionJournal {
         let _ = FileExt::unlock(&file);
         result
     }
+
+    pub(crate) fn replay_through(
+        &self,
+        locator: &SessionLocator,
+        sequence: u64,
+    ) -> Result<JournalReplay, SessionJournalError> {
+        let session_id = locator.session_id();
+        let directory = self
+            .sessions
+            .open_existing_session(locator)
+            .map_err(map_store_error)?;
+        directory.revalidate().map_err(map_store_error)?;
+        let path = directory.path().join(JOURNAL_FILE);
+        if !path.exists() {
+            return if sequence == 0 {
+                Ok(empty_replay())
+            } else {
+                Err(SessionJournalError::new(
+                    "session_journal_checkpoint_invalid",
+                ))
+            };
+        }
+        let mut file = open_existing_journal(&path)?;
+        FileExt::lock_shared(&file)
+            .map_err(|_| SessionJournalError::new("session_journal_lock_failed"))?;
+        let result = (|| {
+            let bytes = read_bounded(&mut file)?;
+            let parsed = parse_records(&bytes, session_id)?;
+            let length = usize::try_from(sequence)
+                .ok()
+                .filter(|length| *length <= parsed.records.len())
+                .ok_or_else(|| SessionJournalError::new("session_journal_checkpoint_invalid"))?;
+            directory.revalidate().map_err(map_store_error)?;
+            replay_records(&parsed.records[..length], false)
+        })();
+        let _ = FileExt::unlock(&file);
+        result
+    }
 }
 
 struct ParsedRecords {
@@ -424,6 +466,8 @@ fn replay_records(
     }
     Ok(JournalReplay {
         last_sequence: records.last().map_or(0, |record| record.sequence),
+        last_checksum: records.last().map(|record| record.checksum.clone()),
+        last_recorded_at: records.last().map(|record| record.recorded_at.clone()),
         applied_events: events.len(),
         ignored_duplicate_events,
         discarded_torn_tail,
@@ -435,6 +479,8 @@ fn replay_records(
 fn empty_replay() -> JournalReplay {
     JournalReplay {
         last_sequence: 0,
+        last_checksum: None,
+        last_recorded_at: None,
         applied_events: 0,
         ignored_duplicate_events: 0,
         discarded_torn_tail: false,

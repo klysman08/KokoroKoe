@@ -1,0 +1,57 @@
+{
+  "pageRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "limit": 12
+  },
+  "page": {
+    "items": [],
+    "nextCursor": "s1:7:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:12"
+  },
+  "createRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "value": {
+      "title": "Sprint planning",
+      "objective": "Agree the next sprint scope.",
+      "sessionContext": "Review delivery risks.",
+      "preset": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "version": 1,
+        "name": "Technical interview",
+        "assistantRole": "Identify concrete decisions and unresolved technical risks.",
+        "analysisObjectives": ["Track decisions", "Capture action items"],
+        "insightTypes": ["decision", "action_item", "risk"],
+        "responseTone": "Concise and factual",
+        "finalSummarySections": ["Decisions", "Actions", "Risks"],
+        "highlightInstructions": ["Highlight owners and deadlines"],
+        "prohibitedBehaviors": ["Do not invent facts"]
+      },
+      "language": "en-GB",
+      "microphone": {
+        "endpointId": "microphone-endpoint",
+        "friendlyName": "Desk microphone",
+        "selection": { "kind": "fixed", "endpointId": "microphone-endpoint" },
+        "nativeSampleRate": 48000,
+        "nativeChannels": 1
+      },
+      "systemOutput": {
+        "endpointId": "render-endpoint",
+        "friendlyName": "Desktop speakers",
+        "selection": { "kind": "fixed", "endpointId": "render-endpoint" },
+        "nativeSampleRate": 48000,
+        "nativeChannels": 2
+      },
+      "transcriptionModelId": "whisper-tiny-multilingual",
+      "llmModels": {},
+      "retainAudio": false
+    }
+  },
+  "updateRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "expectedRevision": 1,
+    "value": {
+      "title": "Sprint planning review",
+      "objective": "Confirm the agreed sprint scope."
+    }
+  }
+}

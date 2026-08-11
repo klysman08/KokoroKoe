@@ -3,6 +3,7 @@ mod project_index;
 mod project_service;
 mod project_store;
 mod session_index;
+mod session_service;
 mod session_store;
 mod settings_store;
 
@@ -14,7 +15,8 @@ pub(crate) use project_store::{ProjectCreateReceipt, ProjectStore, ProjectStoreE
 #[allow(unused_imports)]
 pub(crate) use project_store::{ProjectLocator, ProjectSnapshot, ProjectSnapshotFingerprint};
 #[allow(unused_imports)]
-pub(crate) use session_index::{SessionCatalog, SessionIndexRebuildReport, SessionPage};
+pub(crate) use session_index::{SessionCatalog, SessionIndexRebuildReport};
+pub(crate) use session_service::SessionService;
 #[allow(unused_imports)]
 pub(crate) use session_store::{
     DiscoveredSession, SessionCreateReceipt, SessionDiscoveryIssue, SessionDiscoveryReport,

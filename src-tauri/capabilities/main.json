@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least-privilege settings, project-management, model-management, audio-device-test, and live-transcription capability for the KokoroKoe main window.",
+  "description": "Least-privilege settings, project/session-management, model-management, audio-device-test, and live-transcription capability for the KokoroKoe main window.",
   "windows": ["main"],
   "permissions": [
     "allow-get-settings",
@@ -11,6 +11,10 @@
     "allow-get-project",
     "allow-create-project",
     "allow-update-project",
+    "allow-list-sessions",
+    "allow-get-session",
+    "allow-create-session",
+    "allow-update-session",
     "allow-list-audio-devices",
     "allow-start-audio-device-test",
     "allow-stop-audio-device-test",

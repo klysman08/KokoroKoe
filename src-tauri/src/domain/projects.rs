@@ -248,6 +248,41 @@ pub(crate) struct CreateSessionSnapshotInput {
     pub(crate) retain_audio: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateSessionInput {
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) objective: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_context: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) preset: Option<PresetSnapshot>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) language: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) microphone: Option<AudioDeviceSnapshot>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) system_output: Option<AudioDeviceSnapshot>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) transcription_model_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) llm_models: Option<LlmRoleModels>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retain_audio: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Project {
@@ -342,6 +377,38 @@ pub(crate) struct Session {
     pub(crate) ended_at: Option<String>,
     pub(crate) updated_at: String,
     pub(crate) revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionPage {
+    pub(crate) items: Vec<Session>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawSessionPage {
+    items: Vec<Session>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    next_cursor: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for SessionPage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSessionPage::deserialize(deserializer)?;
+        if raw.items.len() > 100 || !valid_session_cursor(raw.next_cursor.as_deref()) {
+            return Err(D::Error::custom("session_page_invalid"));
+        }
+        Ok(Self {
+            items: raw.items,
+            next_cursor: raw.next_cursor,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -650,6 +717,84 @@ impl Session {
         }
         Ok(())
     }
+
+    pub(crate) fn apply_update(
+        &self,
+        update: UpdateSessionInput,
+        updated_at: String,
+    ) -> Result<Self, &'static str> {
+        if update.is_empty() || self.state != SessionState::Idle {
+            return Err("session_update_invalid");
+        }
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .filter(|revision| *revision <= JSON_SAFE_INTEGER_MAX)
+            .ok_or("session_revision_exhausted")?;
+        let current_time = parse_timestamp(&self.updated_at).ok_or("session_contract_invalid")?;
+        let requested_time = parse_timestamp(&updated_at).ok_or("session_contract_invalid")?;
+        let updated_at = if requested_time >= current_time {
+            updated_at
+        } else {
+            self.updated_at.clone()
+        };
+        let microphone = update.microphone.unwrap_or_else(|| self.microphone.clone());
+        let system_output = update
+            .system_output
+            .unwrap_or_else(|| self.system_output.clone());
+        let mut value = self.clone();
+        value.title = update.title.unwrap_or_else(|| self.title.clone());
+        value.objective = update.objective.unwrap_or_else(|| self.objective.clone());
+        value.session_context = update
+            .session_context
+            .unwrap_or_else(|| self.session_context.clone());
+        value.preset = update.preset.unwrap_or_else(|| self.preset.clone());
+        value.language = update.language.unwrap_or_else(|| self.language.clone());
+        value.microphone = microphone.clone();
+        value.system_output = system_output.clone();
+        value.transcription_model_id = update
+            .transcription_model_id
+            .unwrap_or_else(|| self.transcription_model_id.clone());
+        value.llm_models = update.llm_models.unwrap_or_else(|| self.llm_models.clone());
+        value.retain_audio = update.retain_audio.unwrap_or(self.retain_audio);
+        value.channel_health.microphone.endpoint_id = Some(microphone.endpoint_id);
+        value.channel_health.system_output.endpoint_id = Some(system_output.endpoint_id);
+        value.updated_at = updated_at;
+        value.revision = next_revision;
+        value.validate()?;
+        Ok(value)
+    }
+}
+
+impl UpdateSessionInput {
+    fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.objective.is_none()
+            && self.session_context.is_none()
+            && self.preset.is_none()
+            && self.language.is_none()
+            && self.microphone.is_none()
+            && self.system_output.is_none()
+            && self.transcription_model_id.is_none()
+            && self.llm_models.is_none()
+            && self.retain_audio.is_none()
+    }
+}
+
+fn valid_session_cursor(cursor: Option<&str>) -> bool {
+    cursor.is_none_or(|cursor| {
+        let Some(encoded) = cursor.strip_prefix("s1:") else {
+            return false;
+        };
+        let mut parts = encoded.split(':');
+        let generation = parts.next();
+        let project_id = parts.next();
+        let offset = parts.next();
+        parts.next().is_none()
+            && generation.is_some_and(|value| value.parse::<u64>().is_ok_and(|value| value >= 1))
+            && project_id.is_some_and(|value| Uuid::parse_str(value).is_ok())
+            && offset.is_some_and(|value| value.parse::<u32>().is_ok())
+    })
 }
 
 fn valid_lifecycle_timestamps(session: &Session) -> bool {
@@ -848,7 +993,8 @@ mod tests {
 
     use super::{
         CreateProjectInput, CreateSessionSnapshotInput, PageRequest, Project, ProjectId,
-        ProjectPage, Session, SessionState, SummaryStatus, UpdateProjectInput,
+        ProjectPage, Session, SessionId, SessionPage, SessionState, SummaryStatus,
+        UpdateProjectInput, UpdateSessionInput,
     };
     use crate::persistence::layout::PortableFolderContract;
 
@@ -876,11 +1022,72 @@ mod tests {
         value: UpdateProjectInput,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct SessionManagementFixture {
+        page_request: SessionPageRequest,
+        page: SessionPage,
+        create_request: SessionCreateRequest,
+        update_request: SessionUpdateRequest,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct SessionPageRequest {
+        project_id: ProjectId,
+        #[serde(flatten)]
+        page: PageRequest,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct SessionCreateRequest {
+        project_id: ProjectId,
+        value: CreateSessionSnapshotInput,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct SessionUpdateRequest {
+        project_id: ProjectId,
+        session_id: SessionId,
+        expected_revision: u64,
+        value: UpdateSessionInput,
+    }
+
     fn management_fixture() -> ProjectManagementFixture {
         serde_json::from_str(include_str!(
             "../../../fixtures/contracts/project-management-v1.json"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn session_management_matches_the_shared_contract() {
+        let fixture: SessionManagementFixture = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/session-management-v1.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture.page_request.page.limit, 12);
+        assert!(fixture.page.items.is_empty());
+        assert_eq!(
+            fixture.create_request.project_id,
+            fixture.page_request.project_id
+        );
+        assert_eq!(fixture.create_request.value.title, "Sprint planning");
+        assert_eq!(
+            fixture.update_request.project_id,
+            fixture.page_request.project_id
+        );
+        assert_eq!(fixture.update_request.expected_revision, 1);
+        assert_eq!(
+            serde_json::to_value(fixture.update_request.session_id).unwrap(),
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        );
+        assert_eq!(
+            fixture.update_request.value.title.as_deref(),
+            Some("Sprint planning review")
+        );
     }
 
     #[test]

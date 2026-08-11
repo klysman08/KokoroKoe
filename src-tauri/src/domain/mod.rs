@@ -12,11 +12,10 @@ pub(crate) use models::{
     ModelDownloadProgress, ModelDownloadStatus, ModelInstallation, ModelInstallationStatus,
     PerformanceClass, RequestId, now_rfc3339,
 };
-#[allow(unused_imports)]
-pub(crate) use projects::CreateSessionSnapshotInput;
 pub(crate) use projects::{
-    CreateProjectInput, LlmRoleModels, PageRequest, Project, ProjectId, ProjectPage, Session,
-    SessionId, UpdateProjectInput,
+    AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, LlmRoleModels,
+    PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session, SessionId, SessionPage,
+    UpdateProjectInput, UpdateSessionInput,
 };
 pub(crate) use settings::{AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceStatus};
 pub(crate) use transcription::{

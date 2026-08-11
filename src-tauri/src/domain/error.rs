@@ -100,6 +100,62 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn session_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "session_contract_invalid" | "session_update_invalid" | "session_page_invalid" => (
+                "The session information is not valid.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "session_not_found" => (
+                "That session is no longer available.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "project_not_found" => (
+                "The project for that session is no longer available.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "session_revision_conflict" | "session_external_modification" => (
+                "The session changed since it was loaded. Reload it and try again.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "session_page_stale" => (
+                "The session list changed. Reload the list to continue.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "session_projection_refresh_pending" => (
+                "The session was saved, but the local list must be refreshed.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "session_revision_exhausted" => (
+                "KokoroKoe cannot save another revision of this session.",
+                ErrorSeverity::Critical,
+                false,
+            ),
+            _ => (
+                "KokoroKoe could not complete the local session operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
+    pub(crate) fn session_worker_failed() -> Self {
+        Self::new(
+            "session_worker_failed",
+            "The local session service stopped unexpectedly.",
+            Some("The background session operation did not complete."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
     pub(crate) fn project_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "project_contract_invalid" | "project_update_invalid" | "project_page_invalid" => (

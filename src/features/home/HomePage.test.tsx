@@ -5,7 +5,9 @@ import userEvent from "@testing-library/user-event"
 import { vi } from "vitest"
 
 import appSettingsFixture from "../../../fixtures/contracts/app-settings-v1.json"
+import audioFixture from "../../../fixtures/contracts/audio-device-test-v1.json"
 import projectFixture from "../../../fixtures/contracts/project-management-v1.json"
+import projectSessionFixture from "../../../fixtures/contracts/project-session-v1.json"
 
 import { projectManagementFixtureSchema } from "@/contracts/projects"
 import { HomePage } from "@/features/home/HomePage"
@@ -34,6 +36,9 @@ describe("HomePage project management", () => {
       if (command === "list_projects") return projects.page
       if (command === "create_project") return projects.page.items[0]
       if (command === "update_project") return projects.page.items[0]
+      if (command === "list_sessions") return { items: [] }
+      if (command === "list_audio_devices") return audioFixture.deviceList
+      if (command === "create_session") return projectSessionFixture.session
       throw new Error(`Unexpected command: ${command}`)
     })
   })
@@ -101,6 +106,43 @@ describe("HomePage project management", () => {
           tags: projects.page.items[0]!.tags,
         },
       }),
+    )
+  })
+
+  it("opens a project-scoped session list and creates bounded session metadata", async () => {
+    const user = userEvent.setup()
+    renderHome()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage sessions" }),
+    )
+    expect(
+      await screen.findByText("No sessions in this project"),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "New session" }))
+    await user.type(
+      screen.getByRole("textbox", { name: "Session title" }),
+      "Sprint planning",
+    )
+    await user.type(
+      screen.getByRole("textbox", { name: "Objective" }),
+      "Agree the sprint scope",
+    )
+    await user.click(screen.getByRole("button", { name: "Save session" }))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "create_session",
+        expect.objectContaining({
+          projectId: projects.page.items[0]!.id,
+          title: "Sprint planning",
+          objective: "Agree the sprint scope",
+          language: "en-GB",
+          transcriptionModelId:
+            projects.page.items[0]!.defaultTranscriptionModelId,
+          retainAudio: false,
+        }),
+      ),
     )
   })
 })

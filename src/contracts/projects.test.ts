@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import fixture from "../../fixtures/contracts/project-session-v1.json"
 import managementFixture from "../../fixtures/contracts/project-management-v1.json"
+import sessionManagementFixture from "../../fixtures/contracts/session-management-v1.json"
 import {
   createProjectInputSchema,
   projectManagementFixtureSchema,
@@ -10,6 +11,9 @@ import {
   projectSessionFixtureSchema,
   projectUpdateRequestSchema,
   sessionSchema,
+  sessionManagementFixtureSchema,
+  sessionPageRequestSchema,
+  sessionUpdateRequestSchema,
 } from "./projects"
 
 describe("project and session contracts", () => {
@@ -75,6 +79,32 @@ describe("project and session contracts", () => {
         },
       }),
     ).toThrow()
+  })
+})
+
+describe("session management contracts", () => {
+  it("parses the shared requests and page fixture", () => {
+    expect(
+      sessionManagementFixtureSchema.parse(sessionManagementFixture),
+    ).toEqual(sessionManagementFixture)
+  })
+
+  it.each([
+    [{ ...sessionManagementFixture.pageRequest, limit: 0 }],
+    [{ ...sessionManagementFixture.pageRequest, cursor: null }],
+    [{ ...sessionManagementFixture.pageRequest, cursor: "s1:7:other:12" }],
+    [{ ...sessionManagementFixture.pageRequest, unknown: true }],
+  ])("rejects an invalid session page request", (value) => {
+    expect(() => sessionPageRequestSchema.parse(value)).toThrow()
+  })
+
+  it.each([
+    [{ ...sessionManagementFixture.updateRequest, value: {} }],
+    [{ ...sessionManagementFixture.updateRequest, value: { title: null } }],
+    [{ ...sessionManagementFixture.updateRequest, expectedRevision: -1 }],
+    [{ ...sessionManagementFixture.updateRequest, unknown: true }],
+  ])("rejects an invalid session update request", (value) => {
+    expect(() => sessionUpdateRequestSchema.parse(value)).toThrow()
   })
 })
 

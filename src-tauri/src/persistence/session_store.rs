@@ -298,6 +298,22 @@ impl SessionStore {
         Ok(report)
     }
 
+    pub(crate) fn read_session_by_id(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        self.discover_sessions()?
+            .sessions
+            .into_iter()
+            .find(|candidate| {
+                candidate.snapshot.session.project_id == project_id
+                    && candidate.snapshot.session.id == session_id
+            })
+            .map(|candidate| candidate.snapshot)
+            .ok_or_else(|| SessionStoreError::new("session_not_found"))
+    }
+
     fn read_discovered_session(
         &self,
         project: &Project,

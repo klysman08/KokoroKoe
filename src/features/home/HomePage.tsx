@@ -1,4 +1,4 @@
-import { FolderKanban, Pencil, Plus, Sparkles } from "lucide-react"
+import { CalendarClock, FolderKanban, Pencil, Plus } from "lucide-react"
 import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -13,6 +13,7 @@ import {
 import { type Project } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { ProjectForm } from "@/features/projects/ProjectForm"
+import { ProjectSessions } from "@/features/sessions/ProjectSessions"
 import {
   useCreateProjectMutation,
   useProjectsQuery,
@@ -27,6 +28,7 @@ export function HomePage() {
   const updateMutation = useUpdateProjectMutation()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Project>()
+  const [sessionsProject, setSessionsProject] = useState<Project>()
   const projects = projectsQuery.data?.pages.flatMap((page) => page.items) ?? []
   const mutationError = createMutation.error ?? updateMutation.error
   const busy = createMutation.isPending || updateMutation.isPending
@@ -169,6 +171,13 @@ export function HomePage() {
                     Revision {project.revision} · {project.participants.length}{" "}
                     participants
                   </p>
+                  <Button
+                    onClick={() => setSessionsProject(project)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <CalendarClock /> Manage sessions
+                  </Button>
                 </CardContent>
               </Card>
             ))}
@@ -188,27 +197,13 @@ export function HomePage() {
         )}
       </section>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4">
-          <div>
-            <CardTitle>Recent sessions</CardTitle>
-            <CardDescription>
-              Session persistence is the next Phase 4 boundary.
-            </CardDescription>
-          </div>
-          <Button disabled variant="outline">
-            New session
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <div className="bg-muted/30 grid min-h-28 place-items-center rounded-xl border border-dashed p-6 text-center">
-            <div className="space-y-2">
-              <Sparkles className="text-muted-foreground mx-auto size-5" />
-              <p className="text-sm font-medium">No persisted sessions yet</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {sessionsProject && (
+        <ProjectSessions
+          key={sessionsProject.id}
+          onClose={() => setSessionsProject(undefined)}
+          project={sessionsProject}
+        />
+      )}
     </div>
   )
 }

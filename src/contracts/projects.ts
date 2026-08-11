@@ -305,6 +305,70 @@ export const sessionSchema = z
     }
   })
 
+const sessionEditableFields = {
+  title: singleLine(256),
+  objective: multiline(4096),
+  sessionContext: multiline(32768),
+  preset: presetSnapshotSchema,
+  language: z
+    .string()
+    .min(2)
+    .max(64)
+    .regex(/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}$/),
+  microphone: audioDeviceSnapshotSchema,
+  systemOutput: audioDeviceSnapshotSchema,
+  transcriptionModelId: singleLine(128),
+  llmModels: llmRoleModelsSchema,
+  retainAudio: z.boolean(),
+} as const
+
+export const createSessionInputSchema = z.strictObject(sessionEditableFields)
+export const updateSessionInputSchema = z
+  .strictObject(sessionEditableFields)
+  .partial()
+  .refine((value) => Object.values(value).some((field) => field !== undefined))
+
+const sessionCursorSchema = z
+  .string()
+  .min(1)
+  .max(160)
+  .regex(/^s1:\d+:[0-9a-f-]{36}:\d+$/)
+
+export const sessionPageRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  cursor: sessionCursorSchema.optional(),
+  limit: z.number().int().min(1).max(100),
+})
+
+export const sessionPageSchema = z.strictObject({
+  items: z.array(sessionSchema).max(100),
+  nextCursor: sessionCursorSchema.optional(),
+})
+
+export const sessionIdentitySchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+})
+
+export const sessionCreateRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  value: createSessionInputSchema,
+})
+
+export const sessionUpdateRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+  expectedRevision: safeCounterSchema,
+  value: updateSessionInputSchema,
+})
+
+export const sessionManagementFixtureSchema = z.strictObject({
+  pageRequest: sessionPageRequestSchema,
+  page: sessionPageSchema,
+  createRequest: sessionCreateRequestSchema,
+  updateRequest: sessionUpdateRequestSchema,
+})
+
 const portablePath = z
   .string()
   .min(1)
@@ -382,6 +446,13 @@ export type ProjectPageRequest = z.infer<typeof projectPageRequestSchema>
 export type ProjectPage = z.infer<typeof projectPageSchema>
 export type ProjectUpdateRequest = z.infer<typeof projectUpdateRequestSchema>
 export type Session = z.infer<typeof sessionSchema>
+export type CreateSessionInput = z.infer<typeof createSessionInputSchema>
+export type UpdateSessionInput = z.infer<typeof updateSessionInputSchema>
+export type SessionPageRequest = z.infer<typeof sessionPageRequestSchema>
+export type SessionPage = z.infer<typeof sessionPageSchema>
+export type SessionIdentity = z.infer<typeof sessionIdentitySchema>
+export type SessionCreateRequest = z.infer<typeof sessionCreateRequestSchema>
+export type SessionUpdateRequest = z.infer<typeof sessionUpdateRequestSchema>
 export type PortableFolderContract = z.infer<
   typeof portableFolderContractSchema
 >

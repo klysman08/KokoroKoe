@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-008 - Bounded session discovery and rebuildable projection
+- Task: P4-009 - Product session-management boundary
 - Date: 2026-08-11
-- Outcome: added bounded direct-child session discovery across validated projects plus an app-local workspace-bound SQLite projection with duplicate exclusion, deterministic meeting-time ordering, corruption rebuild, and generation-bound pagination.
-- Verification: 21 session-store and 6 session-index tests including 11 new discovery/index tests; Rust 1.88 locked fmt/Clippy, 192 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-008 checkpoint](docs/project-memory.md#p4-008---bounded-session-discovery-and-rebuildable-projection)
+- Outcome: exposed strict project-scoped session list/get/create/update through four exact-main commands, blocking serialized Rust persistence, revision/fingerprint conflict protection, durable-write projection repair, and a bounded device-backed Home UI.
+- Verification: Rust 1.88 locked fmt/Clippy, 197 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm/Cargo audits and license checks; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-009 checkpoint](docs/project-memory.md#p4-009---product-session-management-boundary)

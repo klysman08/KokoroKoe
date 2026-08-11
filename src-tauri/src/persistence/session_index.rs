@@ -1,6 +1,4 @@
-// P4-008 keeps this rebuildable projection behind the Rust boundary. Product commands and UI
-// remain a later task; Markdown session snapshots are always authoritative.
-#![allow(dead_code)]
+// Markdown session snapshots remain authoritative; this database is only a rebuildable list.
 
 use std::{
     fs,
@@ -12,21 +10,18 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{PageRequest, Session};
+use crate::domain::{PageRequest, Project, ProjectId, Session, SessionId, SessionPage};
 
-use super::session_store::{SessionDiscoveryReport, SessionStore, SessionStoreError};
+use super::session_store::{
+    SessionDiscoveryReport, SessionLocator, SessionSnapshot, SessionSnapshotFingerprint,
+    SessionStore, SessionStoreError,
+};
 
 const MIGRATION: &str = include_str!("../../migrations/session_index_v1.sql");
 const DATABASE_NAME: &str = "session-index.sqlite3";
 const SCHEMA_VERSION: u32 = 1;
 const MAX_PAGE_LIMIT: u16 = 100;
 const CURSOR_PREFIX: &str = "s1:";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SessionPage {
-    pub(crate) items: Vec<Session>,
-    pub(crate) next_cursor: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionIndexRebuildReport {
@@ -66,6 +61,7 @@ impl SessionCatalog {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn rebuild_index(&self) -> Result<SessionIndexRebuildReport, SessionStoreError> {
         let _operation = self
             .operation_lock
@@ -74,6 +70,7 @@ impl SessionCatalog {
         self.rebuild_index_with_fault(None)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn list_sessions(
         &self,
         request: &PageRequest,
@@ -97,6 +94,103 @@ impl SessionCatalog {
         }
     }
 
+    pub(crate) fn list_project_sessions(
+        &self,
+        project_id: ProjectId,
+        request: &PageRequest,
+    ) -> Result<SessionPage, SessionStoreError> {
+        let project_id_text = id_text(project_id)?;
+        let cursor = decode_project_cursor(request, &project_id_text)?;
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        match self.list_project_sessions_locked(&project_id_text, cursor, request.limit) {
+            Err(error) if error.code == "session_index_corrupt" => {
+                self.quarantine_corrupt_index()?;
+                self.rebuild_index_with_fault(None)?;
+                self.list_project_sessions_locked(&project_id_text, cursor, request.limit)
+            }
+            Err(error) if error.code == "session_index_invalid" => {
+                self.rebuild_index_with_fault(None)?;
+                self.list_project_sessions_locked(&project_id_text, cursor, request.limit)
+            }
+            result => result,
+        }
+    }
+
+    pub(crate) fn read_session(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        let snapshot = self.store.read_session_by_id(project_id, session_id)?;
+        if snapshot.recovered_from_backup {
+            self.rebuild_index_with_fault(None)?;
+        }
+        Ok(snapshot)
+    }
+
+    pub(crate) fn create_session(
+        &self,
+        project: &Project,
+        session: &Session,
+    ) -> Result<Session, SessionStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        self.store.create_session(project, session)?;
+        self.refresh_after_write(session.id)?;
+        Ok(session.clone())
+    }
+
+    #[cfg(test)]
+    fn create_session_with_refresh_fault(
+        &self,
+        project: &Project,
+        session: &Session,
+        fault: RebuildFault,
+    ) -> Result<Session, SessionStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        self.store.create_session(project, session)?;
+        self.refresh_after_write_with_fault(session.id, Some(fault))?;
+        Ok(session.clone())
+    }
+
+    pub(crate) fn update_session(
+        &self,
+        project: &Project,
+        session: &Session,
+        expected_revision: u64,
+        expected_fingerprint: SessionSnapshotFingerprint,
+    ) -> Result<Session, SessionStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        self.invalidate_projection_locked()?;
+        let locator = SessionLocator::from_records(project, session)?;
+        let snapshot = self.store.update_session(
+            &locator,
+            session,
+            expected_revision,
+            expected_fingerprint,
+        )?;
+        self.refresh_after_write(snapshot.session.id)?;
+        Ok(snapshot.session)
+    }
+
+    #[allow(dead_code)]
     fn list_sessions_locked(
         &self,
         cursor: DecodedCursor,
@@ -109,6 +203,63 @@ impl SessionCatalog {
         }
         let connection = self.open_connection_without_recovery()?;
         read_page(&connection, cursor, limit)
+    }
+
+    fn list_project_sessions_locked(
+        &self,
+        project_id: &str,
+        cursor: DecodedCursor,
+        limit: u16,
+    ) -> Result<SessionPage, SessionStoreError> {
+        let connection = self.open_connection_without_recovery()?;
+        if !index_has_projection(&connection, &self.workspace_key)? {
+            drop(connection);
+            self.rebuild_index_with_fault(None)?;
+        }
+        let connection = self.open_connection_without_recovery()?;
+        read_project_page(&connection, project_id, cursor, limit)
+    }
+
+    fn invalidate_projection_locked(&self) -> Result<(), SessionStoreError> {
+        let mut connection = match self.open_connection_without_recovery() {
+            Ok(connection) => connection,
+            Err(error) if error.code == "session_index_corrupt" => {
+                self.quarantine_corrupt_index()?;
+                self.open_connection_without_recovery()?
+            }
+            Err(error) => return Err(error),
+        };
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_write_error)?;
+        transaction
+            .execute("DELETE FROM session_index_meta", [])
+            .map_err(map_write_error)?;
+        transaction.commit().map_err(map_write_error)
+    }
+
+    fn refresh_after_write(&self, session_id: SessionId) -> Result<(), SessionStoreError> {
+        self.refresh_after_write_with_fault(session_id, None)
+    }
+
+    fn refresh_after_write_with_fault(
+        &self,
+        session_id: SessionId,
+        fault: Option<RebuildFault>,
+    ) -> Result<(), SessionStoreError> {
+        let report = self
+            .rebuild_index_with_fault(fault)
+            .map_err(|_| SessionStoreError::new("session_projection_refresh_pending"))?;
+        if report
+            .discovery
+            .sessions
+            .iter()
+            .any(|candidate| candidate.snapshot.session.id == session_id)
+        {
+            Ok(())
+        } else {
+            Err(SessionStoreError::new("session_projection_refresh_pending"))
+        }
     }
 
     fn rebuild_index_with_fault(
@@ -282,6 +433,7 @@ fn rebuild_on_connection(
     u64::try_from(generation).map_err(|_| SessionStoreError::new("session_index_invalid"))
 }
 
+#[allow(dead_code)]
 fn read_page(
     connection: &Connection,
     cursor: DecodedCursor,
@@ -357,6 +509,84 @@ fn read_page(
     })
 }
 
+fn read_project_page(
+    connection: &Connection,
+    project_id: &str,
+    cursor: DecodedCursor,
+    limit: u16,
+) -> Result<SessionPage, SessionStoreError> {
+    let generation = connection
+        .query_row(
+            "SELECT generation FROM session_index_meta WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_read_error)?;
+    let generation =
+        u64::try_from(generation).map_err(|_| SessionStoreError::new("session_index_invalid"))?;
+    if cursor.generation.is_some_and(|value| value != generation) {
+        return Err(SessionStoreError::new("session_page_stale"));
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT session_id, project_id, project_folder, session_folder, session_json,
+                    snapshot_sha256 FROM session_index_entries
+             WHERE project_id = ?1 ORDER BY sort_rank ASC LIMIT ?2 OFFSET ?3",
+        )
+        .map_err(map_read_error)?;
+    let rows = statement
+        .query_map(
+            params![project_id, u32::from(limit) + 1, cursor.offset],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                ))
+            },
+        )
+        .map_err(map_read_error)?;
+    let mut items = Vec::with_capacity(usize::from(limit) + 1);
+    for row in rows {
+        let (session_id, stored_project_id, project_folder, session_folder, json, fingerprint) =
+            row.map_err(map_read_error)?;
+        let session: Session = serde_json::from_str(&json)
+            .map_err(|_| SessionStoreError::new("session_index_invalid"))?;
+        session
+            .validate()
+            .map_err(|_| SessionStoreError::new("session_index_invalid"))?;
+        let value = serde_json::to_value(&session)
+            .map_err(|_| SessionStoreError::new("session_index_invalid"))?;
+        if value.get("id").and_then(serde_json::Value::as_str) != Some(&session_id)
+            || value.get("projectId").and_then(serde_json::Value::as_str)
+                != Some(stored_project_id.as_str())
+            || stored_project_id != project_id
+            || session.folder_name != session_folder
+            || !valid_project_folder(&project_folder, &stored_project_id)
+            || fingerprint.len() != 32
+        {
+            return Err(SessionStoreError::new("session_index_invalid"));
+        }
+        items.push(session);
+    }
+    let has_more = items.len() > usize::from(limit);
+    if has_more {
+        items.pop();
+    }
+    Ok(SessionPage {
+        next_cursor: has_more.then(|| {
+            format!(
+                "{CURSOR_PREFIX}{generation}:{project_id}:{}",
+                cursor.offset + u32::from(limit)
+            )
+        }),
+        items,
+    })
+}
+
 fn valid_project_folder(folder: &str, project_id: &str) -> bool {
     let compact_id = project_id.replace('-', "");
     compact_id.len() >= 8
@@ -374,6 +604,7 @@ struct DecodedCursor {
     offset: u32,
 }
 
+#[allow(dead_code)]
 fn decode_cursor(request: &PageRequest) -> Result<DecodedCursor, SessionStoreError> {
     if request.validate().is_err() || request.limit > MAX_PAGE_LIMIT {
         return Err(SessionStoreError::new("session_page_invalid"));
@@ -402,6 +633,53 @@ fn decode_cursor(request: &PageRequest) -> Result<DecodedCursor, SessionStoreErr
             .parse::<u32>()
             .map_err(|_| SessionStoreError::new("session_page_invalid"))?,
     })
+}
+
+fn decode_project_cursor(
+    request: &PageRequest,
+    project_id: &str,
+) -> Result<DecodedCursor, SessionStoreError> {
+    if request.limit == 0 || request.limit > MAX_PAGE_LIMIT {
+        return Err(SessionStoreError::new("session_page_invalid"));
+    }
+    let Some(cursor) = request.cursor.as_deref() else {
+        return Ok(DecodedCursor {
+            generation: None,
+            offset: 0,
+        });
+    };
+    let encoded = cursor
+        .strip_prefix(CURSOR_PREFIX)
+        .ok_or_else(|| SessionStoreError::new("session_page_invalid"))?;
+    let mut parts = encoded.split(':');
+    let generation = parts
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value >= 1)
+        .ok_or_else(|| SessionStoreError::new("session_page_invalid"))?;
+    let cursor_project_id = parts
+        .next()
+        .filter(|value| *value == project_id)
+        .ok_or_else(|| SessionStoreError::new("session_page_invalid"))?;
+    let _ = cursor_project_id;
+    let offset = parts
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| SessionStoreError::new("session_page_invalid"))?;
+    if parts.next().is_some() {
+        return Err(SessionStoreError::new("session_page_invalid"));
+    }
+    Ok(DecodedCursor {
+        generation: Some(generation),
+        offset,
+    })
+}
+
+fn id_text<T: serde::Serialize>(id: T) -> Result<String, SessionStoreError> {
+    serde_json::to_value(id)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| SessionStoreError::new("session_contract_invalid"))
 }
 
 fn is_physical_corruption(error: &rusqlite::Error) -> bool {
@@ -647,6 +925,53 @@ mod tests {
             vec![first]
         );
         assert_eq!(catalog.rebuild_index().unwrap().generation, 2);
+    }
+
+    #[test]
+    fn durable_session_write_with_failed_refresh_repairs_on_the_next_list() {
+        let workspace = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let (project, _) = records();
+        ProjectStore::open(workspace.path())
+            .unwrap()
+            .create_project(&project)
+            .unwrap();
+        let created = session(
+            "99999999-9999-4999-8999-999999999999",
+            "Durable",
+            "2026-08-11T13:00:00Z",
+        );
+        let catalog =
+            SessionCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
+
+        assert_eq!(
+            catalog
+                .create_session_with_refresh_fault(&project, &created, RebuildFault::AfterInsert)
+                .unwrap_err()
+                .code,
+            "session_projection_refresh_pending"
+        );
+        assert_eq!(
+            SessionStore::open(workspace.path())
+                .unwrap()
+                .read_session_by_id(project.id, created.id)
+                .unwrap()
+                .session,
+            created
+        );
+        assert_eq!(
+            catalog
+                .list_project_sessions(
+                    project.id,
+                    &PageRequest {
+                        cursor: None,
+                        limit: 12,
+                    },
+                )
+                .unwrap()
+                .items,
+            vec![created]
+        );
     }
 
     #[test]

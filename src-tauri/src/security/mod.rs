@@ -3,7 +3,8 @@ mod workspace;
 
 pub(crate) use authorization::authorize_main_window;
 pub(crate) use workspace::{
-    prepare_foundation_workspace, probe_workspace, validate_workspace_path_syntax,
+    prepare_foundation_workspace, probe_workspace, reject_reparse_points,
+    validate_workspace_path_syntax,
 };
 
 const MAX_TECHNICAL_DETAIL_CHARS: usize = 512;

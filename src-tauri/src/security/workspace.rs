@@ -215,7 +215,7 @@ fn display_canonical_path(path: &Path) -> Result<String, AppError> {
     Ok(display.strip_prefix(r"\\?\").unwrap_or(display).to_owned())
 }
 
-fn reject_reparse_points(path: &Path) -> Result<(), AppError> {
+pub(crate) fn reject_reparse_points(path: &Path) -> Result<(), AppError> {
     for ancestor in path.ancestors() {
         let metadata = fs::symlink_metadata(ancestor).map_err(|_| {
             AppError::workspace_invalid("The workspace path metadata could not be verified.")

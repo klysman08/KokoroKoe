@@ -2,6 +2,23 @@ use serde::Serialize;
 
 use crate::domain::{Project, Session};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableProjectLayout {
+    pub(crate) project_directory: String,
+    pub(crate) project_document: String,
+}
+
+impl PortableProjectLayout {
+    pub(crate) fn for_project(project: &Project) -> Result<Self, &'static str> {
+        project.validate()?;
+        let project_directory = format!("projects/{}", project.folder_name);
+        Ok(Self {
+            project_document: format!("{project_directory}/project.md"),
+            project_directory,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 // P4-001 freezes this pure contract before a later task wires filesystem writes.
@@ -25,17 +42,17 @@ pub(crate) struct PortableFolderContract {
 #[allow(dead_code)]
 impl PortableFolderContract {
     pub(crate) fn for_records(project: &Project, session: &Session) -> Result<Self, &'static str> {
-        project.validate()?;
+        let project_layout = PortableProjectLayout::for_project(project)?;
         session.validate()?;
         if session.project_id != project.id {
             return Err("session_project_identity_mismatch");
         }
 
-        let project_directory = format!("projects/{}", project.folder_name);
+        let project_directory = project_layout.project_directory;
         let sessions_directory = format!("{project_directory}/sessions");
         let session_directory = format!("{sessions_directory}/{}", session.folder_name);
         Ok(Self {
-            project_document: format!("{project_directory}/project.md"),
+            project_document: project_layout.project_document,
             presets_directory: format!("{project_directory}/presets"),
             sessions_directory,
             session_document: format!("{session_directory}/session.md"),

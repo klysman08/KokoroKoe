@@ -1019,12 +1019,13 @@ fn process_packets(
 
                 match outcome {
                     Ok(outcome) => {
-                        let (utterances, ordering_watermark_ms) =
+                        let (utterances, partial, ordering_watermark_ms) =
                             record_processing_outcome(&status, source, outcome, &processed);
                         if let Some(sender) = &live_updates {
                             let update = FinalizedAudioUpdate {
                                 source,
                                 utterances,
+                                partial,
                                 ordering_watermark_ms,
                                 terminal: false,
                             };
@@ -1050,12 +1051,13 @@ fn process_packets(
             Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(2)),
             Err(TryRecvError::Disconnected) => {
                 let outcome = processor.finish();
-                let (utterances, ordering_watermark_ms) =
+                let (utterances, partial, ordering_watermark_ms) =
                     record_processing_outcome(&status, source, outcome, &processed);
                 if let Some(sender) = &live_updates {
                     let _ = sender.send(FinalizedAudioUpdate {
                         source,
                         utterances,
+                        partial,
                         ordering_watermark_ms,
                         terminal: true,
                     });
@@ -1072,6 +1074,7 @@ fn should_forward_live_update(
 ) -> bool {
     update.terminal
         || !update.utterances.is_empty()
+        || update.partial.is_some()
         || match (last_watermark_ms, update.ordering_watermark_ms) {
             (None, Some(_)) => true,
             (Some(previous), Some(next)) => {
@@ -1086,7 +1089,11 @@ fn record_processing_outcome(
     source: AudioSource,
     mut outcome: ProcessingOutcome,
     processed: &BoundedSender<ProcessedAudioChunk>,
-) -> (Vec<super::DetectedUtterance>, Option<u64>) {
+) -> (
+    Vec<super::DetectedUtterance>,
+    Option<super::PartialUtteranceSnapshot>,
+    Option<u64>,
+) {
     let chunks_produced = outcome.chunks.len() as u64;
     let samples_produced = outcome
         .chunks
@@ -1176,7 +1183,11 @@ fn record_processing_outcome(
     } else {
         channel.last_processing_error_code = None;
     }
-    (outcome.utterances, outcome.vad_ordering_watermark_ms)
+    (
+        outcome.utterances,
+        outcome.partial,
+        outcome.vad_ordering_watermark_ms,
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1486,6 +1497,7 @@ mod tests {
         let update = |watermark, terminal| FinalizedAudioUpdate {
             source: AudioSource::Microphone,
             utterances: Vec::new(),
+            partial: None,
             ordering_watermark_ms: watermark,
             terminal,
         };

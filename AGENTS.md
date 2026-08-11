@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-013 - Live-transcription readiness integration
+- Task: P3-014 - Partial-transcription readiness
 - Date: 2026-08-11
-- Outcome: connected independent Windows capture/process streams through fixed-capacity finalized-VAD handoffs to the chronological P3-009 coordinator and bounded in-memory sink, added canonical rehashed selected-model resolution and a curated CPU runtime factory, and proved terminal drain/cancellation/source isolation without product commands, transcript UI/persistence, retained audio, OpenRouter, or packaging claims.
-- Verification: Rust 1.88 locked fmt/Clippy, 117 ordinary tests plus 3 capability tests; Node 24 frontend gates and 76 Vitest tests; explicit selected-Tiny/CPU dual-endpoint fixture gate with 2,394 microphone packets, 2,398 system packets, one non-empty final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
-- Memory: [P3-013 checkpoint](docs/project-memory.md#p3-013---live-transcription-readiness-integration)
+- Outcome: added bounded source-local active-speech snapshots on a fixed 500 ms cadence, carried one replaceable partial per source through the existing scheduler/coordinator, preserved stable provisional-to-final identity and final priority, and made provisional failures and lifecycle cleanup diagnostic-only without adding product commands/events/UI, persistence, retained audio, OpenRouter, or packaging scope.
+- Verification: Rust 1.88 locked fmt/Clippy, 120 ordinary tests plus 3 capability tests; Node 24 frontend gates and 76 Vitest tests; explicit selected-Tiny/CPU dual-endpoint `OpenAI.mp3` gate with 2,394 microphone packets, 2,399 system packets, one non-empty partial, one matching final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
+- Memory: [P3-014 checkpoint](docs/project-memory.md#p3-014---partial-transcription-readiness)

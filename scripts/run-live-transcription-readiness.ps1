@@ -18,10 +18,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $appLocalData "kokorokoe.sqlite3") -
     throw "The product settings database is unavailable. Open KokoroKoe and select an installed default model first."
 }
 
-$env:KOKOROKOE_P3_013_APP_LOCAL_DATA = $appLocalData
-$env:KOKOROKOE_P3_013_DOCUMENTS = $documents
-$env:KOKOROKOE_P3_013_ADAPTER = $adapter
-$env:KOKOROKOE_P3_013_AUDIO = $audio
+$env:KOKOROKOE_P3_014_APP_LOCAL_DATA = $appLocalData
+$env:KOKOROKOE_P3_014_DOCUMENTS = $documents
+$env:KOKOROKOE_P3_014_ADAPTER = $adapter
+$env:KOKOROKOE_P3_014_AUDIO = $audio
 
 cargo test `
     --manifest-path (Join-Path $repositoryRoot "src-tauri\Cargo.toml") `
@@ -29,7 +29,7 @@ cargo test `
     --target x86_64-pc-windows-msvc `
     --no-run
 if ($LASTEXITCODE -ne 0) {
-    throw "The P3-013 readiness test could not be compiled."
+    throw "The P3-014 readiness test could not be compiled."
 }
 
 $playback = Start-Job -ScriptBlock {
@@ -53,13 +53,13 @@ try {
         --manifest-path (Join-Path $repositoryRoot "src-tauri\Cargo.toml") `
         --locked `
         --target x86_64-pc-windows-msvc `
-        transcription::live::tests::hardware_probe_live_dual_capture_to_verified_local_final `
+        transcription::live::tests::hardware_probe_live_dual_capture_to_verified_local_partial_and_final `
         -- `
         --ignored `
         --exact `
         --nocapture
     if ($LASTEXITCODE -ne 0) {
-        throw "The P3-013 live-transcription readiness gate failed."
+        throw "The P3-014 partial-transcription readiness gate failed."
     }
 }
 finally {

@@ -1,13 +1,13 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
-use crate::audio::{AudioSource, DetectedUtterance, ProcessingOutcome};
+use crate::audio::{AudioSource, DetectedUtterance, PartialUtteranceSnapshot, ProcessingOutcome};
 
 use super::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptionEngine, TranscriptionError,
     TranscriptionRequest, TranscriptionResult,
     scheduler::{
-        FinalSubmission, SchedulerDiagnostics, SchedulerSubmissionError, TranscriptionGap,
-        TranscriptionScheduler,
+        FinalSubmission, PartialSubmission, SchedulerDiagnostics, SchedulerSubmissionError,
+        TranscriptionGap, TranscriptionScheduler,
     },
 };
 
@@ -48,6 +48,10 @@ impl LivePipelineError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LivePipelineEvent {
+    Partial {
+        job_id: u64,
+        result: TranscriptionResult,
+    },
     Final {
         job_id: u64,
         result: TranscriptionResult,
@@ -65,6 +69,39 @@ pub(crate) struct LivePipelineDiagnostics {
     pub(crate) cancellation_gaps: u64,
     pub(crate) watermark_blocks: u64,
     pub(crate) discarded_partials: u64,
+    pub(crate) partials_received: u64,
+    pub(crate) partials_enqueued: u64,
+    pub(crate) partials_replaced: u64,
+    pub(crate) partials_suppressed: u64,
+    pub(crate) partial_results: u64,
+    pub(crate) partial_failures: u64,
+}
+
+#[derive(Debug, Default)]
+struct PartialIdentities {
+    microphone: Option<(u64, u64)>,
+    system_output: Option<(u64, u64)>,
+}
+
+impl PartialIdentities {
+    fn get(&self, source: AudioSource) -> Option<(u64, u64)> {
+        match source {
+            AudioSource::Microphone => self.microphone,
+            AudioSource::SystemOutput => self.system_output,
+        }
+    }
+
+    fn set(&mut self, source: AudioSource, value: Option<(u64, u64)>) {
+        match source {
+            AudioSource::Microphone => self.microphone = value,
+            AudioSource::SystemOutput => self.system_output = value,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.microphone = None;
+        self.system_output = None;
+    }
 }
 
 #[derive(Debug, Default)]
@@ -158,6 +195,7 @@ pub(crate) struct LiveFinalTranscriptionPipeline<E> {
     frontiers: SourceFrontiers,
     state: LivePipelineState,
     next_job_id: u64,
+    partial_identities: PartialIdentities,
     last_started_key: Option<(u64, u64, u64)>,
     diagnostics: LivePipelineDiagnostics,
 }
@@ -170,6 +208,7 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
             frontiers: SourceFrontiers::default(),
             state: LivePipelineState::Running,
             next_job_id: 1,
+            partial_identities: PartialIdentities::default(),
             last_started_key: None,
             diagnostics: LivePipelineDiagnostics::default(),
         }
@@ -227,8 +266,13 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
 
         let mut events = Vec::new();
         for utterance in utterances {
-            let job_id = self.next_job_id;
-            self.next_job_id += 1;
+            let job_id = match self.partial_identities.get(source) {
+                Some((start_ms, job_id)) if start_ms == utterance.start_ms => {
+                    self.partial_identities.set(source, None);
+                    job_id
+                }
+                _ => self.take_job_id()?,
+            };
             self.diagnostics.finals_received = self.diagnostics.finals_received.saturating_add(1);
             let submission = self
                 .scheduler
@@ -255,11 +299,72 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
         Ok(events)
     }
 
+    pub(crate) fn submit_partial(
+        &mut self,
+        snapshot: PartialUtteranceSnapshot,
+    ) -> Result<(), LivePipelineError> {
+        if self.state != LivePipelineState::Running {
+            return Err(LivePipelineError::InvalidState);
+        }
+        if self.frontiers.get(snapshot.source).sealed {
+            return Err(LivePipelineError::SourceSealed);
+        }
+        if (TranscriptionRequest {
+            source: snapshot.source,
+            start_ms: snapshot.start_ms,
+            end_ms: snapshot.end_ms,
+            samples: &snapshot.samples,
+        })
+        .validate()
+        .is_err()
+        {
+            return Err(LivePipelineError::InvalidVadOutput);
+        }
+        self.diagnostics.partials_received = self.diagnostics.partials_received.saturating_add(1);
+        let job_id = match self.partial_identities.get(snapshot.source) {
+            Some((start_ms, job_id)) if start_ms == snapshot.start_ms => job_id,
+            _ => {
+                let job_id = self.take_job_id()?;
+                self.partial_identities
+                    .set(snapshot.source, Some((snapshot.start_ms, job_id)));
+                job_id
+            }
+        };
+        match self
+            .scheduler
+            .submit_partial(
+                job_id,
+                snapshot.source,
+                snapshot.start_ms,
+                snapshot.end_ms,
+                Arc::from(snapshot.samples),
+            )
+            .map_err(map_scheduler_error)?
+        {
+            PartialSubmission::Enqueued => {
+                self.diagnostics.partials_enqueued =
+                    self.diagnostics.partials_enqueued.saturating_add(1);
+            }
+            PartialSubmission::Replaced => {
+                self.diagnostics.partials_replaced =
+                    self.diagnostics.partials_replaced.saturating_add(1);
+            }
+            PartialSubmission::Suppressed => {
+                self.diagnostics.partials_suppressed =
+                    self.diagnostics.partials_suppressed.saturating_add(1);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn submit_processing_outcome(
         &mut self,
         source: AudioSource,
         outcome: ProcessingOutcome,
     ) -> Result<Vec<LivePipelineEvent>, LivePipelineError> {
+        if let Some(partial) = outcome.partial {
+            self.submit_partial(partial)?;
+        }
         self.submit_finalized_vad(
             source,
             outcome.utterances,
@@ -267,24 +372,63 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
         )
     }
 
-    pub(crate) fn pump_one(&mut self, cancelled: &AtomicBool) -> Option<LivePipelineEvent> {
-        let Some(next_start_ms) = self.scheduler.next_final_start_ms() else {
-            self.settle_boundary_if_empty();
-            return None;
-        };
-        let Some(readiness_ms) = self.frontiers.readiness_ms() else {
-            self.diagnostics.watermark_blocks = self.diagnostics.watermark_blocks.saturating_add(1);
-            return None;
-        };
-        if !self.frontiers.both_sealed() && next_start_ms >= readiness_ms {
-            self.diagnostics.watermark_blocks = self.diagnostics.watermark_blocks.saturating_add(1);
-            return None;
-        }
+    fn take_job_id(&mut self) -> Result<u64, LivePipelineError> {
+        let job_id = self.next_job_id;
+        self.next_job_id = self
+            .next_job_id
+            .checked_add(1)
+            .ok_or(LivePipelineError::JobIdExhausted)?;
+        Ok(job_id)
+    }
 
-        let job = self
+    pub(crate) fn pump_one(&mut self, cancelled: &AtomicBool) -> Option<LivePipelineEvent> {
+        let final_ready = self
             .scheduler
-            .next_final_job()
-            .expect("peeked final must remain available");
+            .next_final_start_ms()
+            .is_some_and(|next_start_ms| {
+                self.frontiers.readiness_ms().is_some_and(|readiness_ms| {
+                    self.frontiers.both_sealed() || next_start_ms < readiness_ms
+                })
+            });
+        if final_ready {
+            let job = self
+                .scheduler
+                .next_final_job()
+                .expect("ready final must remain available");
+            return Some(self.transcribe_final(job, cancelled));
+        }
+        if self.scheduler.next_final_start_ms().is_some() {
+            self.diagnostics.watermark_blocks = self.diagnostics.watermark_blocks.saturating_add(1);
+        }
+        if self.state == LivePipelineState::Running
+            && let Some(job) = self.scheduler.next_partial_job()
+        {
+            let result = self.engine.transcribe_with_cancel(job.request(), cancelled);
+            return match result {
+                Ok(result) if result_matches_job(&result, &job) => {
+                    self.diagnostics.partial_results =
+                        self.diagnostics.partial_results.saturating_add(1);
+                    Some(LivePipelineEvent::Partial {
+                        job_id: job.job_id(),
+                        result,
+                    })
+                }
+                Ok(_) | Err(_) => {
+                    self.diagnostics.partial_failures =
+                        self.diagnostics.partial_failures.saturating_add(1);
+                    None
+                }
+            };
+        }
+        self.settle_boundary_if_empty();
+        None
+    }
+
+    fn transcribe_final(
+        &mut self,
+        job: super::scheduler::ScheduledTranscriptionJob,
+        cancelled: &AtomicBool,
+    ) -> LivePipelineEvent {
         let key = (job.start_ms(), job.end_ms(), job.job_id());
         debug_assert!(self.last_started_key.is_none_or(|previous| previous <= key));
         self.last_started_key = Some(key);
@@ -313,7 +457,7 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
             }
         };
         self.settle_boundary_if_empty();
-        Some(event)
+        event
     }
 
     pub(crate) fn begin_pause(&mut self) -> Result<(), LivePipelineError> {
@@ -381,6 +525,7 @@ impl<E: TranscriptionEngine> LiveFinalTranscriptionPipeline<E> {
     }
 
     fn discard_partials(&mut self) {
+        self.partial_identities.clear();
         self.diagnostics.discarded_partials = self
             .diagnostics
             .discarded_partials
@@ -447,7 +592,7 @@ mod tests {
         sync::{Mutex, atomic::AtomicBool},
     };
 
-    use crate::audio::UtteranceEndReason;
+    use crate::audio::{PartialUtteranceSnapshot, UtteranceEndReason};
 
     use super::*;
     #[cfg(windows)]
@@ -510,6 +655,95 @@ mod tests {
         pipeline
             .submit_finalized_vad(source, utterances, watermark_ms)
             .expect("valid VAD batch")
+    }
+
+    fn partial(source: AudioSource, start_ms: u64, duration_ms: u64) -> PartialUtteranceSnapshot {
+        PartialUtteranceSnapshot {
+            source,
+            start_ms,
+            end_ms: start_ms + duration_ms,
+            samples: vec![0.1; duration_ms as usize * 16],
+        }
+    }
+
+    #[test]
+    fn replaceable_partials_keep_identity_and_eligible_finals_run_first() {
+        let mut pipeline = LiveFinalTranscriptionPipeline::new(RecordingEngine::default());
+        pipeline
+            .submit_partial(partial(AudioSource::SystemOutput, 1_000, 500))
+            .unwrap();
+        pipeline
+            .submit_partial(partial(AudioSource::SystemOutput, 1_000, 1_000))
+            .unwrap();
+        let partial_id = match pipeline.pump_one(&AtomicBool::new(false)).unwrap() {
+            LivePipelineEvent::Partial { job_id, result } => {
+                assert_eq!(result.utterance_end_ms, 2_000);
+                job_id
+            }
+            other => panic!("expected partial, got {other:?}"),
+        };
+        assert_eq!(partial_id, 1);
+
+        submit(
+            &mut pipeline,
+            AudioSource::SystemOutput,
+            vec![utterance(AudioSource::SystemOutput, 1_000, 1_500)],
+            Some(5_000),
+        );
+        submit(
+            &mut pipeline,
+            AudioSource::Microphone,
+            Vec::new(),
+            Some(5_000),
+        );
+        assert!(matches!(
+            pipeline.pump_one(&AtomicBool::new(false)),
+            Some(LivePipelineEvent::Final { job_id: 1, .. })
+        ));
+
+        pipeline
+            .submit_partial(partial(AudioSource::SystemOutput, 4_000, 500))
+            .unwrap();
+        submit(
+            &mut pipeline,
+            AudioSource::Microphone,
+            vec![utterance(AudioSource::Microphone, 3_000, 500)],
+            Some(5_000),
+        );
+        assert!(matches!(
+            pipeline.pump_one(&AtomicBool::new(false)),
+            Some(LivePipelineEvent::Final { job_id: 3, .. })
+        ));
+        assert!(matches!(
+            pipeline.pump_one(&AtomicBool::new(false)),
+            Some(LivePipelineEvent::Partial { job_id: 2, .. })
+        ));
+        let diagnostics = pipeline.diagnostics();
+        assert_eq!(diagnostics.partials_enqueued, 2);
+        assert_eq!(diagnostics.partials_replaced, 1);
+        assert_eq!(diagnostics.partial_results, 2);
+    }
+
+    #[test]
+    fn partial_failure_is_diagnostic_only_and_stop_discards_provisional_state() {
+        let mut pipeline = LiveFinalTranscriptionPipeline::new(RecordingEngine {
+            fail_microphone_once: true,
+            ..RecordingEngine::default()
+        });
+        pipeline
+            .submit_partial(partial(AudioSource::Microphone, 0, 500))
+            .unwrap();
+        assert!(pipeline.pump_one(&AtomicBool::new(false)).is_none());
+        assert_eq!(pipeline.diagnostics().partial_failures, 1);
+        pipeline
+            .submit_partial(partial(AudioSource::Microphone, 0, 1_000))
+            .unwrap();
+        pipeline.begin_stop().unwrap();
+        assert_eq!(pipeline.diagnostics().discarded_partials, 1);
+        assert_eq!(pipeline.scheduler.queued_partial_jobs(), 0);
+        assert!(pipeline.cancel_pending().is_empty());
+        assert_eq!(pipeline.diagnostics().inference_gaps, 0);
+        assert_eq!(pipeline.diagnostics().cancellation_gaps, 0);
     }
 
     #[test]
@@ -713,7 +947,7 @@ mod tests {
                     *job_id,
                     result.source,
                 )),
-                LivePipelineEvent::Gap(_) => None,
+                LivePipelineEvent::Partial { .. } | LivePipelineEvent::Gap(_) => None,
             })
             .collect();
         assert!(final_keys.windows(2).all(|pair| {
@@ -723,6 +957,7 @@ mod tests {
             .iter()
             .map(|event| match event {
                 LivePipelineEvent::Final { job_id, .. } => *job_id,
+                LivePipelineEvent::Partial { job_id, .. } => *job_id,
                 LivePipelineEvent::Gap(gap) => gap.job_id,
             })
             .collect();

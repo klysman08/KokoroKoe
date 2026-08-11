@@ -5,7 +5,7 @@ use rubato::{
 
 use super::{
     AudioPacket, AudioSource, DetectedUtterance, LevelDiagnostics, NativeAudioFormat,
-    NativeSampleType, VadProcessOutcome, VadSegmenter,
+    NativeSampleType, PartialUtteranceSnapshot, VadProcessOutcome, VadSegmenter,
 };
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -43,6 +43,7 @@ pub(crate) struct ProcessingOutcome {
     pub(crate) pending_normalized_samples: u64,
     pub(crate) level_updates: Vec<LevelDiagnostics>,
     pub(crate) utterances: Vec<DetectedUtterance>,
+    pub(crate) partial: Option<PartialUtteranceSnapshot>,
     pub(crate) vad_frames_analyzed: u64,
     pub(crate) vad_speech_frames: u64,
     pub(crate) vad_silence_frames: u64,
@@ -58,6 +59,7 @@ pub(crate) struct ProcessingOutcome {
 pub(crate) struct FinalizedAudioUpdate {
     pub(crate) source: AudioSource,
     pub(crate) utterances: Vec<DetectedUtterance>,
+    pub(crate) partial: Option<PartialUtteranceSnapshot>,
     pub(crate) ordering_watermark_ms: Option<u64>,
     pub(crate) terminal: bool,
 }
@@ -65,6 +67,9 @@ pub(crate) struct FinalizedAudioUpdate {
 impl ProcessingOutcome {
     fn merge_vad(&mut self, outcome: VadProcessOutcome) {
         self.utterances.extend(outcome.utterances);
+        if outcome.partial.is_some() {
+            self.partial = outcome.partial;
+        }
         self.vad_frames_analyzed = self
             .vad_frames_analyzed
             .saturating_add(outcome.frames_analyzed);
@@ -93,6 +98,7 @@ impl ProcessingOutcome {
             pending_normalized_samples: 0,
             level_updates: Vec::new(),
             utterances: Vec::new(),
+            partial: None,
             vad_frames_analyzed: 0,
             vad_speech_frames: 0,
             vad_silence_frames: 0,
@@ -166,6 +172,7 @@ impl SourceProcessor {
             pending_normalized_samples: pipeline.normalized_buffer.len() as u64,
             level_updates: processed.level_updates,
             utterances: Vec::new(),
+            partial: None,
             vad_frames_analyzed: 0,
             vad_speech_frames: 0,
             vad_silence_frames: 0,

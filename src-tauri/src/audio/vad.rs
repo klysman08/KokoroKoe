@@ -11,6 +11,7 @@ pub(crate) const PRE_ROLL_SAMPLES: usize = 4_800;
 pub(crate) const TRAILING_SILENCE_SAMPLES: usize = 8_000;
 pub(crate) const MINIMUM_SPEECH_SAMPLES: usize = 2_560;
 pub(crate) const MAX_UTTERANCE_SAMPLES: usize = 480_000;
+pub(crate) const PARTIAL_SNAPSHOT_INTERVAL_MS: u64 = 500;
 pub(crate) const MAX_VAD_BUFFERED_SAMPLES: usize =
     MAX_UTTERANCE_SAMPLES + PRE_ROLL_SAMPLES + VAD_FRAME_SAMPLES - 1;
 const SAMPLE_RATE: u64 = 16_000;
@@ -34,9 +35,18 @@ pub(crate) struct DetectedUtterance {
     pub(crate) reason: UtteranceEndReason,
 }
 
+#[derive(Debug)]
+pub(crate) struct PartialUtteranceSnapshot {
+    pub(crate) source: AudioSource,
+    pub(crate) start_ms: u64,
+    pub(crate) end_ms: u64,
+    pub(crate) samples: Vec<f32>,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct VadProcessOutcome {
     pub(crate) utterances: Vec<DetectedUtterance>,
+    pub(crate) partial: Option<PartialUtteranceSnapshot>,
     pub(crate) frames_analyzed: u64,
     pub(crate) speech_frames: u64,
     pub(crate) silence_frames: u64,
@@ -51,6 +61,9 @@ pub(crate) struct VadProcessOutcome {
 impl VadProcessOutcome {
     pub(crate) fn merge(&mut self, mut other: Self) {
         self.utterances.append(&mut other.utterances);
+        if other.partial.is_some() {
+            self.partial = other.partial;
+        }
         self.frames_analyzed = self.frames_analyzed.saturating_add(other.frames_analyzed);
         self.speech_frames = self.speech_frames.saturating_add(other.speech_frames);
         self.silence_frames = self.silence_frames.saturating_add(other.silence_frames);
@@ -103,6 +116,7 @@ pub(crate) struct VadSegmenter<P: FramePredictor = EarshotPredictor> {
     expected_chunk_start_ms: Option<u64>,
     pre_roll: VecDeque<f32>,
     active: Option<ActiveUtterance>,
+    last_partial_end_ms: Option<u64>,
 }
 
 impl VadSegmenter<EarshotPredictor> {
@@ -126,6 +140,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
             expected_chunk_start_ms: None,
             pre_roll: VecDeque::with_capacity(PRE_ROLL_SAMPLES),
             active: None,
+            last_partial_end_ms: None,
         }
     }
 
@@ -172,6 +187,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
             self.observe_frame(&frame, frame_start_ms, speech, &mut outcome);
         }
         self.finish_outcome(&mut outcome);
+        outcome.partial = self.take_partial_snapshot();
         outcome
     }
 
@@ -209,6 +225,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
         self.expected_chunk_start_ms = None;
         self.pre_roll.clear();
         self.active = None;
+        self.last_partial_end_ms = None;
     }
 
     fn append_pending_to_active(&mut self) {
@@ -256,6 +273,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
             .is_some_and(|active| active.samples.len() >= MAX_UTTERANCE_SAMPLES);
         if forced {
             if let Some(mut active) = self.active.take() {
+                self.last_partial_end_ms = None;
                 active.samples.truncate(MAX_UTTERANCE_SAMPLES);
                 let tail_start = active.samples.len().saturating_sub(PRE_ROLL_SAMPLES);
                 self.pre_roll.extend(&active.samples[tail_start..]);
@@ -270,6 +288,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
             .as_ref()
             .is_some_and(|active| active.trailing_silence_samples >= TRAILING_SILENCE_SAMPLES);
         if trailing && let Some(mut active) = self.active.take() {
+            self.last_partial_end_ms = None;
             let excess = active
                 .trailing_silence_samples
                 .saturating_sub(TRAILING_SILENCE_SAMPLES);
@@ -290,6 +309,7 @@ impl<P: FramePredictor> VadSegmenter<P> {
     fn finalize_active(&mut self, reason: UtteranceEndReason) -> VadProcessOutcome {
         let mut outcome = VadProcessOutcome::default();
         if let Some(active) = self.active.take() {
+            self.last_partial_end_ms = None;
             self.emit(active, reason, &mut outcome);
         }
         outcome
@@ -326,6 +346,32 @@ impl<P: FramePredictor> VadSegmenter<P> {
             as u64;
         outcome.ordering_watermark_ms = self.ordering_watermark_ms();
         debug_assert!(outcome.buffered_samples <= MAX_VAD_BUFFERED_SAMPLES as u64);
+    }
+
+    fn take_partial_snapshot(&mut self) -> Option<PartialUtteranceSnapshot> {
+        let active = self.active.as_ref()?;
+        if active.speech_samples < MINIMUM_SPEECH_SAMPLES
+            || active.samples.is_empty()
+            || active.samples.len() > MAX_UTTERANCE_SAMPLES
+        {
+            return None;
+        }
+        let end_ms = active
+            .start_ms
+            .saturating_add(active.samples.len() as u64 * 1_000 / SAMPLE_RATE);
+        if self
+            .last_partial_end_ms
+            .is_some_and(|previous| end_ms.saturating_sub(previous) < PARTIAL_SNAPSHOT_INTERVAL_MS)
+        {
+            return None;
+        }
+        self.last_partial_end_ms = Some(end_ms);
+        Some(PartialUtteranceSnapshot {
+            source: self.source,
+            start_ms: active.start_ms,
+            end_ms,
+            samples: active.samples.clone(),
+        })
     }
 
     fn ordering_watermark_ms(&self) -> Option<u64> {
@@ -414,6 +460,36 @@ mod tests {
             run_script([vec![false; 20], vec![true; 10], vec![false; 35]].concat());
         assert_eq!(finalized.utterances.len(), 1);
         assert_eq!(finalized.ordering_watermark_ms, Some(992));
+    }
+
+    #[test]
+    fn active_speech_snapshots_start_at_minimum_and_replace_every_half_second() {
+        let mut segmenter = VadSegmenter::with_test_predictor(
+            AudioSource::Microphone,
+            ScriptedPredictor::new(vec![true; 100]),
+        );
+        let mut snapshots = Vec::new();
+        for chunk_index in 0..120_u64 {
+            let outcome = segmenter.push(AudioSource::Microphone, chunk_index * 10, &[0.25; 160]);
+            if let Some(snapshot) = outcome.partial {
+                snapshots.push(snapshot);
+            }
+        }
+
+        assert!(snapshots.len() >= 2);
+        assert_eq!(snapshots[0].source, AudioSource::Microphone);
+        assert!(snapshots[0].samples.len() >= MINIMUM_SPEECH_SAMPLES);
+        assert!(
+            snapshots
+                .windows(2)
+                .all(|pair| pair[1].end_ms - pair[0].end_ms >= PARTIAL_SNAPSHOT_INTERVAL_MS)
+        );
+        assert!(snapshots.iter().all(|snapshot| {
+            snapshot.start_ms == snapshots[0].start_ms
+                && snapshot.samples.len() <= MAX_UTTERANCE_SAMPLES
+                && snapshot.end_ms - snapshot.start_ms
+                    == snapshot.samples.len() as u64 * 1_000 / SAMPLE_RATE
+        }));
     }
 
     #[test]

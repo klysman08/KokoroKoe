@@ -145,11 +145,17 @@ fn run_coordinator<E: TranscriptionEngine>(
                 updates_received = updates_received.saturating_add(1);
                 let source = update.source;
                 let terminal = update.terminal;
-                match pipeline.submit_finalized_vad(
-                    source,
-                    update.utterances,
-                    update.ordering_watermark_ms,
-                ) {
+                let partial_result = update
+                    .partial
+                    .map_or(Ok(()), |partial| pipeline.submit_partial(partial));
+                let submission = partial_result.and_then(|()| {
+                    pipeline.submit_finalized_vad(
+                        source,
+                        update.utterances,
+                        update.ordering_watermark_ms,
+                    )
+                });
+                match submission {
                     Ok(events) => {
                         if !emit_all(&output, events) {
                             cancelled.store(true, Ordering::Release);
@@ -323,6 +329,7 @@ mod tests {
                 .iter()
                 .map(|start| utterance(source, *start))
                 .collect(),
+            partial: None,
             ordering_watermark_ms: watermark,
             terminal,
         }
@@ -365,7 +372,7 @@ mod tests {
                 LivePipelineEvent::Final { job_id, result } => {
                     Some((*job_id, result.source, result.utterance_start_ms))
                 }
-                LivePipelineEvent::Gap(_) => None,
+                LivePipelineEvent::Partial { .. } | LivePipelineEvent::Gap(_) => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -496,7 +503,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "requires default Windows endpoints, a verified selected model, the external adapter, and fixture playback"]
-    fn hardware_probe_live_dual_capture_to_verified_local_final() {
+    fn hardware_probe_live_dual_capture_to_verified_local_partial_and_final() {
         use std::{env, path::PathBuf};
 
         use crate::{
@@ -506,18 +513,18 @@ mod tests {
         };
 
         let app_data = PathBuf::from(
-            env::var_os("KOKOROKOE_P3_013_APP_LOCAL_DATA")
-                .expect("KOKOROKOE_P3_013_APP_LOCAL_DATA is required"),
+            env::var_os("KOKOROKOE_P3_014_APP_LOCAL_DATA")
+                .expect("KOKOROKOE_P3_014_APP_LOCAL_DATA is required"),
         );
         let documents = PathBuf::from(
-            env::var_os("KOKOROKOE_P3_013_DOCUMENTS")
-                .expect("KOKOROKOE_P3_013_DOCUMENTS is required"),
+            env::var_os("KOKOROKOE_P3_014_DOCUMENTS")
+                .expect("KOKOROKOE_P3_014_DOCUMENTS is required"),
         );
         let adapter = PathBuf::from(
-            env::var_os("KOKOROKOE_P3_013_ADAPTER").expect("KOKOROKOE_P3_013_ADAPTER is required"),
+            env::var_os("KOKOROKOE_P3_014_ADAPTER").expect("KOKOROKOE_P3_014_ADAPTER is required"),
         );
         let audio = PathBuf::from(
-            env::var_os("KOKOROKOE_P3_013_AUDIO").expect("KOKOROKOE_P3_013_AUDIO is required"),
+            env::var_os("KOKOROKOE_P3_014_AUDIO").expect("KOKOROKOE_P3_014_AUDIO is required"),
         );
         assert!(audio.is_file(), "the playback fixture must exist");
 
@@ -538,9 +545,16 @@ mod tests {
             let mut sources = HashSet::new();
             let mut gaps = 0_u64;
             let mut previous_start = None;
+            let mut partial_ids = HashSet::new();
+            let mut nonempty_partials = 0_u64;
+            let mut final_ids = HashSet::new();
             for event in records.receiver().iter() {
                 match event {
-                    LivePipelineEvent::Final { result, .. } => {
+                    LivePipelineEvent::Partial { job_id, result } => {
+                        partial_ids.insert(job_id);
+                        nonempty_partials += u64::from(!result.text.trim().is_empty());
+                    }
+                    LivePipelineEvent::Final { job_id, result } => {
                         assert!(
                             previous_start.is_none_or(|value| value <= result.utterance_start_ms)
                         );
@@ -548,17 +562,27 @@ mod tests {
                         final_count += 1;
                         nonempty_count += u64::from(!result.text.trim().is_empty());
                         sources.insert(result.source);
+                        final_ids.insert(job_id);
                     }
                     LivePipelineEvent::Gap(_) => gaps += 1,
                 }
             }
-            (final_count, nonempty_count, sources, gaps)
+            (
+                final_count,
+                nonempty_count,
+                sources,
+                gaps,
+                partial_ids,
+                nonempty_partials,
+                final_ids,
+            )
         });
 
         std::thread::sleep(Duration::from_secs(24));
         let status = capture.stop();
         let summary = coordinator.join().unwrap();
-        let (final_count, nonempty_count, sources, gaps) = sink.join().unwrap();
+        let (final_count, nonempty_count, sources, gaps, partial_ids, nonempty_partials, final_ids) =
+            sink.join().unwrap();
 
         assert!(status.microphone.packets_captured > 0);
         assert!(status.system_output.packets_captured > 0);
@@ -572,6 +596,14 @@ mod tests {
             "fixture playback must produce a local final"
         );
         assert_eq!(nonempty_count, final_count);
+        assert!(
+            nonempty_partials > 0,
+            "fixture playback must produce a non-empty partial"
+        );
+        assert!(
+            partial_ids.iter().any(|job_id| final_ids.contains(job_id)),
+            "a provisional job id must reconcile to its final"
+        );
         assert!(!sources.is_empty());
         assert_eq!(
             final_count + gaps,
@@ -579,9 +611,10 @@ mod tests {
             "every finalized utterance must be exactly accounted"
         );
         eprintln!(
-            "P3-013 aggregate: microphone_packets={}, system_packets={}, finals={}, gaps={}, result_sources={}",
+            "P3-014 aggregate: microphone_packets={}, system_packets={}, partials={}, finals={}, gaps={}, result_sources={}",
             status.microphone.packets_captured,
             status.system_output.packets_captured,
+            partial_ids.len(),
             final_count,
             gaps,
             sources.len()

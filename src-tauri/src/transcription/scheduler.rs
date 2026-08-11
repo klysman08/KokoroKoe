@@ -354,6 +354,10 @@ impl TranscriptionScheduler {
             return Some(job);
         }
 
+        self.next_partial_job()
+    }
+
+    pub(crate) fn next_partial_job(&mut self) -> Option<ScheduledTranscriptionJob> {
         let preferred = self.next_partial_source;
         let alternate = other_source(preferred);
         let (source, job) = if let Some(job) = self.partials.slot_mut(preferred).take() {

@@ -82,6 +82,10 @@ impl SessionLocator {
             folder_name: session.folder_name.clone(),
         })
     }
+
+    pub(super) fn session_id(&self) -> SessionId {
+        self.id
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -569,7 +573,7 @@ impl SessionStore {
         result
     }
 
-    fn open_existing_session(
+    pub(super) fn open_existing_session(
         &self,
         locator: &SessionLocator,
     ) -> Result<PinnedSessionDirectory, SessionStoreError> {
@@ -605,18 +609,18 @@ impl SessionStore {
     }
 }
 
-struct PinnedSessionDirectory {
+pub(super) struct PinnedSessionDirectory {
     project: PinnedProjectDirectory,
     sessions: PinnedDirectory,
     session: PinnedDirectory,
 }
 
 impl PinnedSessionDirectory {
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.session.path()
     }
 
-    fn revalidate(&self) -> Result<(), SessionStoreError> {
+    pub(super) fn revalidate(&self) -> Result<(), SessionStoreError> {
         self.project.revalidate().map_err(map_path_error)?;
         self.sessions.revalidate().map_err(map_path_error)?;
         self.session.revalidate().map_err(map_path_error)

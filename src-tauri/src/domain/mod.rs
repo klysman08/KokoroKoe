@@ -15,7 +15,7 @@ pub(crate) use models::{
 pub(crate) use projects::{
     AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, LlmRoleModels,
     PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session, SessionId, SessionPage,
-    UpdateProjectInput, UpdateSessionInput,
+    SessionState, UpdateProjectInput, UpdateSessionInput,
 };
 pub(crate) use settings::{AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceStatus};
 pub(crate) use transcription::{

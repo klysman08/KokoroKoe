@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-009 - Product session-management boundary
+- Task: P4-010 - Durable session journal boundary
 - Date: 2026-08-11
-- Outcome: exposed strict project-scoped session list/get/create/update through four exact-main commands, blocking serialized Rust persistence, revision/fingerprint conflict protection, durable-write projection repair, and a bounded device-backed Home UI.
-- Verification: Rust 1.88 locked fmt/Clippy, 197 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm/Cargo audits and license checks; locked x64 release build and responsive native launch smoke.
-- Memory: [P4-009 checkpoint](docs/project-memory.md#p4-009---product-session-management-boundary)
+- Outcome: added a Rust-only bounded, versioned, checksummed `recovery.journal` for finalized transcript segments and lifecycle changes with pinned session access, synchronized append acknowledgement, strict torn-tail recovery, event-id idempotency, and deterministic replay.
+- Verification: Rust 1.88 locked fmt/Clippy, 202 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm/Cargo audits and license checks; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-010 checkpoint](docs/project-memory.md#p4-010---durable-session-journal-boundary)

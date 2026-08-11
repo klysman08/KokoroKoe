@@ -18,8 +18,13 @@ pub(crate) enum EnqueueResult {
     Disconnected,
 }
 
-#[derive(Clone)]
 pub(crate) struct BoundedSender<T>(Sender<T>);
+
+impl<T> Clone for BoundedSender<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 pub(crate) struct BoundedReceiver<T>(Receiver<T>);
 
@@ -42,6 +47,15 @@ impl<T> BoundedSender<T> {
             Err(TrySendError::Full(_)) => EnqueueResult::DroppedFull,
             Err(TrySendError::Disconnected(_)) => EnqueueResult::Disconnected,
         }
+    }
+
+    pub(crate) fn send(&self, value: T) -> Result<(), T> {
+        self.0.send(value).map_err(|error| error.0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_len(&self) -> usize {
+        self.0.len()
     }
 }
 

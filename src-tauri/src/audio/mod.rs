@@ -14,7 +14,9 @@ pub(crate) use model::{
     DeviceSelection, DeviceTestInput, DeviceTestRunStatus, DeviceTestStatus, LevelDiagnostics,
     NativeAudioFormat, NativeSampleType, PrototypeRunState, UtteranceDiagnostics,
 };
-pub(crate) use processing::{ProcessedAudioChunk, ProcessingOutcome, SourceProcessor};
+pub(crate) use processing::{
+    FinalizedAudioUpdate, ProcessedAudioChunk, ProcessingOutcome, SourceProcessor,
+};
 pub(crate) use queue::{
     AudioPacket, BoundedReceiver, BoundedSender, EnqueueResult, PacketReceiver, PacketSender,
     bounded_queue, packet_queue,
@@ -24,3 +26,6 @@ pub(crate) use vad::{DetectedUtterance, UtteranceEndReason, VadProcessOutcome, V
 
 #[cfg(windows)]
 pub(crate) use windows::{AudioDeviceTestObservation, AudioDeviceTestService, AudioPrototypeError};
+
+#[cfg(all(windows, test))]
+pub(crate) use windows::RunningAudioPrototype;

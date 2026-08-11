@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    ModelDescriptor, catalog,
+    ModelDescriptor, VerifiedModelArtifact, catalog,
     installer::{Compatibility, InstallOutcome, InstallProgress, ModelManager, ModelManagerError},
 };
 
@@ -40,6 +40,8 @@ trait ModelStorageBackend: Send {
     ) -> Result<InstallOutcome, ModelManagerError>;
     fn select(&mut self, model_id: &str) -> Result<(), ModelManagerError>;
     fn delete(&mut self, model_id: &str) -> Result<u64, ModelManagerError>;
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn verified_model_path(&self, model_id: &str) -> Result<PathBuf, ModelManagerError>;
 }
 
 impl ModelStorageBackend for ModelManager {
@@ -70,6 +72,10 @@ impl ModelStorageBackend for ModelManager {
 
     fn delete(&mut self, model_id: &str) -> Result<u64, ModelManagerError> {
         self.delete(model_id)
+    }
+
+    fn verified_model_path(&self, model_id: &str) -> Result<PathBuf, ModelManagerError> {
+        self.verified_model_path(model_id)
     }
 }
 
@@ -379,6 +385,27 @@ impl ModelService {
         Ok(settings)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn resolve_default_for_transcription(
+        &self,
+    ) -> Result<VerifiedModelArtifact, AppError> {
+        let model_id = self
+            .settings
+            .get_settings()?
+            .default_transcription_model_id()
+            .to_owned();
+        if catalog::find(&model_id).is_none() {
+            return Err(AppError::model_error("model_unknown"));
+        }
+        let path = self
+            .manager
+            .lock()
+            .map_err(lock_error)?
+            .verified_model_path(&model_id)
+            .map_err(map_error)?;
+        Ok(VerifiedModelArtifact { model_id, path })
+    }
+
     fn installation(
         &self,
         descriptor: &ModelDescriptor,
@@ -587,6 +614,7 @@ mod tests {
         installed: HashSet<String>,
         resumable_bytes: u64,
         outcome: InstallOutcome,
+        verified_path: std::path::PathBuf,
     }
 
     impl FakeBackend {
@@ -595,6 +623,7 @@ mod tests {
                 installed: HashSet::new(),
                 resumable_bytes: 0,
                 outcome,
+                verified_path: std::path::PathBuf::from("C:\\verified-models\\model.bin"),
             }
         }
     }
@@ -655,6 +684,16 @@ mod tests {
             self.installed.remove(model_id);
             self.resumable_bytes = 0;
             Ok(1)
+        }
+
+        fn verified_model_path(
+            &self,
+            model_id: &str,
+        ) -> Result<std::path::PathBuf, ModelManagerError> {
+            self.installed
+                .contains(model_id)
+                .then(|| self.verified_path.clone())
+                .ok_or(ModelManagerError::ModelNotInstalled)
         }
     }
 
@@ -773,5 +812,47 @@ mod tests {
             crate::domain::ModelInstallationStatus::NotInstalled
         );
         assert!(deleted.download_job.is_none());
+    }
+
+    #[test]
+    fn transcription_resolution_reverifies_the_configured_default_inside_rust() {
+        let app_data = tempfile::tempdir().unwrap();
+        let documents = tempfile::tempdir().unwrap();
+        let settings = SettingsService::open(
+            app_data.path().to_path_buf(),
+            documents.path().to_path_buf(),
+        )
+        .unwrap();
+        let mut backend = FakeBackend::new(InstallOutcome::Installed);
+        backend
+            .installed
+            .insert("whisper-base-multilingual".to_owned());
+        let service = ModelService::from_backend(settings, Box::new(backend)).unwrap();
+
+        let artifact = service.resolve_default_for_transcription().unwrap();
+        assert_eq!(artifact.model_id, "whisper-base-multilingual");
+        assert_eq!(
+            artifact.path,
+            std::path::PathBuf::from("C:\\verified-models\\model.bin")
+        );
+
+        let uninstalled_app_data = tempfile::tempdir().unwrap();
+        let uninstalled_documents = tempfile::tempdir().unwrap();
+        let uninstalled = ModelService::from_backend(
+            SettingsService::open(
+                uninstalled_app_data.path().to_path_buf(),
+                uninstalled_documents.path().to_path_buf(),
+            )
+            .unwrap(),
+            Box::new(FakeBackend::new(InstallOutcome::Installed)),
+        )
+        .unwrap();
+        assert_eq!(
+            uninstalled
+                .resolve_default_for_transcription()
+                .unwrap_err()
+                .code,
+            "model_not_installed"
+        );
     }
 }

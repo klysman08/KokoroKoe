@@ -163,6 +163,22 @@ impl ModelManager {
         verify_file(&final_path, descriptor).map(|_| true)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn verified_model_path(&self, model_id: &str) -> Result<PathBuf, ModelManagerError> {
+        let descriptor = catalog::find(model_id).ok_or(ModelManagerError::UnknownModel)?;
+        let final_path = self.final_path(descriptor);
+        if !final_path.exists() {
+            return Err(ModelManagerError::ModelNotInstalled);
+        }
+        let canonical =
+            fs::canonicalize(final_path).map_err(|_| ModelManagerError::InstalledModelInvalid)?;
+        if canonical.parent() != Some(self.root.as_path()) {
+            return Err(ModelManagerError::UnsafeModelRoot);
+        }
+        verify_file(&canonical, descriptor)?;
+        Ok(canonical)
+    }
+
     pub fn select(&mut self, model_id: &str) -> Result<(), ModelManagerError> {
         let descriptor = catalog::find(model_id).ok_or(ModelManagerError::UnknownModel)?;
         self.select_descriptor(descriptor)

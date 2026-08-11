@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-012 - Product audio-device listing and independent tests
+- Task: P3-013 - Live-transcription readiness integration
 - Date: 2026-08-11
-- Outcome: replaced exposed prototype commands with the three exact product audio commands, strict shared Rust/Zod contracts, independent bounded microphone/system-output test pipelines, exact-main aggregate level/health events, least-privilege ACLs, and transient default/fixed device controls in Settings without exposing samples or starting/persisting a meeting.
-- Verification: Rust 1.88 locked fmt/Clippy, 111 ordinary tests plus 3 capability tests and one explicit live product hardware test; Node 24 frontend gates and 76 Vitest tests; clean npm audit and Cargo policy/audit with 17 existing allowed warnings; locked x64 release build and bounded native launch health smoke.
-- Memory: [P3-012 checkpoint](docs/project-memory.md#p3-012---product-audio-device-listing-and-independent-tests)
+- Outcome: connected independent Windows capture/process streams through fixed-capacity finalized-VAD handoffs to the chronological P3-009 coordinator and bounded in-memory sink, added canonical rehashed selected-model resolution and a curated CPU runtime factory, and proved terminal drain/cancellation/source isolation without product commands, transcript UI/persistence, retained audio, OpenRouter, or packaging claims.
+- Verification: Rust 1.88 locked fmt/Clippy, 117 ordinary tests plus 3 capability tests; Node 24 frontend gates and 76 Vitest tests; explicit selected-Tiny/CPU dual-endpoint fixture gate with 2,394 microphone packets, 2,398 system packets, one non-empty final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
+- Memory: [P3-013 checkpoint](docs/project-memory.md#p3-013---live-transcription-readiness-integration)

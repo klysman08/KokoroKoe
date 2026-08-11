@@ -54,6 +54,14 @@ pub(crate) struct ProcessingOutcome {
     pub(crate) vad_ordering_watermark_ms: Option<u64>,
 }
 
+#[derive(Debug)]
+pub(crate) struct FinalizedAudioUpdate {
+    pub(crate) source: AudioSource,
+    pub(crate) utterances: Vec<DetectedUtterance>,
+    pub(crate) ordering_watermark_ms: Option<u64>,
+    pub(crate) terminal: bool,
+}
+
 impl ProcessingOutcome {
     fn merge_vad(&mut self, outcome: VadProcessOutcome) {
         self.utterances.extend(outcome.utterances);

@@ -20,15 +20,16 @@ use super::{
     AudioPrototypeConfig, AudioPrototypeStatus, AudioSource, BoundedReceiver, BoundedSender,
     ChannelDiagnostics, ChannelHealth, ChannelHealthStatus, ChannelStatus, DeviceRole,
     DeviceSelection, DeviceTestInput, DeviceTestRunStatus, DeviceTestStatus, EnqueueResult,
-    LevelDiagnostics, NativeAudioFormat, NativeSampleType, PacketReceiver, PacketSender,
-    ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState, QpcEpoch, SourceProcessor,
-    UtteranceDiagnostics, bounded_queue, packet_queue, qpc_ticks_to_100ns,
+    FinalizedAudioUpdate, LevelDiagnostics, NativeAudioFormat, NativeSampleType, PacketReceiver,
+    PacketSender, ProcessedAudioChunk, ProcessingOutcome, PrototypeRunState, QpcEpoch,
+    SourceProcessor, UtteranceDiagnostics, bounded_queue, packet_queue, qpc_ticks_to_100ns,
 };
 use crate::domain::{AppError, RequestId, now_rfc3339};
 
 const EVENT_WAIT_MS: u32 = 100;
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+const LIVE_WATERMARK_INTERVAL_MS: u64 = 250;
 
 #[derive(Clone, Default)]
 struct CaptureControl {
@@ -365,6 +366,7 @@ impl RunningAudioDeviceTest {
             Arc::clone(&status),
             packet_receiver,
             processed_sender,
+            None,
         ) {
             Ok(handle) => handle,
             Err(error) => {
@@ -446,7 +448,21 @@ pub(crate) struct RunningAudioPrototype {
 #[cfg_attr(not(test), allow(dead_code))]
 impl RunningAudioPrototype {
     pub(crate) fn start(config: AudioPrototypeConfig) -> Result<Self, AudioPrototypeError> {
-        Self::start_inner(config, CaptureControl::default())
+        Self::start_inner(config, CaptureControl::default(), None)
+    }
+
+    pub(crate) fn start_with_live_updates(
+        config: AudioPrototypeConfig,
+        handoff_capacity: usize,
+    ) -> Result<(Self, BoundedReceiver<FinalizedAudioUpdate>), AudioPrototypeError> {
+        if handoff_capacity == 0 {
+            return Err(AudioPrototypeError::new(
+                "transcription_handoff_capacity_invalid",
+            ));
+        }
+        let (sender, receiver) = bounded_queue(handoff_capacity);
+        Self::start_inner(config, CaptureControl::default(), Some(sender))
+            .map(|running| (running, receiver))
     }
 
     #[cfg(test)]
@@ -454,12 +470,13 @@ impl RunningAudioPrototype {
         config: AudioPrototypeConfig,
         fault: Arc<TestCaptureFault>,
     ) -> Result<Self, AudioPrototypeError> {
-        Self::start_inner(config, CaptureControl { fault: Some(fault) })
+        Self::start_inner(config, CaptureControl { fault: Some(fault) }, None)
     }
 
     fn start_inner(
         config: AudioPrototypeConfig,
         control: CaptureControl,
+        live_updates: Option<BoundedSender<FinalizedAudioUpdate>>,
     ) -> Result<Self, AudioPrototypeError> {
         if config.queue_capacity_packets_per_source == 0 {
             return Err(AudioPrototypeError::new("audio_queue_capacity_invalid"));
@@ -491,6 +508,7 @@ impl RunningAudioPrototype {
             Arc::clone(&status),
             microphone_receiver,
             microphone_processed_sender,
+            live_updates.clone(),
         ) {
             Ok(handle) => handle,
             Err(error) => {
@@ -507,6 +525,7 @@ impl RunningAudioPrototype {
             Arc::clone(&status),
             system_receiver,
             system_processed_sender,
+            live_updates,
         ) {
             Ok(handle) => handle,
             Err(error) => {
@@ -961,6 +980,7 @@ fn spawn_processor(
     status: Arc<Mutex<AudioPrototypeStatus>>,
     receiver: PacketReceiver,
     processed: BoundedSender<ProcessedAudioChunk>,
+    live_updates: Option<BoundedSender<FinalizedAudioUpdate>>,
 ) -> Result<JoinHandle<()>, AudioPrototypeError> {
     thread::Builder::new()
         .name(
@@ -970,7 +990,7 @@ fn spawn_processor(
             }
             .to_owned(),
         )
-        .spawn(move || process_packets(source, status, receiver, processed))
+        .spawn(move || process_packets(source, status, receiver, processed, live_updates))
         .map_err(|_| AudioPrototypeError::new("audio_processing_thread_unavailable"))
 }
 
@@ -979,8 +999,10 @@ fn process_packets(
     status: Arc<Mutex<AudioPrototypeStatus>>,
     receiver: PacketReceiver,
     processed: BoundedSender<ProcessedAudioChunk>,
+    live_updates: Option<BoundedSender<FinalizedAudioUpdate>>,
 ) {
     let mut processor = SourceProcessor::new(source);
+    let mut last_live_watermark_ms = None;
     loop {
         match receiver.receiver().try_recv() {
             Ok(packet) => {
@@ -996,7 +1018,27 @@ fn process_packets(
                 }
 
                 match outcome {
-                    Ok(outcome) => record_processing_outcome(&status, source, outcome, &processed),
+                    Ok(outcome) => {
+                        let (utterances, ordering_watermark_ms) =
+                            record_processing_outcome(&status, source, outcome, &processed);
+                        if let Some(sender) = &live_updates {
+                            let update = FinalizedAudioUpdate {
+                                source,
+                                utterances,
+                                ordering_watermark_ms,
+                                terminal: false,
+                            };
+                            if should_forward_live_update(&update, last_live_watermark_ms) {
+                                let watermark = update.ordering_watermark_ms;
+                                if sender.send(update).is_err() {
+                                    break;
+                                }
+                                if watermark.is_some() {
+                                    last_live_watermark_ms = watermark;
+                                }
+                            }
+                        }
+                    }
                     Err(error) => {
                         let mut current = status.lock().expect("audio status lock poisoned");
                         let channel = current.channel_mut(source);
@@ -1007,11 +1049,36 @@ fn process_packets(
             }
             Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(2)),
             Err(TryRecvError::Disconnected) => {
-                record_processing_outcome(&status, source, processor.finish(), &processed);
+                let outcome = processor.finish();
+                let (utterances, ordering_watermark_ms) =
+                    record_processing_outcome(&status, source, outcome, &processed);
+                if let Some(sender) = &live_updates {
+                    let _ = sender.send(FinalizedAudioUpdate {
+                        source,
+                        utterances,
+                        ordering_watermark_ms,
+                        terminal: true,
+                    });
+                }
                 break;
             }
         }
     }
+}
+
+fn should_forward_live_update(
+    update: &FinalizedAudioUpdate,
+    last_watermark_ms: Option<u64>,
+) -> bool {
+    update.terminal
+        || !update.utterances.is_empty()
+        || match (last_watermark_ms, update.ordering_watermark_ms) {
+            (None, Some(_)) => true,
+            (Some(previous), Some(next)) => {
+                next.saturating_sub(previous) >= LIVE_WATERMARK_INTERVAL_MS
+            }
+            _ => false,
+        }
 }
 
 fn record_processing_outcome(
@@ -1019,7 +1086,7 @@ fn record_processing_outcome(
     source: AudioSource,
     mut outcome: ProcessingOutcome,
     processed: &BoundedSender<ProcessedAudioChunk>,
-) {
+) -> (Vec<super::DetectedUtterance>, Option<u64>) {
     let chunks_produced = outcome.chunks.len() as u64;
     let samples_produced = outcome
         .chunks
@@ -1109,6 +1176,7 @@ fn record_processing_outcome(
     } else {
         channel.last_processing_error_code = None;
     }
+    (outcome.utterances, outcome.vad_ordering_watermark_ms)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1407,11 +1475,34 @@ mod tests {
     use super::{
         AudioDeviceTestService, AudioPrototypeConfig, AudioPrototypeError, AudioPrototypeStatus,
         AudioSource, ChannelStatus, DeviceRole, DeviceSelection, DeviceTestInput,
-        DeviceTestRunStatus, QpcEpoch, RunningAudioPrototype, TestCaptureFault,
-        bounded_device_name, list_audio_devices, record_failure, supervise_attempts,
-        valid_endpoint_id,
+        DeviceTestRunStatus, FinalizedAudioUpdate, QpcEpoch, RunningAudioPrototype,
+        TestCaptureFault, bounded_device_name, list_audio_devices, record_failure,
+        should_forward_live_update, supervise_attempts, valid_endpoint_id,
     };
     use crate::domain::RequestId;
+
+    #[test]
+    fn live_handoff_coalesces_only_replaceable_watermark_updates() {
+        let update = |watermark, terminal| FinalizedAudioUpdate {
+            source: AudioSource::Microphone,
+            utterances: Vec::new(),
+            ordering_watermark_ms: watermark,
+            terminal,
+        };
+        assert!(should_forward_live_update(&update(Some(100), false), None));
+        assert!(!should_forward_live_update(
+            &update(Some(349), false),
+            Some(100)
+        ));
+        assert!(should_forward_live_update(
+            &update(Some(350), false),
+            Some(100)
+        ));
+        assert!(should_forward_live_update(
+            &update(Some(101), true),
+            Some(100)
+        ));
+    }
 
     #[test]
     fn one_channel_failure_does_not_mutate_the_other_channel() {

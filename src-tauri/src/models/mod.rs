@@ -2,7 +2,16 @@ mod catalog;
 mod installer;
 mod service;
 
+use std::path::PathBuf;
+
 pub(crate) use service::ModelService;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct VerifiedModelArtifact {
+    pub(crate) model_id: String,
+    pub(crate) path: PathBuf,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ModelDescriptor {

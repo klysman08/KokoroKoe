@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-002 - Pinned project creation and `project.md` snapshot
+- Task: P4-003 - Bounded project snapshot read, update, and recovery
 - Date: 2026-08-11
-- Outcome: added the first Rust-owned content write through a reparse-aware, identity-pinned Windows workspace/project store; it creates only the derived project directory and publishes a strict safe YAML-front-matter `project.md` through synced same-directory atomic replacement with ownership-aware fault cleanup.
-- Verification: Rust 1.88 locked fmt/Clippy, 139 ordinary tests plus 3 capability tests; eight focused golden/adversarial/identity/reparse/duplicate/fault tests; Node 24 frontend gates and 98 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-002 checkpoint](docs/project-memory.md#p4-002---pinned-project-creation-and-projectmd-snapshot)
+- Outcome: added bounded strict canonical `project.md` reads, exact-byte SHA-256 conflict guards, one-step optimistic revision updates, write-locked atomic replacement with a valid `.bak`, and race-resistant recovery for missing, malformed, or oversized primary snapshots.
+- Verification: Rust 1.88 locked fmt/Clippy, 147 ordinary tests plus 3 capability tests; 16 focused parser/update/conflict/recovery/fault tests; Node 24 frontend gates and 98 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-003 checkpoint](docs/project-memory.md#p4-003---bounded-project-snapshot-read-update-and-recovery)

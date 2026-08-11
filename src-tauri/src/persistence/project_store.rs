@@ -1,31 +1,36 @@
 use std::{
     fmt,
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
+use sha2::{Digest, Sha256};
 #[cfg(windows)]
 use std::os::windows::{
     ffi::OsStrExt,
     fs::OpenOptionsExt,
     io::{AsRawHandle, RawHandle},
 };
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    GetFileInformationByHandle, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    REPLACEFILE_WRITE_THROUGH, ReplaceFileW,
 };
 
 use crate::{
-    domain::Project,
+    domain::{Project, ProjectId},
     security::{probe_workspace, reject_reparse_points},
 };
 
 use super::layout::PortableProjectLayout;
 
 const TEMP_PROJECT_DOCUMENT: &str = ".project.md.tmp";
+const BACKUP_PROJECT_DOCUMENT: &str = "project.md.bak";
+const MAX_PROJECT_DOCUMENT_BYTES: u64 = 128 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectStoreError {
@@ -52,6 +57,34 @@ pub(crate) struct ProjectCreateReceipt {
     pub(crate) bytes_written: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectLocator {
+    id: ProjectId,
+    folder_name: String,
+}
+
+impl ProjectLocator {
+    pub(crate) fn from_project(project: &Project) -> Result<Self, ProjectStoreError> {
+        project
+            .validate()
+            .map_err(|_| ProjectStoreError::new("project_contract_invalid"))?;
+        Ok(Self {
+            id: project.id,
+            folder_name: project.folder_name.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectSnapshotFingerprint([u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectSnapshot {
+    pub(crate) project: Project,
+    pub(crate) fingerprint: ProjectSnapshotFingerprint,
+    pub(crate) recovered_from_backup: bool,
+}
+
 #[allow(dead_code)]
 pub(crate) struct ProjectStore {
     workspace: PinnedDirectory,
@@ -73,6 +106,22 @@ impl ProjectStore {
         project: &Project,
     ) -> Result<ProjectCreateReceipt, ProjectStoreError> {
         self.create_project_with_fault(project, None)
+    }
+
+    pub(crate) fn read_project(
+        &self,
+        locator: &ProjectLocator,
+    ) -> Result<ProjectSnapshot, ProjectStoreError> {
+        self.read_project_with_recovery(locator)
+    }
+
+    pub(crate) fn update_project(
+        &self,
+        updated: &Project,
+        expected_revision: u64,
+        expected_fingerprint: ProjectSnapshotFingerprint,
+    ) -> Result<ProjectSnapshot, ProjectStoreError> {
+        self.update_project_with_fault(updated, expected_revision, expected_fingerprint, None)
     }
 
     fn create_project_with_fault(
@@ -182,6 +231,156 @@ impl ProjectStore {
 
         result
     }
+
+    fn read_project_with_recovery(
+        &self,
+        locator: &ProjectLocator,
+    ) -> Result<ProjectSnapshot, ProjectStoreError> {
+        let pinned = self.open_existing_project(locator)?;
+        let paths = ProjectDocumentPaths::new(&pinned.project.path);
+        match read_locked_snapshot(&paths.document, locator) {
+            Ok(snapshot) => {
+                let _ = fs::remove_file(&paths.temporary);
+                Ok(snapshot.into_public(false))
+            }
+            Err(error) if error.is_recoverable_snapshot_failure() => {
+                let main = match read_locked_snapshot_internal(&paths.document, locator) {
+                    Ok(snapshot) => return Ok(snapshot.into_public(false)),
+                    Err(error) => error,
+                };
+                if !main.error.is_recoverable_snapshot_failure() {
+                    return Err(main.error);
+                }
+                let missing = main.error.code == "project_snapshot_missing";
+                let backup = read_locked_snapshot(&paths.backup, locator)
+                    .map_err(|_| ProjectStoreError::new("project_snapshot_recovery_failed"))?;
+                pinned.revalidate()?;
+                publish_recovery_bytes(&paths, &backup.bytes, !missing)?;
+                drop(main);
+                let restored = read_locked_snapshot(&paths.document, locator)
+                    .map_err(|_| ProjectStoreError::new("project_snapshot_recovery_failed"))?;
+                Ok(restored.into_public(true))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn update_project_with_fault(
+        &self,
+        updated: &Project,
+        expected_revision: u64,
+        expected_fingerprint: ProjectSnapshotFingerprint,
+        fault: Option<UpdateFault>,
+    ) -> Result<ProjectSnapshot, ProjectStoreError> {
+        updated
+            .validate()
+            .map_err(|_| ProjectStoreError::new("project_contract_invalid"))?;
+        let locator = ProjectLocator::from_project(updated)?;
+        let pinned = self.open_existing_project(&locator)?;
+        let paths = ProjectDocumentPaths::new(&pinned.project.path);
+        let current = read_locked_snapshot(&paths.document, &locator)?;
+
+        validate_project_update(
+            &current.project,
+            updated,
+            expected_revision,
+            expected_fingerprint,
+            current.fingerprint,
+        )?;
+        let document = render_project_document(updated)?;
+        write_synced_temporary(&paths.temporary, document.as_bytes())?;
+
+        let mut replaced = false;
+        let result = (|| {
+            inject_update_fault(fault, UpdateFault::TemporarySynced)?;
+            pinned.revalidate()?;
+            remove_if_file(&paths.backup)?;
+            atomic_replace_with_backup(&paths.temporary, &paths.document, &paths.backup)?;
+            replaced = true;
+            inject_update_fault(fault, UpdateFault::Replaced)?;
+            pinned.revalidate()?;
+            let snapshot = read_locked_snapshot(&paths.document, &locator)?;
+            if snapshot.project != *updated {
+                return Err(ProjectStoreError::new("project_snapshot_verify_failed"));
+            }
+            Ok(snapshot.into_public(false))
+        })();
+
+        drop(current);
+        if result.is_err() {
+            let _ = fs::remove_file(&paths.temporary);
+            if replaced {
+                let _ = restore_backup(&paths, &locator);
+            }
+        }
+        result
+    }
+
+    fn open_existing_project(
+        &self,
+        locator: &ProjectLocator,
+    ) -> Result<PinnedProjectDirectory, ProjectStoreError> {
+        self.workspace.revalidate()?;
+        let projects_path = self.workspace.path.join("projects");
+        let projects = PinnedDirectory::open(&projects_path)?;
+        let project_path = projects_path.join(&locator.folder_name);
+        let project = PinnedDirectory::open(&project_path)?;
+        self.workspace.revalidate()?;
+        projects.revalidate()?;
+        project.revalidate()?;
+        Ok(PinnedProjectDirectory { projects, project })
+    }
+}
+
+struct PinnedProjectDirectory {
+    projects: PinnedDirectory,
+    project: PinnedDirectory,
+}
+
+impl PinnedProjectDirectory {
+    fn revalidate(&self) -> Result<(), ProjectStoreError> {
+        self.projects.revalidate()?;
+        self.project.revalidate()
+    }
+}
+
+struct ProjectDocumentPaths {
+    document: PathBuf,
+    temporary: PathBuf,
+    backup: PathBuf,
+}
+
+impl ProjectDocumentPaths {
+    fn new(project_directory: &Path) -> Self {
+        Self {
+            document: project_directory.join("project.md"),
+            temporary: project_directory.join(TEMP_PROJECT_DOCUMENT),
+            backup: project_directory.join(BACKUP_PROJECT_DOCUMENT),
+        }
+    }
+}
+
+struct LockedProjectSnapshot {
+    _file: File,
+    bytes: Vec<u8>,
+    project: Project,
+    fingerprint: ProjectSnapshotFingerprint,
+}
+
+#[derive(Debug)]
+struct LockedSnapshotReadError {
+    error: ProjectStoreError,
+    _file: Option<File>,
+}
+
+impl LockedProjectSnapshot {
+    fn into_public(self, recovered_from_backup: bool) -> ProjectSnapshot {
+        ProjectSnapshot {
+            project: self.project,
+            fingerprint: self.fingerprint,
+            recovered_from_backup,
+        }
+    }
 }
 
 fn create_directory(path: &Path) -> Result<bool, ProjectStoreError> {
@@ -259,6 +458,241 @@ fn render_yaml_flow(value: &serde_json::Value) -> Result<String, ProjectStoreErr
     }
 }
 
+fn read_locked_snapshot(
+    path: &Path,
+    locator: &ProjectLocator,
+) -> Result<LockedProjectSnapshot, ProjectStoreError> {
+    read_locked_snapshot_internal(path, locator).map_err(|error| error.error)
+}
+
+fn read_locked_snapshot_internal(
+    path: &Path,
+    locator: &ProjectLocator,
+) -> Result<LockedProjectSnapshot, LockedSnapshotReadError> {
+    let mut file = open_snapshot_without_write_share(path)
+        .map_err(|error| LockedSnapshotReadError { error, _file: None })?;
+    let length = match file.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(_) => {
+            return Err(LockedSnapshotReadError {
+                error: ProjectStoreError::new("project_snapshot_read_failed"),
+                _file: Some(file),
+            });
+        }
+    };
+    if length > MAX_PROJECT_DOCUMENT_BYTES {
+        return Err(LockedSnapshotReadError {
+            error: ProjectStoreError::new("project_snapshot_too_large"),
+            _file: Some(file),
+        });
+    }
+    let capacity = match usize::try_from(length) {
+        Ok(capacity) => capacity,
+        Err(_) => {
+            return Err(LockedSnapshotReadError {
+                error: ProjectStoreError::new("project_snapshot_too_large"),
+                _file: Some(file),
+            });
+        }
+    };
+    let mut bytes = Vec::with_capacity(capacity);
+    if Read::by_ref(&mut file)
+        .take(MAX_PROJECT_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Err(LockedSnapshotReadError {
+            error: ProjectStoreError::new("project_snapshot_read_failed"),
+            _file: Some(file),
+        });
+    }
+    if bytes.len() as u64 > MAX_PROJECT_DOCUMENT_BYTES {
+        return Err(LockedSnapshotReadError {
+            error: ProjectStoreError::new("project_snapshot_too_large"),
+            _file: Some(file),
+        });
+    }
+    let project = match parse_project_document(&bytes) {
+        Ok(project) => project,
+        Err(error) => {
+            return Err(LockedSnapshotReadError {
+                error,
+                _file: Some(file),
+            });
+        }
+    };
+    if project.id != locator.id || project.folder_name != locator.folder_name {
+        return Err(LockedSnapshotReadError {
+            error: ProjectStoreError::new("project_snapshot_identity_mismatch"),
+            _file: Some(file),
+        });
+    }
+    let fingerprint = ProjectSnapshotFingerprint(Sha256::digest(&bytes).into());
+    Ok(LockedProjectSnapshot {
+        _file: file,
+        bytes,
+        project,
+        fingerprint,
+    })
+}
+
+fn parse_project_document(bytes: &[u8]) -> Result<Project, ProjectStoreError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| ProjectStoreError::new("project_snapshot_invalid"))?;
+    let normalized = text.replace("\r\n", "\n");
+    if normalized.contains('\r') {
+        return Err(ProjectStoreError::new("project_snapshot_invalid"));
+    }
+    let mut lines = normalized.lines();
+    if lines.next() != Some("---") {
+        return Err(ProjectStoreError::new("project_snapshot_invalid"));
+    }
+
+    let mut object = serde_json::Map::new();
+    for (yaml_name, json_name) in [
+        ("schema_version", "schemaVersion"),
+        ("document_type", "documentType"),
+        ("id", "id"),
+        ("name", "name"),
+        ("folder_name", "folderName"),
+        ("description", "description"),
+        ("global_context", "globalContext"),
+        ("participants", "participants"),
+        ("tags", "tags"),
+        ("default_preset_id", "defaultPresetId"),
+        (
+            "default_transcription_model_id",
+            "defaultTranscriptionModelId",
+        ),
+        ("preferred_llm_models", "preferredLlmModels"),
+        ("created_at", "createdAt"),
+        ("updated_at", "updatedAt"),
+        ("revision", "revision"),
+    ] {
+        let line = lines
+            .next()
+            .ok_or_else(|| ProjectStoreError::new("project_snapshot_invalid"))?;
+        let (name, encoded) = line
+            .split_once(": ")
+            .ok_or_else(|| ProjectStoreError::new("project_snapshot_invalid"))?;
+        if name != yaml_name {
+            return Err(ProjectStoreError::new("project_snapshot_invalid"));
+        }
+        let value: serde_json::Value = serde_json::from_str(encoded)
+            .map_err(|_| ProjectStoreError::new("project_snapshot_invalid"))?;
+        object.insert(json_name.to_owned(), value);
+    }
+    if lines.next() != Some("---") || lines.next().is_some() {
+        return Err(ProjectStoreError::new("project_snapshot_invalid"));
+    }
+    if object.remove("documentType") != Some(serde_json::json!("project")) {
+        return Err(ProjectStoreError::new("project_snapshot_invalid"));
+    }
+    serde_json::from_value(serde_json::Value::Object(object))
+        .map_err(|_| ProjectStoreError::new("project_snapshot_invalid"))
+}
+
+fn validate_project_update(
+    current: &Project,
+    updated: &Project,
+    expected_revision: u64,
+    expected_fingerprint: ProjectSnapshotFingerprint,
+    current_fingerprint: ProjectSnapshotFingerprint,
+) -> Result<(), ProjectStoreError> {
+    if current.revision != expected_revision {
+        return Err(ProjectStoreError::new("project_revision_conflict"));
+    }
+    if expected_fingerprint != current_fingerprint {
+        return Err(ProjectStoreError::new("project_external_modification"));
+    }
+    if current.id != updated.id
+        || current.folder_name != updated.folder_name
+        || current.created_at != updated.created_at
+    {
+        return Err(ProjectStoreError::new("project_snapshot_identity_mismatch"));
+    }
+    if expected_revision.checked_add(1) != Some(updated.revision) {
+        return Err(ProjectStoreError::new("project_revision_invalid"));
+    }
+    let current_updated = OffsetDateTime::parse(&current.updated_at, &Rfc3339)
+        .map_err(|_| ProjectStoreError::new("project_snapshot_invalid"))?;
+    let next_updated = OffsetDateTime::parse(&updated.updated_at, &Rfc3339)
+        .map_err(|_| ProjectStoreError::new("project_contract_invalid"))?;
+    if next_updated < current_updated {
+        return Err(ProjectStoreError::new("project_revision_invalid"));
+    }
+    Ok(())
+}
+
+fn write_synced_temporary(path: &Path, bytes: &[u8]) -> Result<(), ProjectStoreError> {
+    remove_if_file(path)?;
+    let mut temporary = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| ProjectStoreError::new("project_snapshot_write_failed"))?;
+    temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.sync_all())
+        .map_err(|_| ProjectStoreError::new("project_snapshot_write_failed"))
+}
+
+fn publish_recovery_bytes(
+    paths: &ProjectDocumentPaths,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<(), ProjectStoreError> {
+    write_synced_temporary(&paths.temporary, bytes)?;
+    let result = if replace_existing {
+        atomic_replace_existing(&paths.temporary, &paths.document)
+    } else {
+        atomic_publish_new(&paths.temporary, &paths.document)
+    };
+    result.map_err(|_| ProjectStoreError::new("project_snapshot_recovery_failed"))
+}
+
+fn restore_backup(
+    paths: &ProjectDocumentPaths,
+    locator: &ProjectLocator,
+) -> Result<(), ProjectStoreError> {
+    let backup = read_locked_snapshot(&paths.backup, locator)?;
+    publish_recovery_bytes(paths, &backup.bytes, true)
+}
+
+fn remove_if_file(path: &Path) -> Result<(), ProjectStoreError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ProjectStoreError::new("project_snapshot_cleanup_failed")),
+    }
+}
+
+impl ProjectStoreError {
+    fn is_recoverable_snapshot_failure(self) -> bool {
+        matches!(
+            self.code,
+            "project_snapshot_missing" | "project_snapshot_invalid" | "project_snapshot_too_large"
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateFault {
+    TemporarySynced,
+    Replaced,
+}
+
+fn inject_update_fault(
+    configured: Option<UpdateFault>,
+    current: UpdateFault,
+) -> Result<(), ProjectStoreError> {
+    if configured == Some(current) {
+        Err(ProjectStoreError::new("project_update_fault_injected"))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CreateFault {
     ProjectDirectory,
@@ -331,6 +765,31 @@ fn open_directory_without_delete_share(path: &Path) -> Result<File, ProjectStore
         .map_err(|_| ProjectStoreError::new("project_path_open_failed"))
 }
 
+#[cfg(windows)]
+fn open_snapshot_without_write_share(path: &Path) -> Result<File, ProjectStoreError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ProjectStoreError::new("project_snapshot_missing")
+            } else {
+                ProjectStoreError::new("project_snapshot_read_failed")
+            }
+        })?;
+    if directory_identity(&file)?.reparse_point {
+        return Err(ProjectStoreError::new("project_path_unsafe"));
+    }
+    Ok(file)
+}
+
+#[cfg(not(windows))]
+fn open_snapshot_without_write_share(_path: &Path) -> Result<File, ProjectStoreError> {
+    Err(ProjectStoreError::new("project_windows_only"))
+}
+
 #[cfg(not(windows))]
 fn open_directory_without_delete_share(_path: &Path) -> Result<File, ProjectStoreError> {
     Err(ProjectStoreError::new("project_windows_only"))
@@ -387,11 +846,119 @@ fn atomic_replace(_source: &Path, _destination: &Path) -> Result<(), ProjectStor
     Err(ProjectStoreError::new("project_windows_only"))
 }
 
+#[cfg(windows)]
+fn atomic_publish_new(source: &Path, destination: &Path) -> Result<(), ProjectStoreError> {
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both paths are NUL-terminated UTF-16 values in the same pinned directory.
+    // Omitting REPLACE_EXISTING makes recovery fail closed if another writer creates main.
+    let succeeded = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if succeeded == 0 {
+        Err(ProjectStoreError::new("project_snapshot_publish_failed"))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_publish_new(_source: &Path, _destination: &Path) -> Result<(), ProjectStoreError> {
+    Err(ProjectStoreError::new("project_windows_only"))
+}
+
+#[cfg(windows)]
+fn atomic_replace_existing(source: &Path, destination: &Path) -> Result<(), ProjectStoreError> {
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both paths are NUL-terminated UTF-16 values in the same pinned directory.
+    // A null backup preserves the already-validated recovery backup.
+    let succeeded = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            source.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if succeeded == 0 {
+        Err(ProjectStoreError::new("project_snapshot_publish_failed"))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_existing(_source: &Path, _destination: &Path) -> Result<(), ProjectStoreError> {
+    Err(ProjectStoreError::new("project_windows_only"))
+}
+
+#[cfg(windows)]
+fn atomic_replace_with_backup(
+    source: &Path,
+    destination: &Path,
+    backup: &Path,
+) -> Result<(), ProjectStoreError> {
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let backup: Vec<u16> = backup.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: all paths are NUL-terminated UTF-16 values in the same pinned project
+    // directory. The current document handle denies write sharing but permits deletion.
+    let succeeded = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            source.as_ptr(),
+            backup.as_ptr(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if succeeded == 0 {
+        Err(ProjectStoreError::new("project_snapshot_publish_failed"))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_with_backup(
+    _source: &Path,
+    _destination: &Path,
+    _backup: &Path,
+) -> Result<(), ProjectStoreError> {
+    Err(ProjectStoreError::new("project_windows_only"))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
-    use super::{CreateFault, ProjectStore, render_project_document};
+    use super::{
+        CreateFault, MAX_PROJECT_DOCUMENT_BYTES, ProjectLocator, ProjectStore,
+        TEMP_PROJECT_DOCUMENT, UpdateFault, parse_project_document, render_project_document,
+    };
     use crate::domain::Project;
 
     fn project() -> Project {
@@ -400,6 +967,26 @@ mod tests {
         ))
         .unwrap();
         serde_json::from_value(fixture["project"].clone()).unwrap()
+    }
+
+    fn updated_project() -> Project {
+        let mut value = serde_json::to_value(project()).unwrap();
+        value["name"] = serde_json::json!("Weekly product review");
+        value["description"] = serde_json::json!("Updated by P4-003.");
+        value["updatedAt"] = serde_json::json!("2026-08-11T10:00:00Z");
+        value["revision"] = serde_json::json!(3);
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn project_paths(workspace: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let directory = workspace
+            .join("projects")
+            .join("weekly-product-meetings--aaaaaaaa");
+        (
+            directory.join("project.md"),
+            directory.join(super::BACKUP_PROJECT_DOCUMENT),
+            directory.join(TEMP_PROJECT_DOCUMENT),
+        )
     }
 
     #[test]
@@ -422,6 +1009,38 @@ mod tests {
         assert_eq!(document.matches("\n---\n").count(), 1);
         assert!(document.contains("description: \"---\\nname: !!unsafe payload\""));
         assert!(document.contains("global_context: \"quoted: \\\"value\\\"\\n# not a comment\""));
+    }
+
+    #[test]
+    fn strict_front_matter_parser_round_trips_lf_and_crlf() {
+        let document = render_project_document(&project()).unwrap();
+        assert_eq!(
+            parse_project_document(document.as_bytes()).unwrap(),
+            project()
+        );
+        let crlf = document.replace('\n', "\r\n");
+        assert_eq!(parse_project_document(crlf.as_bytes()).unwrap(), project());
+    }
+
+    #[test]
+    fn strict_front_matter_parser_rejects_shape_and_payload_changes() {
+        let document = render_project_document(&project()).unwrap();
+        for invalid in [
+            document.replacen("name: ", "unknown: ", 1),
+            document.replacen("name: ", "id: ", 1),
+            document.replacen("name: \"", "name: !!tag \"", 1),
+            format!("{document}# trailing body\n"),
+            document.replacen(
+                "document_type: \"project\"",
+                "document_type: \"session\"",
+                1,
+            ),
+        ] {
+            assert_eq!(
+                parse_project_document(invalid.as_bytes()).unwrap_err().code,
+                "project_snapshot_invalid"
+            );
+        }
     }
 
     #[cfg(windows)]
@@ -528,5 +1147,174 @@ mod tests {
         let error = store.create_project(&project()).unwrap_err();
         assert_eq!(error.code, "project_path_unsafe");
         assert_eq!(target.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_requires_revision_and_fingerprint_and_keeps_a_valid_backup() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        store.create_project(&project()).unwrap();
+        let locator = ProjectLocator::from_project(&project()).unwrap();
+        let initial = store.read_project(&locator).unwrap();
+
+        let updated = store
+            .update_project(
+                &updated_project(),
+                initial.project.revision,
+                initial.fingerprint,
+            )
+            .unwrap();
+        let (document, backup, temporary) = project_paths(workspace.path());
+
+        assert_eq!(updated.project, updated_project());
+        assert!(!updated.recovered_from_backup);
+        assert_eq!(
+            fs::read_to_string(backup).unwrap(),
+            render_project_document(&project()).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(document).unwrap(),
+            render_project_document(&updated_project()).unwrap()
+        );
+        assert!(!temporary.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_edits_and_revision_conflicts_never_get_overwritten() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        store.create_project(&project()).unwrap();
+        let locator = ProjectLocator::from_project(&project()).unwrap();
+        let initial = store.read_project(&locator).unwrap();
+        let (document, _, _) = project_paths(workspace.path());
+
+        let mut external_value = serde_json::to_value(project()).unwrap();
+        external_value["description"] = serde_json::json!("External edit at the same revision");
+        let external: Project = serde_json::from_value(external_value).unwrap();
+        let external_bytes = render_project_document(&external).unwrap();
+        fs::write(&document, &external_bytes).unwrap();
+
+        let error = store
+            .update_project(&updated_project(), 2, initial.fingerprint)
+            .unwrap_err();
+        assert_eq!(error.code, "project_external_modification");
+        assert_eq!(fs::read_to_string(&document).unwrap(), external_bytes);
+
+        let external_snapshot = store.read_project(&locator).unwrap();
+        let error = store
+            .update_project(&updated_project(), 1, external_snapshot.fingerprint)
+            .unwrap_err();
+        assert_eq!(error.code, "project_revision_conflict");
+        assert_eq!(fs::read_to_string(document).unwrap(), external_bytes);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn immutable_identity_and_revision_progression_are_enforced() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        store.create_project(&project()).unwrap();
+        let locator = ProjectLocator::from_project(&project()).unwrap();
+        let initial = store.read_project(&locator).unwrap();
+
+        let mut identity_value = serde_json::to_value(updated_project()).unwrap();
+        identity_value["createdAt"] = serde_json::json!("2026-08-10T08:00:00Z");
+        let identity_change: Project = serde_json::from_value(identity_value).unwrap();
+        assert_eq!(
+            store
+                .update_project(&identity_change, 2, initial.fingerprint)
+                .unwrap_err()
+                .code,
+            "project_snapshot_identity_mismatch"
+        );
+
+        let mut revision_value = serde_json::to_value(updated_project()).unwrap();
+        revision_value["revision"] = serde_json::json!(4);
+        let skipped_revision: Project = serde_json::from_value(revision_value).unwrap();
+        assert_eq!(
+            store
+                .update_project(&skipped_revision, 2, initial.fingerprint)
+                .unwrap_err()
+                .code,
+            "project_revision_invalid"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn valid_backup_recovers_missing_malformed_and_oversized_documents() {
+        for failure in ["missing", "malformed", "oversized"] {
+            let workspace = tempfile::tempdir().unwrap();
+            let store = ProjectStore::open(workspace.path()).unwrap();
+            store.create_project(&project()).unwrap();
+            let locator = ProjectLocator::from_project(&project()).unwrap();
+            let initial = store.read_project(&locator).unwrap();
+            store
+                .update_project(&updated_project(), 2, initial.fingerprint)
+                .unwrap();
+            let (document, backup, _) = project_paths(workspace.path());
+            let backup_bytes = fs::read(&backup).unwrap();
+
+            match failure {
+                "missing" => fs::remove_file(&document).unwrap(),
+                "malformed" => fs::write(&document, b"---\ntorn").unwrap(),
+                "oversized" => fs::write(
+                    &document,
+                    vec![b'x'; usize::try_from(MAX_PROJECT_DOCUMENT_BYTES + 1).unwrap()],
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+
+            let recovered = store
+                .read_project(&locator)
+                .unwrap_or_else(|error| panic!("{failure}: {error:?}"));
+            assert!(recovered.recovered_from_backup, "{failure}");
+            assert_eq!(recovered.project, project(), "{failure}");
+            assert_eq!(fs::read(&document).unwrap(), backup_bytes, "{failure}");
+            assert_eq!(fs::read(&backup).unwrap(), backup_bytes, "{failure}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unrecoverable_input_is_preserved_and_torn_temp_is_cleaned_only_when_main_is_valid() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        store.create_project(&project()).unwrap();
+        let locator = ProjectLocator::from_project(&project()).unwrap();
+        let (document, _, temporary) = project_paths(workspace.path());
+
+        fs::write(&temporary, b"torn temp").unwrap();
+        store.read_project(&locator).unwrap();
+        assert!(!temporary.exists());
+
+        let malformed = b"---\ntorn";
+        fs::write(&document, malformed).unwrap();
+        let error = store.read_project(&locator).unwrap_err();
+        assert_eq!(error.code, "project_snapshot_recovery_failed");
+        assert_eq!(fs::read(document).unwrap(), malformed);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_faults_leave_the_last_acknowledged_snapshot_readable() {
+        for fault in [UpdateFault::TemporarySynced, UpdateFault::Replaced] {
+            let workspace = tempfile::tempdir().unwrap();
+            let store = ProjectStore::open(workspace.path()).unwrap();
+            store.create_project(&project()).unwrap();
+            let locator = ProjectLocator::from_project(&project()).unwrap();
+            let initial = store.read_project(&locator).unwrap();
+
+            let error = store
+                .update_project_with_fault(&updated_project(), 2, initial.fingerprint, Some(fault))
+                .unwrap_err();
+            assert_eq!(error.code, "project_update_fault_injected");
+            let current = store.read_project(&locator).unwrap();
+            assert_eq!(current.project, project(), "{fault:?}");
+            assert!(!project_paths(workspace.path()).2.exists(), "{fault:?}");
+        }
     }
 }

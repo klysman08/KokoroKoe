@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P3-015 - Product transient live transcription
+- Task: P4-001 - Project/session domain and portable folder contract
 - Date: 2026-08-11
-- Outcome: exposed one consent-gated transient live run through three exact main-window commands and ordered partial/final/gap events, added stable provisional replacement and a 500-record inert transcript UI, and preserved the no-persistence/no-retained-audio/no-OpenRouter/no-packaging boundary.
-- Verification: Rust 1.88 locked fmt/Clippy, 126 ordinary tests plus 3 capability tests; Node 24 frontend gates and 83 Vitest tests; explicit selected-Tiny/CPU product gate with `OpenAI.mp3`, 45 partial updates, one matching final, and zero gaps; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and bounded native launch health smoke.
-- Memory: [P3-015 checkpoint](docs/project-memory.md#p3-015---product-transient-live-transcription)
+- Outcome: closed the Phase 3 implementation audit and froze strict version-one project/session, preset/device snapshot, lifecycle, and usage records plus stable UUID/date-bound portable folder names and exact relative Markdown/journal/audio paths, without adding filesystem writes, SQLite content rows, commands, capabilities, UI, retained audio, OpenRouter, or packaging scope.
+- Verification: Rust 1.88 locked fmt/Clippy, 131 ordinary tests plus 3 capability tests; Node 24 frontend gates and 98 Vitest tests; shared Rust/Zod golden fixture and adversarial identity/path tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-001 checkpoint](docs/project-memory.md#p4-001---projectsession-domain-and-portable-folder-contract)

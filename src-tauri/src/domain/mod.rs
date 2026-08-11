@@ -1,5 +1,6 @@
 mod error;
 mod models;
+mod projects;
 mod settings;
 mod transcription;
 
@@ -11,6 +12,7 @@ pub(crate) use models::{
     ModelDownloadProgress, ModelDownloadStatus, ModelInstallation, ModelInstallationStatus,
     PerformanceClass, RequestId, now_rfc3339,
 };
+pub(crate) use projects::{Project, Session};
 pub(crate) use settings::{AppSettings, AppSettingsUpdate, Versioned, WorkspaceStatus};
 pub(crate) use transcription::{
     LiveEventEnvelope, LiveSegmentStatus, LiveTranscriptSegment, LiveTranscriptionInput,

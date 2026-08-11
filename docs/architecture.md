@@ -802,6 +802,12 @@ workspace/projects/<slug>--<uuid8>/
     audio/
 ```
 
+P4-001 freezes the version-one Project/Session transport records and the layout above before any meeting-content write exists. Project folders are `<portable-slug>--<project-uuid8>`; session folders are `<yyyy-mm-dd>-<portable-slug>--<session-uuid8>`. The persisted folder name is stable across later display-name edits. Portable slugs contain only lowercase ASCII letters, digits, and hyphens, are capped at 48 bytes, and use `project` or `session` when a name has no ASCII alphanumeric content. The UUID suffix supplies identity and uniqueness.
+
+The folder contract produces only `/`-separated paths relative to the workspace, rooted below `projects/`, from validated stored identifiers and fixed document names. It accepts no path from React or another caller and performs no filesystem operation. A later writer must still pin and revalidate the workspace directory identity, reject reparse/containment changes at every sensitive open, and use handle-relative or equivalently race-resistant Windows operations under ADR 0005; string validation alone is not a filesystem sandbox.
+
+Project and session snapshots preserve the chosen preset version, resolved microphone/system-output endpoint metadata and selection policy, transcription model, language, privacy choice, lifecycle/channel state, and optional role-specific LLM model identifiers. This freezes meeting context without enabling OpenRouter or retained audio. P4-001 adds no command, capability, database migration, UI, Markdown parser input, journal, or content write.
+
 Markdown owns important project/session content. SQLite owns rebuildable projections, FTS5, non-secret settings, window/device preferences, model/download state, detailed metrics/cost entries, sanitized errors, and migrations. Windows Credential Manager alone owns the API key.
 
 The per-session writer appends checksummed sequenced journal entries and syncs final segments, edits, bookmarks, and state changes before acknowledgement. It materializes Markdown after two seconds or five final segments and immediately at lifecycle boundaries. Snapshot replacement uses a same-directory temporary file, disk synchronization, an atomic Windows replacement, and `.bak` recovery.

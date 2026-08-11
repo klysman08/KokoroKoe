@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-003 - Bounded project snapshot read, update, and recovery
+- Task: P4-004 - Bounded project discovery and rebuildable SQLite projection
 - Date: 2026-08-11
-- Outcome: added bounded strict canonical `project.md` reads, exact-byte SHA-256 conflict guards, one-step optimistic revision updates, write-locked atomic replacement with a valid `.bak`, and race-resistant recovery for missing, malformed, or oversized primary snapshots.
-- Verification: Rust 1.88 locked fmt/Clippy, 147 ordinary tests plus 3 capability tests; 16 focused parser/update/conflict/recovery/fault tests; Node 24 frontend gates and 98 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-003 checkpoint](docs/project-memory.md#p4-003---bounded-project-snapshot-read-update-and-recovery)
+- Outcome: added bounded direct-child project discovery through the pinned snapshot store, explicit invalid/recovered/duplicate reporting, stable timestamp ordering, generation-bound pagination, and an atomic app-local SQLite projection that rebuilds solely from Markdown after empty or physically corrupt state.
+- Verification: Rust 1.88 locked fmt/Clippy, 155 ordinary tests plus 3 capability tests; 24 focused snapshot/discovery/index/recovery/cursor/fault tests; Node 24 frontend gates and 98 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-004 checkpoint](docs/project-memory.md#p4-004---bounded-project-discovery-and-rebuildable-sqlite-projection)

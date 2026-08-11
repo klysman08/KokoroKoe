@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -31,6 +32,8 @@ use super::layout::PortableProjectLayout;
 const TEMP_PROJECT_DOCUMENT: &str = ".project.md.tmp";
 const BACKUP_PROJECT_DOCUMENT: &str = "project.md.bak";
 const MAX_PROJECT_DOCUMENT_BYTES: u64 = 128 * 1024;
+const MAX_DISCOVERY_ENTRIES: usize = 4_096;
+const MAX_DISCOVERY_ISSUES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectStoreError {
@@ -38,7 +41,7 @@ pub(crate) struct ProjectStoreError {
 }
 
 impl ProjectStoreError {
-    fn new(code: &'static str) -> Self {
+    pub(super) fn new(code: &'static str) -> Self {
         Self { code }
     }
 }
@@ -78,11 +81,32 @@ impl ProjectLocator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectSnapshotFingerprint([u8; 32]);
 
+impl ProjectSnapshotFingerprint {
+    pub(super) fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectSnapshot {
     pub(crate) project: Project,
     pub(crate) fingerprint: ProjectSnapshotFingerprint,
     pub(crate) recovered_from_backup: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectDiscoveryIssue {
+    pub(crate) entry_name: Option<String>,
+    pub(crate) code: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectDiscoveryReport {
+    pub(crate) projects: Vec<ProjectSnapshot>,
+    pub(crate) issues: Vec<ProjectDiscoveryIssue>,
+    pub(crate) scanned_entries: u32,
+    pub(crate) truncated: bool,
+    pub(crate) issues_truncated: bool,
 }
 
 #[allow(dead_code)]
@@ -122,6 +146,142 @@ impl ProjectStore {
         expected_fingerprint: ProjectSnapshotFingerprint,
     ) -> Result<ProjectSnapshot, ProjectStoreError> {
         self.update_project_with_fault(updated, expected_revision, expected_fingerprint, None)
+    }
+
+    pub(crate) fn discover_projects(&self) -> Result<ProjectDiscoveryReport, ProjectStoreError> {
+        self.workspace.revalidate()?;
+        let projects_path = self.workspace.path.join("projects");
+        if !projects_path.exists() {
+            return Ok(ProjectDiscoveryReport {
+                projects: Vec::new(),
+                issues: Vec::new(),
+                scanned_entries: 0,
+                truncated: false,
+                issues_truncated: false,
+            });
+        }
+        let projects_directory = PinnedDirectory::open(&projects_path)?;
+        self.workspace.revalidate()?;
+
+        let mut entries = Vec::new();
+        let reader = fs::read_dir(&projects_path)
+            .map_err(|_| ProjectStoreError::new("project_discovery_failed"))?;
+        for entry in reader {
+            let entry = entry.map_err(|_| ProjectStoreError::new("project_discovery_failed"))?;
+            entries.push(entry);
+            if entries.len() > MAX_DISCOVERY_ENTRIES {
+                return Ok(ProjectDiscoveryReport {
+                    projects: Vec::new(),
+                    issues: vec![ProjectDiscoveryIssue {
+                        entry_name: None,
+                        code: "project_discovery_limit_exceeded",
+                    }],
+                    scanned_entries: (MAX_DISCOVERY_ENTRIES + 1) as u32,
+                    truncated: true,
+                    issues_truncated: false,
+                });
+            }
+        }
+        entries.sort_by_key(|entry| entry.file_name());
+
+        let mut report = ProjectDiscoveryReport {
+            projects: Vec::new(),
+            issues: Vec::new(),
+            scanned_entries: entries.len() as u32,
+            truncated: false,
+            issues_truncated: false,
+        };
+        let mut candidates = Vec::new();
+        for entry in entries {
+            let file_name = entry.file_name();
+            let entry_name = safe_discovery_entry_name(&file_name);
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => {
+                    push_discovery_issue(
+                        &mut report,
+                        entry_name,
+                        "project_entry_metadata_unavailable",
+                    );
+                    continue;
+                }
+            };
+            if !file_type.is_dir() || file_type.is_symlink() {
+                push_discovery_issue(&mut report, entry_name, "project_entry_not_directory");
+                continue;
+            }
+            let Some(folder_name) = file_name.to_str() else {
+                push_discovery_issue(&mut report, None, "project_entry_name_invalid");
+                continue;
+            };
+            if folder_name.is_empty()
+                || folder_name.len() > 128
+                || folder_name.chars().any(char::is_control)
+            {
+                push_discovery_issue(&mut report, entry_name, "project_entry_name_invalid");
+                continue;
+            }
+
+            match self.read_discovered_project(folder_name) {
+                Ok(snapshot) => candidates.push((snapshot, entry_name)),
+                Err(error) => push_discovery_issue(&mut report, entry_name, error.code),
+            }
+        }
+        projects_directory.revalidate()?;
+        self.workspace.revalidate()?;
+        let mut id_counts = HashMap::new();
+        for (snapshot, _) in &candidates {
+            *id_counts.entry(snapshot.project.id).or_insert(0_u32) += 1;
+        }
+        for (snapshot, entry_name) in candidates {
+            if id_counts.get(&snapshot.project.id) == Some(&1) {
+                report.projects.push(snapshot);
+            } else {
+                push_discovery_issue(&mut report, entry_name, "project_duplicate_id");
+            }
+        }
+        report.projects.sort_by(|left, right| {
+            let left_updated = OffsetDateTime::parse(&left.project.updated_at, &Rfc3339).unwrap();
+            let right_updated = OffsetDateTime::parse(&right.project.updated_at, &Rfc3339).unwrap();
+            let left_created = OffsetDateTime::parse(&left.project.created_at, &Rfc3339).unwrap();
+            let right_created = OffsetDateTime::parse(&right.project.created_at, &Rfc3339).unwrap();
+            right_updated
+                .cmp(&left_updated)
+                .then_with(|| right_created.cmp(&left_created))
+                .then_with(|| left.project.folder_name.cmp(&right.project.folder_name))
+        });
+        Ok(report)
+    }
+
+    fn read_discovered_project(
+        &self,
+        folder_name: &str,
+    ) -> Result<ProjectSnapshot, ProjectStoreError> {
+        self.workspace.revalidate()?;
+        let projects_path = self.workspace.path.join("projects");
+        let projects = PinnedDirectory::open(&projects_path)?;
+        let project_path = projects_path.join(folder_name);
+        let project = PinnedDirectory::open(&project_path)?;
+        projects.revalidate()?;
+        project.revalidate()?;
+        let paths = ProjectDocumentPaths::new(&project_path);
+
+        let candidate = match read_locked_snapshot_unbound(&paths.document) {
+            Ok(snapshot) => snapshot,
+            Err(error) if error.is_recoverable_snapshot_failure() => {
+                read_locked_snapshot_unbound(&paths.backup)
+                    .map_err(|_| ProjectStoreError::new("project_snapshot_recovery_failed"))?
+            }
+            Err(error) => return Err(error),
+        };
+        if candidate.project.folder_name != folder_name {
+            return Err(ProjectStoreError::new("project_snapshot_identity_mismatch"));
+        }
+        let locator = ProjectLocator::from_project(&candidate.project)?;
+        drop(candidate);
+        drop(project);
+        drop(projects);
+        self.read_project(&locator)
     }
 
     fn create_project_with_fault(
@@ -244,7 +404,7 @@ impl ProjectStore {
                 Ok(snapshot.into_public(false))
             }
             Err(error) if error.is_recoverable_snapshot_failure() => {
-                let main = match read_locked_snapshot_internal(&paths.document, locator) {
+                let main = match read_locked_snapshot_internal(&paths.document, Some(locator)) {
                     Ok(snapshot) => return Ok(snapshot.into_public(false)),
                     Err(error) => error,
                 };
@@ -462,12 +622,16 @@ fn read_locked_snapshot(
     path: &Path,
     locator: &ProjectLocator,
 ) -> Result<LockedProjectSnapshot, ProjectStoreError> {
-    read_locked_snapshot_internal(path, locator).map_err(|error| error.error)
+    read_locked_snapshot_internal(path, Some(locator)).map_err(|error| error.error)
+}
+
+fn read_locked_snapshot_unbound(path: &Path) -> Result<LockedProjectSnapshot, ProjectStoreError> {
+    read_locked_snapshot_internal(path, None).map_err(|error| error.error)
 }
 
 fn read_locked_snapshot_internal(
     path: &Path,
-    locator: &ProjectLocator,
+    locator: Option<&ProjectLocator>,
 ) -> Result<LockedProjectSnapshot, LockedSnapshotReadError> {
     let mut file = open_snapshot_without_write_share(path)
         .map_err(|error| LockedSnapshotReadError { error, _file: None })?;
@@ -521,7 +685,9 @@ fn read_locked_snapshot_internal(
             });
         }
     };
-    if project.id != locator.id || project.folder_name != locator.folder_name {
+    if locator.is_some_and(|locator| {
+        project.id != locator.id || project.folder_name != locator.folder_name
+    }) {
         return Err(LockedSnapshotReadError {
             error: ProjectStoreError::new("project_snapshot_identity_mismatch"),
             _file: Some(file),
@@ -534,6 +700,29 @@ fn read_locked_snapshot_internal(
         project,
         fingerprint,
     })
+}
+
+fn safe_discovery_entry_name(name: &std::ffi::OsStr) -> Option<String> {
+    let value = name.to_str()?;
+    if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+        None
+    } else {
+        Some(value.to_owned())
+    }
+}
+
+fn push_discovery_issue(
+    report: &mut ProjectDiscoveryReport,
+    entry_name: Option<String>,
+    code: &'static str,
+) {
+    if report.issues.len() < MAX_DISCOVERY_ISSUES {
+        report
+            .issues
+            .push(ProjectDiscoveryIssue { entry_name, code });
+    } else {
+        report.issues_truncated = true;
+    }
 }
 
 fn parse_project_document(bytes: &[u8]) -> Result<Project, ProjectStoreError> {
@@ -951,7 +1140,7 @@ fn atomic_replace_with_backup(
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
+        fs::{self, File},
         path::{Path, PathBuf},
     };
 
@@ -1276,6 +1465,124 @@ mod tests {
             assert_eq!(fs::read(&document).unwrap(), backup_bytes, "{failure}");
             assert_eq!(fs::read(&backup).unwrap(), backup_bytes, "{failure}");
         }
+    }
+
+    #[test]
+    fn discovery_is_direct_deterministic_and_reports_recovery_and_invalid_entries() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        store.create_project(&project()).unwrap();
+        let locator = ProjectLocator::from_project(&project()).unwrap();
+        let initial = store.read_project(&locator).unwrap();
+        store
+            .update_project(&updated_project(), 2, initial.fingerprint)
+            .unwrap();
+        let (document, _, _) = project_paths(workspace.path());
+        fs::write(&document, b"not a project document").unwrap();
+
+        let projects = workspace.path().join("projects");
+        fs::write(projects.join("unexpected.txt"), b"ignored").unwrap();
+        fs::create_dir(projects.join("malformed--bbbbbbbb")).unwrap();
+        fs::write(
+            projects.join("malformed--bbbbbbbb").join("project.md"),
+            b"invalid",
+        )
+        .unwrap();
+        fs::create_dir_all(
+            projects
+                .join("container--cccccccc")
+                .join("nested--dddddddd"),
+        )
+        .unwrap();
+
+        let report = store.discover_projects().unwrap();
+
+        assert_eq!(report.scanned_entries, 4);
+        assert!(!report.truncated);
+        assert!(!report.issues_truncated);
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].project, project());
+        assert!(report.projects[0].recovered_from_backup);
+        assert_eq!(
+            report
+                .issues
+                .iter()
+                .map(|issue| (issue.entry_name.as_deref(), issue.code))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    Some("container--cccccccc"),
+                    "project_snapshot_recovery_failed"
+                ),
+                (
+                    Some("malformed--bbbbbbbb"),
+                    "project_snapshot_recovery_failed"
+                ),
+                (Some("unexpected.txt"), "project_entry_not_directory"),
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_excludes_every_folder_that_claims_a_duplicate_project_id() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = ProjectStore::open(workspace.path()).unwrap();
+        let first = project();
+        let mut value = serde_json::to_value(&first).unwrap();
+        value["name"] = serde_json::json!("Duplicate identity");
+        value["folderName"] = serde_json::json!("duplicate-identity--aaaaaaaa");
+        let duplicate: Project = serde_json::from_value(value).unwrap();
+        store.create_project(&first).unwrap();
+        store.create_project(&duplicate).unwrap();
+
+        let report = store.discover_projects().unwrap();
+
+        assert!(report.projects.is_empty());
+        assert_eq!(report.issues.len(), 2);
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code == "project_duplicate_id")
+        );
+    }
+
+    #[test]
+    fn discovery_limits_fail_closed_without_returning_a_partial_catalog() {
+        let workspace = tempfile::tempdir().unwrap();
+        let projects = workspace.path().join("projects");
+        fs::create_dir(&projects).unwrap();
+        for index in 0..=super::MAX_DISCOVERY_ENTRIES {
+            File::create(projects.join(format!("entry-{index:04}.txt"))).unwrap();
+        }
+        let store = ProjectStore::open(workspace.path()).unwrap();
+
+        let report = store.discover_projects().unwrap();
+
+        assert!(report.projects.is_empty());
+        assert!(report.truncated);
+        assert_eq!(
+            report.scanned_entries,
+            (super::MAX_DISCOVERY_ENTRIES + 1) as u32
+        );
+        assert_eq!(report.issues[0].code, "project_discovery_limit_exceeded");
+    }
+
+    #[test]
+    fn discovery_issue_details_are_bounded() {
+        let workspace = tempfile::tempdir().unwrap();
+        let projects = workspace.path().join("projects");
+        fs::create_dir(&projects).unwrap();
+        for index in 0..=super::MAX_DISCOVERY_ISSUES {
+            File::create(projects.join(format!("unexpected-{index:03}.txt"))).unwrap();
+        }
+        let store = ProjectStore::open(workspace.path()).unwrap();
+
+        let report = store.discover_projects().unwrap();
+
+        assert_eq!(report.issues.len(), super::MAX_DISCOVERY_ISSUES);
+        assert!(report.issues_truncated);
+        assert!(!report.truncated);
     }
 
     #[cfg(windows)]

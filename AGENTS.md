@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-007 - Bounded session snapshot read, update, and recovery
+- Task: P4-008 - Bounded session discovery and rebuildable projection
 - Date: 2026-08-11
-- Outcome: added a strict bounded `session.md` reader, exact-byte fingerprint conflicts, immutable-identity revision updates, write-locked atomic `.bak` replacement, and no-clobber recovery from a valid prior snapshot.
-- Verification: 16 session-store tests including 8 new parser/conflict/recovery/fault tests; Rust 1.88 locked fmt/Clippy, 181 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
-- Memory: [P4-007 checkpoint](docs/project-memory.md#p4-007---bounded-session-snapshot-read-update-and-recovery)
+- Outcome: added bounded direct-child session discovery across validated projects plus an app-local workspace-bound SQLite projection with duplicate exclusion, deterministic meeting-time ordering, corruption rebuild, and generation-bound pagination.
+- Verification: 21 session-store and 6 session-index tests including 11 new discovery/index tests; Rust 1.88 locked fmt/Clippy, 192 ordinary tests plus 3 capability tests; Node 24 frontend gates and 116 Vitest tests; clean npm audit and Cargo policy/audit with the existing 17 allowed warnings; locked x64 release build and responsive five-second native launch smoke.
+- Memory: [P4-008 checkpoint](docs/project-memory.md#p4-008---bounded-session-discovery-and-rebuildable-projection)

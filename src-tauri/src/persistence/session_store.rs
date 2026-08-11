@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::HashMap,
     fmt,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -26,6 +27,8 @@ use super::{
 const TEMP_SESSION_DOCUMENT: &str = ".session.md.tmp";
 const BACKUP_SESSION_DOCUMENT: &str = "session.md.bak";
 const MAX_SESSION_DOCUMENT_BYTES: u64 = 512 * 1024;
+const MAX_SESSION_DISCOVERY_ENTRIES: usize = 4_096;
+const MAX_SESSION_DISCOVERY_ISSUES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SessionStoreError {
@@ -33,7 +36,7 @@ pub(crate) struct SessionStoreError {
 }
 
 impl SessionStoreError {
-    fn new(code: &'static str) -> Self {
+    pub(super) fn new(code: &'static str) -> Self {
         Self { code }
     }
 }
@@ -84,11 +87,38 @@ impl SessionLocator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SessionSnapshotFingerprint([u8; 32]);
 
+impl SessionSnapshotFingerprint {
+    pub(super) fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionSnapshot {
     pub(crate) session: Session,
     pub(crate) fingerprint: SessionSnapshotFingerprint,
     pub(crate) recovered_from_backup: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionDiscoveryIssue {
+    pub(crate) entry_name: Option<String>,
+    pub(crate) code: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DiscoveredSession {
+    pub(crate) snapshot: SessionSnapshot,
+    pub(crate) project_folder: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionDiscoveryReport {
+    pub(crate) sessions: Vec<DiscoveredSession>,
+    pub(crate) issues: Vec<SessionDiscoveryIssue>,
+    pub(crate) scanned_entries: u32,
+    pub(crate) truncated: bool,
+    pub(crate) issues_truncated: bool,
 }
 
 pub(crate) struct SessionStore {
@@ -130,6 +160,181 @@ impl SessionStore {
             expected_fingerprint,
             None,
         )
+    }
+
+    pub(crate) fn discover_sessions(&self) -> Result<SessionDiscoveryReport, SessionStoreError> {
+        let projects = self
+            .projects
+            .discover_projects()
+            .map_err(map_project_error)?;
+        let mut report = SessionDiscoveryReport {
+            sessions: Vec::new(),
+            issues: Vec::new(),
+            scanned_entries: 0,
+            truncated: projects.truncated,
+            issues_truncated: projects.issues_truncated,
+        };
+        for issue in projects.issues {
+            push_discovery_issue(&mut report, issue.entry_name, issue.code);
+        }
+        if report.truncated {
+            return Ok(report);
+        }
+
+        let mut candidates = Vec::new();
+        for project_snapshot in projects.projects {
+            let project = project_snapshot.project;
+            let project_locator =
+                ProjectLocator::from_project(&project).map_err(map_project_error)?;
+            let pinned_project = self
+                .projects
+                .open_existing_project(&project_locator)
+                .map_err(map_project_error)?;
+            let sessions_path = pinned_project.path().join("sessions");
+            if !sessions_path.exists() {
+                continue;
+            }
+            let sessions_directory =
+                PinnedDirectory::open(&sessions_path).map_err(map_path_error)?;
+            pinned_project.revalidate().map_err(map_path_error)?;
+            let mut entries = fs::read_dir(&sessions_path)
+                .map_err(|_| SessionStoreError::new("session_discovery_failed"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| SessionStoreError::new("session_discovery_failed"))?;
+            report.scanned_entries = report
+                .scanned_entries
+                .saturating_add(u32::try_from(entries.len()).unwrap_or(u32::MAX));
+            if usize::try_from(report.scanned_entries).unwrap_or(usize::MAX)
+                > MAX_SESSION_DISCOVERY_ENTRIES
+            {
+                report.sessions.clear();
+                report.truncated = true;
+                push_discovery_issue(&mut report, None, "session_discovery_limit_exceeded");
+                return Ok(report);
+            }
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let file_name = entry.file_name();
+                let entry_name = safe_discovery_entry_name(&project.folder_name, &file_name);
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(_) => {
+                        push_discovery_issue(
+                            &mut report,
+                            entry_name,
+                            "session_entry_metadata_unavailable",
+                        );
+                        continue;
+                    }
+                };
+                if !file_type.is_dir() || file_type.is_symlink() {
+                    push_discovery_issue(&mut report, entry_name, "session_entry_not_directory");
+                    continue;
+                }
+                let Some(folder_name) = file_name.to_str() else {
+                    push_discovery_issue(&mut report, None, "session_entry_name_invalid");
+                    continue;
+                };
+                if folder_name.is_empty()
+                    || folder_name.len() > 128
+                    || folder_name.chars().any(char::is_control)
+                {
+                    push_discovery_issue(&mut report, entry_name, "session_entry_name_invalid");
+                    continue;
+                }
+                match self.read_discovered_session(&project, folder_name) {
+                    Ok(snapshot) => candidates.push((
+                        DiscoveredSession {
+                            snapshot,
+                            project_folder: project.folder_name.clone(),
+                        },
+                        entry_name,
+                    )),
+                    Err(error) => push_discovery_issue(&mut report, entry_name, error.code),
+                }
+            }
+            sessions_directory.revalidate().map_err(map_path_error)?;
+            pinned_project.revalidate().map_err(map_path_error)?;
+        }
+
+        let mut id_counts = HashMap::new();
+        for (snapshot, _) in &candidates {
+            *id_counts
+                .entry(snapshot.snapshot.session.id)
+                .or_insert(0_u32) += 1;
+        }
+        for (snapshot, entry_name) in candidates {
+            if id_counts.get(&snapshot.snapshot.session.id) == Some(&1) {
+                report.sessions.push(snapshot);
+            } else {
+                push_discovery_issue(&mut report, entry_name, "session_duplicate_id");
+            }
+        }
+        report.sessions.sort_by(|left, right| {
+            let meeting_time = |session: &Session| {
+                OffsetDateTime::parse(
+                    session.started_at.as_deref().unwrap_or(&session.created_at),
+                    &Rfc3339,
+                )
+                .expect("validated session timestamp")
+            };
+            let updated = |session: &Session| {
+                OffsetDateTime::parse(&session.updated_at, &Rfc3339)
+                    .expect("validated session timestamp")
+            };
+            meeting_time(&right.snapshot.session)
+                .cmp(&meeting_time(&left.snapshot.session))
+                .then_with(|| {
+                    updated(&right.snapshot.session).cmp(&updated(&left.snapshot.session))
+                })
+                .then_with(|| left.project_folder.cmp(&right.project_folder))
+                .then_with(|| {
+                    left.snapshot
+                        .session
+                        .folder_name
+                        .cmp(&right.snapshot.session.folder_name)
+                })
+        });
+        Ok(report)
+    }
+
+    fn read_discovered_session(
+        &self,
+        project: &Project,
+        folder_name: &str,
+    ) -> Result<SessionSnapshot, SessionStoreError> {
+        let project_locator = ProjectLocator::from_project(project).map_err(map_project_error)?;
+        let pinned_project = self
+            .projects
+            .open_existing_project(&project_locator)
+            .map_err(map_project_error)?;
+        let sessions_path = pinned_project.path().join("sessions");
+        let sessions = PinnedDirectory::open(&sessions_path).map_err(map_path_error)?;
+        let session_path = sessions_path.join(folder_name);
+        let session_directory = PinnedDirectory::open(&session_path).map_err(map_path_error)?;
+        pinned_project.revalidate().map_err(map_path_error)?;
+        sessions.revalidate().map_err(map_path_error)?;
+        session_directory.revalidate().map_err(map_path_error)?;
+        let paths = SessionDocumentPaths::new(&session_path);
+        let candidate = match read_locked_snapshot_internal(&paths.document, None) {
+            Ok(snapshot) => snapshot,
+            Err(error) if error.error.is_recoverable_snapshot_failure() => {
+                read_locked_snapshot_internal(&paths.backup, None)
+                    .map_err(|_| SessionStoreError::new("session_snapshot_recovery_failed"))?
+            }
+            Err(error) => return Err(error.error),
+        };
+        if candidate.session.project_id != project.id
+            || candidate.session.folder_name != folder_name
+        {
+            return Err(SessionStoreError::new("session_snapshot_identity_mismatch"));
+        }
+        let locator = SessionLocator::from_records(project, &candidate.session)?;
+        drop(candidate);
+        drop(session_directory);
+        drop(sessions);
+        drop(pinned_project);
+        self.read_session(&locator)
     }
 
     fn create_session_with_fault(
@@ -549,6 +754,33 @@ fn read_locked_snapshot(
     read_locked_snapshot_internal(path, Some(locator)).map_err(|error| error.error)
 }
 
+fn safe_discovery_entry_name(project_folder: &str, name: &std::ffi::OsStr) -> Option<String> {
+    let name = name.to_str()?;
+    if name.is_empty()
+        || name.len() > 128
+        || name.chars().any(char::is_control)
+        || project_folder.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let combined = format!("{project_folder}/{name}");
+    (combined.len() <= 257).then_some(combined)
+}
+
+fn push_discovery_issue(
+    report: &mut SessionDiscoveryReport,
+    entry_name: Option<String>,
+    code: &'static str,
+) {
+    if report.issues.len() < MAX_SESSION_DISCOVERY_ISSUES {
+        report
+            .issues
+            .push(SessionDiscoveryIssue { entry_name, code });
+    } else {
+        report.issues_truncated = true;
+    }
+}
+
 fn read_locked_snapshot_internal(
     path: &Path,
     locator: Option<&SessionLocator>,
@@ -889,8 +1121,8 @@ mod tests {
     };
 
     use super::{
-        CreateFault, MAX_SESSION_DOCUMENT_BYTES, SessionLocator, SessionStore, UpdateFault,
-        parse_session_document, render_session_document,
+        CreateFault, MAX_SESSION_DISCOVERY_ENTRIES, MAX_SESSION_DOCUMENT_BYTES, SessionLocator,
+        SessionStore, UpdateFault, parse_session_document, render_session_document,
     };
 
     fn records() -> (Project, Session) {
@@ -1411,5 +1643,148 @@ mod tests {
 
         assert!(fs::rename(workspace.path(), &moved).is_err());
         assert!(workspace.path().is_dir());
+    }
+
+    #[test]
+    fn discovery_reads_only_direct_children_and_reports_invalid_entries() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let sessions = workspace
+            .path()
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions");
+        fs::write(sessions.join("unexpected.txt"), b"ignored").unwrap();
+        let nested = sessions.join("container").join(&session.folder_name);
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("session.md"),
+            render_session_document(&session).unwrap(),
+        )
+        .unwrap();
+
+        let report = store.discover_sessions().unwrap();
+
+        assert_eq!(report.scanned_entries, 3);
+        assert_eq!(report.sessions.len(), 1);
+        assert_eq!(report.sessions[0].snapshot.session, session);
+        assert_eq!(report.sessions[0].project_folder, project.folder_name);
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "session_entry_not_directory"
+                && issue
+                    .entry_name
+                    .as_deref()
+                    .is_some_and(|name| name.ends_with("/unexpected.txt"))
+        }));
+        assert!(report.issues.iter().any(|issue| {
+            issue
+                .entry_name
+                .as_deref()
+                .is_some_and(|name| name.ends_with("/container"))
+        }));
+    }
+
+    #[test]
+    fn discovery_recovers_a_valid_backup_and_marks_the_snapshot() {
+        let (workspace, project, session, store) = workspace_with_session();
+        let locator = SessionLocator::from_records(&project, &session).unwrap();
+        let initial = store.read_session(&locator).unwrap();
+        store
+            .update_session(
+                &locator,
+                &updated_session(),
+                session.revision,
+                initial.fingerprint,
+            )
+            .unwrap();
+        let (document, _, _) = session_paths(workspace.path(), &project, &session);
+        fs::write(document, b"---\ntorn").unwrap();
+
+        let report = store.discover_sessions().unwrap();
+
+        assert_eq!(report.sessions.len(), 1);
+        assert_eq!(report.sessions[0].snapshot.session, session);
+        assert!(report.sessions[0].snapshot.recovered_from_backup);
+    }
+
+    #[test]
+    fn discovery_bounds_issue_detail_without_hiding_that_it_was_truncated() {
+        let (workspace, project, store) = workspace_with_project();
+        let sessions = workspace
+            .path()
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        for index in 0..300 {
+            fs::write(sessions.join(format!("unexpected-{index}")), b"ignored").unwrap();
+        }
+
+        let report = store.discover_sessions().unwrap();
+
+        assert_eq!(report.issues.len(), 256);
+        assert!(report.issues_truncated);
+        assert!(!report.truncated);
+    }
+
+    #[test]
+    fn discovery_excludes_every_candidate_with_a_duplicate_global_session_id() {
+        let workspace = tempfile::tempdir().unwrap();
+        let (first_project, first_session) = records();
+        let mut project_value = serde_json::to_value(&first_project).unwrap();
+        project_value["id"] = serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        project_value["name"] = serde_json::json!("Second Project");
+        project_value["folderName"] = serde_json::json!("second-project--bbbbbbbb");
+        let second_project: Project = serde_json::from_value(project_value).unwrap();
+        let mut session_value = serde_json::to_value(&first_session).unwrap();
+        session_value["projectId"] = serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        let second_session: Session = serde_json::from_value(session_value).unwrap();
+        let projects = ProjectStore::open(workspace.path()).unwrap();
+        projects.create_project(&first_project).unwrap();
+        projects.create_project(&second_project).unwrap();
+        let store = SessionStore::open(workspace.path()).unwrap();
+        store
+            .create_session(&first_project, &first_session)
+            .unwrap();
+        store
+            .create_session(&second_project, &second_session)
+            .unwrap();
+
+        let report = store.discover_sessions().unwrap();
+
+        assert!(report.sessions.is_empty());
+        assert_eq!(
+            report
+                .issues
+                .iter()
+                .filter(|issue| issue.code == "session_duplicate_id")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn discovery_limit_fails_closed_without_returning_a_partial_catalog() {
+        let (workspace, project, store) = workspace_with_project();
+        let sessions = workspace
+            .path()
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        for index in 0..=MAX_SESSION_DISCOVERY_ENTRIES {
+            fs::create_dir(sessions.join(format!("candidate-{index}"))).unwrap();
+        }
+
+        let report = store.discover_sessions().unwrap();
+
+        assert!(report.sessions.is_empty());
+        assert!(report.truncated);
+        assert_eq!(report.scanned_entries, 4_097);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "session_discovery_limit_exceeded")
+        );
     }
 }

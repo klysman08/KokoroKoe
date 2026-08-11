@@ -12,7 +12,7 @@ const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 #[serde(transparent)]
 pub(crate) struct ProjectId(Uuid);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct SessionId(Uuid);
 

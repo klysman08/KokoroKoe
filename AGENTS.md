@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-014 - Persisted-session writer coordinator
+- Task: P4-015 - Product persisted-session lifecycle
 - Date: 2026-08-12
-- Outcome: added a Rust-only per-session journal-first writer with bounded two-second/five-final batching, lifecycle/explicit flushes, snapshot-then-search sequencing, fixed derived-projection status, idempotent retry, external-conflict preservation, and conservative crash repair on reopen.
-- Verification: Rust 1.88 locked fmt/Clippy, 226 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 134 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P4-014 checkpoint](docs/project-memory.md#p4-014---persisted-session-writer-coordinator)
+- Outcome: added exact-main consent-gated persisted Session start/pause/resume/stop, frozen device/model capture, journal-first finalized transcript publication, active materialization polling, authoritative post-journal lifecycle updates, scoped status events, React controls, and startup recovery to paused/failed with `recovery_required`.
+- Verification: Rust 1.88 locked fmt/Clippy, 230 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 138 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; `OpenAI.mp3` live retry with 44 partials/one matching final/zero gaps; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-015 checkpoint](docs/project-memory.md#p4-015---product-persisted-session-lifecycle)

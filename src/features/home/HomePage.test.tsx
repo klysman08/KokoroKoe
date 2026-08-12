@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { vi } from "vitest"
@@ -13,6 +14,7 @@ import { projectManagementFixtureSchema } from "@/contracts/projects"
 import { HomePage } from "@/features/home/HomePage"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }))
 
 const invokeMock = vi.mocked(invoke)
 const projects = projectManagementFixtureSchema.parse(projectFixture)
@@ -31,6 +33,7 @@ function renderHome() {
 describe("HomePage project management", () => {
   beforeEach(() => {
     invokeMock.mockReset()
+    vi.mocked(listen).mockResolvedValue(() => undefined)
     invokeMock.mockImplementation(async (command) => {
       if (command === "get_settings") return appSettingsFixture
       if (command === "list_projects") return projects.page
@@ -143,6 +146,62 @@ describe("HomePage project management", () => {
           retainAudio: false,
         }),
       ),
+    )
+  })
+
+  it("requires capture consent and starts the displayed persisted session revision", async () => {
+    const user = userEvent.setup()
+    const { startedAt: _startedAt, ...withoutStartedAt } =
+      projectSessionFixture.session
+    expect(_startedAt).toBeDefined()
+    const idleSession = {
+      ...withoutStartedAt,
+      state: "idle",
+      revision: 1,
+      updatedAt: projectSessionFixture.session.createdAt,
+      channelHealth: {
+        microphone: {
+          ...projectSessionFixture.session.channelHealth.microphone,
+          status: "stopped",
+          updatedAt: projectSessionFixture.session.createdAt,
+        },
+        systemOutput: {
+          ...projectSessionFixture.session.channelHealth.systemOutput,
+          status: "stopped",
+          updatedAt: projectSessionFixture.session.createdAt,
+        },
+      },
+    }
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_settings") return appSettingsFixture
+      if (command === "list_projects") return projects.page
+      if (command === "list_sessions") return { items: [idleSession] }
+      if (command === "list_audio_devices") return audioFixture.deviceList
+      if (command === "start_session") return projectSessionFixture.session
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderHome()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage sessions" }),
+    )
+    const start = await screen.findByRole("button", { name: "Start" })
+    expect(start).toBeDisabled()
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I consent to local microphone and system-audio capture/i,
+      }),
+    )
+    await user.click(start)
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("start_session", {
+        projectId: idleSession.projectId,
+        sessionId: idleSession.id,
+        expectedRevision: 1,
+        requestId: expect.any(String),
+        acknowledgedCaptureConsent: true,
+      }),
     )
   })
 })

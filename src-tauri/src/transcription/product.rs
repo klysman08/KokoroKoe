@@ -35,7 +35,7 @@ pub(crate) enum ProductTranscriptionEvent {
     Gap(LiveEventEnvelope<TranscriptionGapPayload>),
 }
 
-type EventSink = Arc<dyn Fn(ProductTranscriptionEvent) + Send + Sync>;
+pub(crate) type EventSink = Arc<dyn Fn(ProductTranscriptionEvent) + Send + Sync>;
 
 struct ActiveRun {
     request_id: RequestId,
@@ -82,12 +82,22 @@ impl LiveTranscriptionService {
         request_id: RequestId,
         emit: EventSink,
     ) -> Result<LiveTranscriptionStatus, AppError> {
+        self.start_with_model(input, request_id, None, emit)
+    }
+
+    pub(crate) fn start_with_model(
+        &self,
+        input: LiveTranscriptionInput,
+        request_id: RequestId,
+        model_id: Option<&str>,
+        emit: EventSink,
+    ) -> Result<LiveTranscriptionStatus, AppError> {
         input
             .validate()
             .map_err(AppError::live_transcription_error)?;
         reserve_start(&self.state, request_id)?;
 
-        match self.start_runtime(input, request_id, emit) {
+        match self.start_runtime(input, request_id, model_id, emit) {
             Ok(active) => {
                 let mut state = self.state.lock().map_err(|_| {
                     AppError::live_transcription_error("live_transcription_state_unavailable")
@@ -147,6 +157,7 @@ impl LiveTranscriptionService {
         &self,
         input: LiveTranscriptionInput,
         request_id: RequestId,
+        model_id: Option<&str>,
         emit: EventSink,
     ) -> Result<ActiveRun, AppError> {
         if !self.adapter_path.is_file() {
@@ -154,7 +165,10 @@ impl LiveTranscriptionService {
                 "live_transcription_runtime_unavailable",
             ));
         }
-        let artifact = self.models.resolve_default_for_transcription()?;
+        let artifact = match model_id {
+            Some(model_id) => self.models.resolve_for_transcription(model_id)?,
+            None => self.models.resolve_default_for_transcription()?,
+        };
         let threads = thread::available_parallelism()
             .map_or(1, usize::from)
             .clamp(1, 8);

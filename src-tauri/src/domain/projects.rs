@@ -764,6 +764,78 @@ impl Session {
         value.validate()?;
         Ok(value)
     }
+
+    pub(crate) fn apply_runtime_state(
+        &self,
+        state: SessionState,
+        updated_at: String,
+        detail_code: Option<&str>,
+    ) -> Result<Self, &'static str> {
+        let allowed = matches!(
+            (self.state, state),
+            (
+                SessionState::Idle,
+                SessionState::Transcribing
+                    | SessionState::Paused
+                    | SessionState::Completed
+                    | SessionState::Failed
+            ) | (
+                SessionState::Paused,
+                SessionState::Transcribing | SessionState::Completed | SessionState::Failed
+            ) | (
+                SessionState::Transcribing,
+                SessionState::Paused | SessionState::Completed | SessionState::Failed
+            ) | (
+                SessionState::Preparing | SessionState::Capturing | SessionState::Stopping,
+                SessionState::Failed
+            )
+        );
+        if !allowed || detail_code.is_some_and(|code| !bounded_text(code, 1, 128, false)) {
+            return Err("session_lifecycle_invalid");
+        }
+        let next_revision = self
+            .revision
+            .checked_add(1)
+            .filter(|revision| *revision <= JSON_SAFE_INTEGER_MAX)
+            .ok_or("session_revision_exhausted")?;
+        let current_time = parse_timestamp(&self.updated_at).ok_or("session_contract_invalid")?;
+        let requested_time = parse_timestamp(&updated_at).ok_or("session_contract_invalid")?;
+        let updated_at = if requested_time >= current_time {
+            updated_at
+        } else {
+            self.updated_at.clone()
+        };
+        let health = match state {
+            SessionState::Transcribing => ChannelHealthStatus::Active,
+            SessionState::Failed => ChannelHealthStatus::Unavailable,
+            SessionState::Paused | SessionState::Completed => ChannelHealthStatus::Stopped,
+            _ => return Err("session_lifecycle_invalid"),
+        };
+        let mut value = self.clone();
+        value.state = state;
+        value.started_at = value.started_at.or_else(|| {
+            matches!(
+                state,
+                SessionState::Transcribing | SessionState::Paused | SessionState::Completed
+            )
+            .then(|| updated_at.clone())
+        });
+        if state == SessionState::Completed {
+            value.ended_at = Some(updated_at.clone());
+        }
+        for channel in [
+            &mut value.channel_health.microphone,
+            &mut value.channel_health.system_output,
+        ] {
+            channel.status = health;
+            channel.detail_code = detail_code.map(str::to_owned);
+            channel.updated_at = updated_at.clone();
+        }
+        value.updated_at = updated_at;
+        value.revision = next_revision;
+        value.validate()?;
+        Ok(value)
+    }
 }
 
 impl UpdateSessionInput {

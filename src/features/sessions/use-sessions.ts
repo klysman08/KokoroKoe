@@ -13,8 +13,18 @@ import {
   type SessionUpdateRequest,
 } from "@/contracts/projects"
 import {
+  type PausePersistedSessionRequest,
+  type ResumePersistedSessionRequest,
+  type StartPersistedSessionRequest,
+  type StopPersistedSessionRequest,
+} from "@/contracts/session-lifecycle"
+import {
   createSession,
   listSessions,
+  pausePersistedSession,
+  resumePersistedSession,
+  startPersistedSession,
+  stopPersistedSession,
   updateSession,
 } from "@/lib/tauri/sessions"
 
@@ -61,6 +71,37 @@ export function useUpdateSessionMutation(projectId: ProjectId) {
   const queryClient = useQueryClient()
   return useMutation<Session, ApplicationError, SessionUpdateRequest>({
     mutationFn: updateSession,
+    retry: false,
+    gcTime: 0,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: sessionsQueryKey(projectId),
+      })
+    },
+  })
+}
+
+type SessionLifecycleAction =
+  | { kind: "start"; request: StartPersistedSessionRequest }
+  | { kind: "pause"; request: PausePersistedSessionRequest }
+  | { kind: "resume"; request: ResumePersistedSessionRequest }
+  | { kind: "stop"; request: StopPersistedSessionRequest }
+
+export function useSessionLifecycleMutation(projectId: ProjectId) {
+  const queryClient = useQueryClient()
+  return useMutation<Session, ApplicationError, SessionLifecycleAction>({
+    mutationFn: async (action) => {
+      switch (action.kind) {
+        case "start":
+          return await startPersistedSession(action.request)
+        case "pause":
+          return await pausePersistedSession(action.request)
+        case "resume":
+          return await resumePersistedSession(action.request)
+        case "stop":
+          return await stopPersistedSession(action.request)
+      }
+    },
     retry: false,
     gcTime: 0,
     onSettled: async () => {

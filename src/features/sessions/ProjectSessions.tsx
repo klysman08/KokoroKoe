@@ -1,6 +1,14 @@
-import { useQuery } from "@tanstack/react-query"
-import { CalendarClock, FileText, Pencil, Plus } from "lucide-react"
-import { useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  CalendarClock,
+  FileText,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Square,
+} from "lucide-react"
+import { useEffect, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,15 +22,22 @@ import {
 import { type Project, type Session } from "@/contracts/projects"
 import { type ApplicationError } from "@/contracts/app-error"
 import { type AudioDeviceList } from "@/contracts/audio"
+import { requestIdSchema } from "@/contracts/models"
+import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { SessionForm } from "@/features/sessions/SessionForm"
 import {
   useCreateSessionMutation,
+  useSessionLifecycleMutation,
   useSessionsQuery,
   useUpdateSessionMutation,
 } from "@/features/sessions/use-sessions"
 import { listAudioDevices } from "@/lib/tauri/audio"
 import { SavedTranscript } from "@/features/transcript/SavedTranscript"
+import {
+  listenToPersistenceStatus,
+  listenToSessionTranscriptionFinals,
+} from "@/lib/tauri/sessions"
 
 export function ProjectSessions({
   project,
@@ -39,17 +54,57 @@ export function ProjectSessions({
   })
   const createMutation = useCreateSessionMutation(project.id)
   const updateMutation = useUpdateSessionMutation(project.id)
+  const lifecycleMutation = useSessionLifecycleMutation(project.id)
+  const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Session>()
   const [viewingTranscript, setViewingTranscript] = useState<Session>()
+  const [consent, setConsent] = useState<Record<string, boolean>>({})
+  const [persistence, setPersistence] = useState<
+    Record<string, PersistenceStatus>
+  >({})
   const sessions = sessionsQuery.data?.pages.flatMap((page) => page.items) ?? []
-  const busy = createMutation.isPending || updateMutation.isPending
+  const busy =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    lifecycleMutation.isPending
   const closeForm = () => {
     setCreating(false)
     setEditing(undefined)
     createMutation.reset()
     updateMutation.reset()
   }
+
+  useEffect(() => {
+    let disposed = false
+    const unlisteners: Array<() => void> = []
+    for (const subscription of [
+      listenToPersistenceStatus((status) => {
+        if (status.projectId !== project.id) return
+        setPersistence((current) => ({
+          ...current,
+          [status.sessionId]: status,
+        }))
+      }),
+      listenToSessionTranscriptionFinals((envelope) => {
+        if (envelope.projectId !== project.id) return
+        void queryClient.invalidateQueries({
+          queryKey: ["saved-transcript", project.id, envelope.sessionId],
+        })
+      }),
+    ]) {
+      void subscription
+        .then((unlisten) => {
+          if (disposed) unlisten()
+          else unlisteners.push(unlisten)
+        })
+        .catch(() => undefined)
+    }
+    return () => {
+      disposed = true
+      unlisteners.forEach((unlisten) => unlisten())
+    }
+  }, [project.id, queryClient])
 
   return (
     <>
@@ -112,12 +167,14 @@ export function ProjectSessions({
           )}
           {(sessionsQuery.error ||
             createMutation.error ||
-            updateMutation.error) && (
+            updateMutation.error ||
+            lifecycleMutation.error) && (
             <SanitizedErrorPanel
               error={
                 (sessionsQuery.error ??
                   createMutation.error ??
-                  updateMutation.error)!
+                  updateMutation.error ??
+                  lifecycleMutation.error)!
               }
             />
           )}
@@ -169,6 +226,117 @@ export function ProjectSessions({
                       <FileText aria-hidden="true" /> View transcript
                     </Button>
                   </div>
+                  <div className="mt-3 space-y-2 border-t pt-3">
+                    {(session.state === "idle" ||
+                      session.state === "paused") && (
+                      <label className="flex items-start gap-2 text-xs">
+                        <input
+                          checked={consent[session.id] ?? false}
+                          disabled={busy}
+                          onChange={(event) =>
+                            setConsent((current) => ({
+                              ...current,
+                              [session.id]: event.target.checked,
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          I consent to local microphone and system-audio
+                          capture.
+                        </span>
+                      </label>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {session.state === "idle" && (
+                        <Button
+                          disabled={busy || !consent[session.id]}
+                          onClick={() =>
+                            lifecycleMutation.mutate({
+                              kind: "start",
+                              request: {
+                                projectId: project.id,
+                                sessionId: session.id,
+                                expectedRevision: session.revision,
+                                requestId: requestIdSchema.parse(
+                                  globalThis.crypto.randomUUID(),
+                                ),
+                                acknowledgedCaptureConsent: true,
+                              },
+                            })
+                          }
+                          size="sm"
+                        >
+                          <Play aria-hidden="true" /> Start
+                        </Button>
+                      )}
+                      {session.state === "transcribing" && (
+                        <Button
+                          disabled={busy}
+                          onClick={() =>
+                            lifecycleMutation.mutate({
+                              kind: "pause",
+                              request: lifecycleBoundaryRequest(
+                                project,
+                                session,
+                              ),
+                            })
+                          }
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Pause aria-hidden="true" /> Pause
+                        </Button>
+                      )}
+                      {session.state === "paused" && (
+                        <Button
+                          disabled={busy || !consent[session.id]}
+                          onClick={() =>
+                            lifecycleMutation.mutate({
+                              kind: "resume",
+                              request: {
+                                ...lifecycleBoundaryRequest(project, session),
+                                requestId: requestIdSchema.parse(
+                                  globalThis.crypto.randomUUID(),
+                                ),
+                                acknowledgedCaptureConsent: true,
+                              },
+                            })
+                          }
+                          size="sm"
+                        >
+                          <Play aria-hidden="true" /> Resume
+                        </Button>
+                      )}
+                      {(session.state === "transcribing" ||
+                        session.state === "paused") && (
+                        <Button
+                          disabled={busy}
+                          onClick={() =>
+                            lifecycleMutation.mutate({
+                              kind: "stop",
+                              request: lifecycleBoundaryRequest(
+                                project,
+                                session,
+                              ),
+                            })
+                          }
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Square aria-hidden="true" /> Stop
+                        </Button>
+                      )}
+                    </div>
+                    {session.channelHealth.microphone.detailCode ===
+                      "recovery_required" && (
+                      <p className="text-xs text-amber-700" role="status">
+                        Recovery required: the previous run ended unexpectedly.
+                        Review the saved transcript before resuming or stopping.
+                      </p>
+                    )}
+                    <PersistenceLine status={persistence[session.id]} />
+                  </div>
                 </div>
               ))}
             </div>
@@ -195,5 +363,27 @@ export function ProjectSessions({
         />
       )}
     </>
+  )
+}
+
+function lifecycleBoundaryRequest(project: Project, session: Session) {
+  return {
+    projectId: project.id,
+    sessionId: session.id,
+    expectedRevision: session.revision,
+  }
+}
+
+function PersistenceLine({
+  status,
+}: {
+  status: PersistenceStatus | undefined
+}) {
+  if (!status) return null
+  return (
+    <p className="text-muted-foreground text-xs" role="status">
+      Persistence: {status.state}; journal {status.journalSequence}, snapshot{" "}
+      {status.snapshotSequence}
+    </p>
   )
 }

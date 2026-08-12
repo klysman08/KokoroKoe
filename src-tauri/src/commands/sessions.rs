@@ -1,4 +1,7 @@
-use tauri::{State, WebviewWindow};
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{Emitter, State, WebviewWindow};
 
 use crate::{
     domain::{
@@ -7,9 +10,14 @@ use crate::{
         UpdateSessionInput,
     },
     logging,
-    persistence::SessionService,
+    persistence::{PersistedSessionEvent, PersistedSessionLifecycleService, SessionService},
     security::authorize_main_window,
 };
+
+const SESSION_TRANSCRIPTION_PARTIAL_EVENT: &str = "session-transcription-partial";
+const SESSION_TRANSCRIPTION_FINAL_EVENT: &str = "session-transcription-final";
+const SESSION_TRANSCRIPTION_GAP_EVENT: &str = "session-transcription-gap";
+const PERSISTENCE_STATUS_EVENT: &str = "persistence-status";
 
 #[tauri::command]
 pub(crate) async fn list_sessions<R: tauri::Runtime>(
@@ -90,6 +98,154 @@ pub(crate) async fn update_session<R: tauri::Runtime>(
     run_blocking(move || service.update_session(project_id, session_id, expected_revision, value))
         .await
         .map_err(record_error)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub(crate) async fn start_session<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, PersistedSessionLifecycleService>,
+    project_id: ProjectId,
+    session_id: SessionId,
+    expected_revision: u64,
+    request_id: crate::domain::RequestId,
+    acknowledged_capture_consent: bool,
+) -> Result<Session, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    let emit_window = webview_window.clone();
+    run_blocking(move || {
+        let emit = Arc::new(move |event| emit_persisted_event(&emit_window, event));
+        service.start_session(
+            project_id,
+            session_id,
+            expected_revision,
+            request_id,
+            acknowledged_capture_consent,
+            emit,
+        )
+    })
+    .await
+    .map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn pause_session<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, PersistedSessionLifecycleService>,
+    project_id: ProjectId,
+    session_id: SessionId,
+    expected_revision: u64,
+) -> Result<Session, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.pause_session(project_id, session_id, expected_revision))
+        .await
+        .map_err(record_error)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub(crate) async fn resume_session<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, PersistedSessionLifecycleService>,
+    project_id: ProjectId,
+    session_id: SessionId,
+    expected_revision: u64,
+    request_id: crate::domain::RequestId,
+    acknowledged_capture_consent: bool,
+) -> Result<Session, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    let emit_window = webview_window.clone();
+    run_blocking(move || {
+        let emit = Arc::new(move |event| emit_persisted_event(&emit_window, event));
+        service.resume_session(
+            project_id,
+            session_id,
+            expected_revision,
+            request_id,
+            acknowledged_capture_consent,
+            emit,
+        )
+    })
+    .await
+    .map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn stop_session<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, PersistedSessionLifecycleService>,
+    project_id: ProjectId,
+    session_id: SessionId,
+    expected_revision: u64,
+) -> Result<Session, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.stop_session(project_id, session_id, expected_revision))
+        .await
+        .map_err(record_error)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopedSessionEvent<T> {
+    schema_version: u8,
+    project_id: ProjectId,
+    session_id: SessionId,
+    event: T,
+}
+
+fn emit_persisted_event<R: tauri::Runtime>(
+    window: &WebviewWindow<R>,
+    event: PersistedSessionEvent,
+) {
+    let result = match event {
+        PersistedSessionEvent::Partial {
+            project_id,
+            session_id,
+            event,
+        } => window.emit(
+            SESSION_TRANSCRIPTION_PARTIAL_EVENT,
+            ScopedSessionEvent {
+                schema_version: 1,
+                project_id,
+                session_id,
+                event,
+            },
+        ),
+        PersistedSessionEvent::Final {
+            project_id,
+            session_id,
+            event,
+        } => window.emit(
+            SESSION_TRANSCRIPTION_FINAL_EVENT,
+            ScopedSessionEvent {
+                schema_version: 1,
+                project_id,
+                session_id,
+                event,
+            },
+        ),
+        PersistedSessionEvent::Gap {
+            project_id,
+            session_id,
+            event,
+        } => window.emit(
+            SESSION_TRANSCRIPTION_GAP_EVENT,
+            ScopedSessionEvent {
+                schema_version: 1,
+                project_id,
+                session_id,
+                event,
+            },
+        ),
+        PersistedSessionEvent::Persistence(status) => window.emit(PERSISTENCE_STATUS_EVENT, status),
+    };
+    if result.is_err() {
+        tracing::warn!("persisted session event could not be delivered to the main window");
+    }
 }
 
 fn authorized<T>(label: &str, operation: impl FnOnce() -> T) -> Result<T, AppError> {

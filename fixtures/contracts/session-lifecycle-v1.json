@@ -1,0 +1,99 @@
+{
+  "startRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "expectedRevision": 1,
+    "requestId": "34ad1c4d-3c82-4f4e-aa7c-e555b667f2cd",
+    "acknowledgedCaptureConsent": true
+  },
+  "pauseRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "expectedRevision": 2
+  },
+  "resumeRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "expectedRevision": 3,
+    "requestId": "44ad1c4d-3c82-4f4e-aa7c-e555b667f2ce",
+    "acknowledgedCaptureConsent": true
+  },
+  "stopRequest": {
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "expectedRevision": 4
+  },
+  "partialEvent": {
+    "schemaVersion": 1,
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "event": {
+      "schemaVersion": 1,
+      "eventId": "4d092804-b6d9-4c73-afce-c5214573538e",
+      "emittedAt": "2026-08-12T16:00:01Z",
+      "sessionSequence": 1,
+      "requestId": "34ad1c4d-3c82-4f4e-aa7c-e555b667f2cd",
+      "payload": {
+        "segment": {
+          "id": "0a5b5730-6d9a-4fc5-86d7-a0b54bbc2c11",
+          "source": "microphone",
+          "startMs": 1000,
+          "endMs": 1500,
+          "text": "provisional words",
+          "status": "partial",
+          "language": "en"
+        }
+      }
+    }
+  },
+  "finalEvent": {
+    "schemaVersion": 1,
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "event": {
+      "schemaVersion": 1,
+      "eventId": "bbc4cf0a-9414-4128-9b6b-3721522ddcbd",
+      "emittedAt": "2026-08-12T16:00:02Z",
+      "sessionSequence": 2,
+      "requestId": "34ad1c4d-3c82-4f4e-aa7c-e555b667f2cd",
+      "payload": {
+        "segment": {
+          "id": "0a5b5730-6d9a-4fc5-86d7-a0b54bbc2c11",
+          "source": "microphone",
+          "startMs": 1000,
+          "endMs": 2000,
+          "text": "final words",
+          "status": "final",
+          "language": "en"
+        },
+        "replacesPartialId": "0a5b5730-6d9a-4fc5-86d7-a0b54bbc2c11"
+      }
+    }
+  },
+  "gapEvent": {
+    "schemaVersion": 1,
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "event": {
+      "schemaVersion": 1,
+      "eventId": "05640e4f-cf16-4bfd-93ba-0d839b510b81",
+      "emittedAt": "2026-08-12T16:00:03Z",
+      "sessionSequence": 3,
+      "requestId": "34ad1c4d-3c82-4f4e-aa7c-e555b667f2cd",
+      "payload": {
+        "source": "system_output",
+        "startMs": 2500,
+        "endMs": 3000,
+        "code": "transcription_inference_failed"
+      }
+    }
+  },
+  "persistenceStatus": {
+    "schemaVersion": 1,
+    "projectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "sessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "journalSequence": 9,
+    "snapshotSequence": 8,
+    "state": "deferred"
+  }
+}

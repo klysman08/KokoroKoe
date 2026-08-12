@@ -4,6 +4,7 @@ mod project_service;
 mod project_store;
 mod session_index;
 mod session_journal;
+mod session_lifecycle;
 mod session_service;
 mod session_store;
 #[allow(dead_code)] // P4-014 is a Rust-only coordinator until lifecycle commands are wired.
@@ -27,6 +28,7 @@ pub(crate) use session_journal::{
     FinalizedTranscriptSegment, JournalAppend, JournalMutation, JournalReplay, LifecycleChange,
     SessionJournal, SessionJournalError,
 };
+pub(crate) use session_lifecycle::{PersistedSessionEvent, PersistedSessionLifecycleService};
 pub(crate) use session_service::SessionService;
 #[allow(unused_imports)]
 pub(crate) use session_store::{

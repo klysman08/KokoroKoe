@@ -173,6 +173,16 @@ impl AppError {
                 ErrorSeverity::Warning,
                 false,
             ),
+            "session_lifecycle_invalid" => (
+                "That session cannot perform this lifecycle action in its current state.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "session_already_running" | "session_not_running" => (
+                "The persisted session run changed. Reload the session and try again.",
+                ErrorSeverity::Info,
+                false,
+            ),
             "session_page_stale" => (
                 "The session list changed. Reload the list to continue.",
                 ErrorSeverity::Info,

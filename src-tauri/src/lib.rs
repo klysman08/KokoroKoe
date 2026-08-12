@@ -14,6 +14,8 @@ use tauri::Manager;
 
 use audio::AudioDeviceTestService;
 use models::ModelService;
+#[cfg(windows)]
+use persistence::PersistedSessionLifecycleService;
 use persistence::{ProjectService, SessionService, SettingsService, TranscriptService};
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
@@ -73,7 +75,22 @@ pub fn run() {
                     .unwrap_or_else(|| app_data_directory.clone())
                     .join("kokorokoe_whisper_adapter.dll");
                 let models = app.state::<ModelService>().inner().clone();
-                app.manage(LiveTranscriptionService::new(models, adapter_path));
+                let live = LiveTranscriptionService::new(models, adapter_path);
+                let lifecycle = PersistedSessionLifecycleService::new(
+                    app.state::<SettingsService>().inner().clone(),
+                    app_data_directory.clone(),
+                    live.clone(),
+                );
+                match lifecycle.recover_interrupted_sessions() {
+                    Ok(recovered) if recovered > 0 => {
+                        tracing::warn!(recovered, "interrupted sessions require user review");
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.code == "workspace_required" => {}
+                    Err(_) => tracing::warn!("interrupted session recovery check was unavailable"),
+                }
+                app.manage(live);
+                app.manage(lifecycle);
             }
             Ok(())
         })
@@ -89,6 +106,10 @@ pub fn run() {
             commands::sessions::get_session,
             commands::sessions::create_session,
             commands::sessions::update_session,
+            commands::sessions::start_session,
+            commands::sessions::pause_session,
+            commands::sessions::resume_session,
+            commands::sessions::stop_session,
             commands::transcripts::get_transcript_page,
             commands::transcripts::search_transcript,
             commands::models::list_transcription_models,

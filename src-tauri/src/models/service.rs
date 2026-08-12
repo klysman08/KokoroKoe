@@ -394,16 +394,26 @@ impl ModelService {
             .get_settings()?
             .default_transcription_model_id()
             .to_owned();
-        if catalog::find(&model_id).is_none() {
+        self.resolve_for_transcription(&model_id)
+    }
+
+    pub(crate) fn resolve_for_transcription(
+        &self,
+        model_id: &str,
+    ) -> Result<VerifiedModelArtifact, AppError> {
+        if catalog::find(model_id).is_none() {
             return Err(AppError::model_error("model_unknown"));
         }
         let path = self
             .manager
             .lock()
             .map_err(lock_error)?
-            .verified_model_path(&model_id)
+            .verified_model_path(model_id)
             .map_err(map_error)?;
-        Ok(VerifiedModelArtifact { model_id, path })
+        Ok(VerifiedModelArtifact {
+            model_id: model_id.to_owned(),
+            path,
+        })
     }
 
     fn installation(

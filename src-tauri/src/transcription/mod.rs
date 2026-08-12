@@ -12,7 +12,7 @@ mod whisper;
 mod worker;
 
 #[cfg(windows)]
-pub(crate) use product::{LiveTranscriptionService, ProductTranscriptionEvent};
+pub(crate) use product::{EventSink, LiveTranscriptionService, ProductTranscriptionEvent};
 #[cfg(windows)]
 pub(crate) use worker::{WORKER_MODE_ARGUMENT, run_worker_if_requested};
 

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 import {
   createContractApplicationError,
@@ -19,6 +20,30 @@ import {
   type SessionPageRequest,
   type SessionUpdateRequest,
 } from "@/contracts/projects"
+import {
+  pausePersistedSessionRequestSchema,
+  persistenceStatusSchema,
+  resumePersistedSessionRequestSchema,
+  sessionTranscriptionFinalSchema,
+  sessionTranscriptionGapSchema,
+  sessionTranscriptionPartialSchema,
+  startPersistedSessionRequestSchema,
+  stopPersistedSessionRequestSchema,
+  type PausePersistedSessionRequest,
+  type PersistenceStatus,
+  type ResumePersistedSessionRequest,
+  type SessionTranscriptionFinal,
+  type SessionTranscriptionGap,
+  type SessionTranscriptionPartial,
+  type StartPersistedSessionRequest,
+  type StopPersistedSessionRequest,
+} from "@/contracts/session-lifecycle"
+
+export const SESSION_TRANSCRIPTION_PARTIAL_EVENT =
+  "session-transcription-partial"
+export const SESSION_TRANSCRIPTION_FINAL_EVENT = "session-transcription-final"
+export const SESSION_TRANSCRIPTION_GAP_EVENT = "session-transcription-gap"
+export const PERSISTENCE_STATUS_EVENT = "persistence-status"
 
 async function call<T>(
   command: string,
@@ -82,4 +107,99 @@ export async function updateSession(
     request(sessionUpdateRequestSchema, value),
     sessionSchema,
   )
+}
+
+export async function startPersistedSession(
+  value: StartPersistedSessionRequest,
+): Promise<Session> {
+  return await call(
+    "start_session",
+    request(startPersistedSessionRequestSchema, value),
+    sessionSchema,
+  )
+}
+
+export async function pausePersistedSession(
+  value: PausePersistedSessionRequest,
+): Promise<Session> {
+  return await call(
+    "pause_session",
+    request(pausePersistedSessionRequestSchema, value),
+    sessionSchema,
+  )
+}
+
+export async function resumePersistedSession(
+  value: ResumePersistedSessionRequest,
+): Promise<Session> {
+  return await call(
+    "resume_session",
+    request(resumePersistedSessionRequestSchema, value),
+    sessionSchema,
+  )
+}
+
+export async function stopPersistedSession(
+  value: StopPersistedSessionRequest,
+): Promise<Session> {
+  return await call(
+    "stop_session",
+    request(stopPersistedSessionRequestSchema, value),
+    sessionSchema,
+  )
+}
+
+export function listenToSessionTranscriptionPartials(
+  onEvent: (event: SessionTranscriptionPartial) => void,
+): Promise<UnlistenFn> {
+  return listenParsed(
+    SESSION_TRANSCRIPTION_PARTIAL_EVENT,
+    sessionTranscriptionPartialSchema,
+    onEvent,
+  )
+}
+
+export function listenToSessionTranscriptionFinals(
+  onEvent: (event: SessionTranscriptionFinal) => void,
+): Promise<UnlistenFn> {
+  return listenParsed(
+    SESSION_TRANSCRIPTION_FINAL_EVENT,
+    sessionTranscriptionFinalSchema,
+    onEvent,
+  )
+}
+
+export function listenToSessionTranscriptionGaps(
+  onEvent: (event: SessionTranscriptionGap) => void,
+): Promise<UnlistenFn> {
+  return listenParsed(
+    SESSION_TRANSCRIPTION_GAP_EVENT,
+    sessionTranscriptionGapSchema,
+    onEvent,
+  )
+}
+
+export function listenToPersistenceStatus(
+  onEvent: (event: PersistenceStatus) => void,
+): Promise<UnlistenFn> {
+  return listenParsed(
+    PERSISTENCE_STATUS_EVENT,
+    persistenceStatusSchema,
+    onEvent,
+  )
+}
+
+function listenParsed<Output>(
+  event: string,
+  schema: {
+    safeParse(
+      value: unknown,
+    ): { success: true; data: Output } | { success: false }
+  },
+  onEvent: (event: Output) => void,
+): Promise<UnlistenFn> {
+  return listen<unknown>(event, ({ payload }) => {
+    const parsed = schema.safeParse(payload)
+    if (parsed.success) onEvent(parsed.data)
+  })
 }

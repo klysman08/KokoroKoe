@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-013 - Product transcript reading and search boundary
+- Task: P4-014 - Persisted-session writer coordinator
 - Date: 2026-08-12
-- Outcome: exposed authoritative finalized-transcript paging and rebuildable FTS search through two exact-main blocking commands, strict shared Rust/Zod contracts, fingerprint/scope/generation-bound cursors, least-privilege permissions, and a bounded inert project/session UI.
-- Verification: Rust 1.88 locked fmt/Clippy, 217 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 134 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P4-013 checkpoint](docs/project-memory.md#p4-013---product-transcript-reading-and-search-boundary)
+- Outcome: added a Rust-only per-session journal-first writer with bounded two-second/five-final batching, lifecycle/explicit flushes, snapshot-then-search sequencing, fixed derived-projection status, idempotent retry, external-conflict preservation, and conservative crash repair on reopen.
+- Verification: Rust 1.88 locked fmt/Clippy, 226 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 134 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-014 checkpoint](docs/project-memory.md#p4-014---persisted-session-writer-coordinator)

@@ -86,6 +86,15 @@ impl SessionLocator {
     pub(super) fn session_id(&self) -> SessionId {
         self.id
     }
+
+    pub(super) fn from_discovered(session: &Session, project_folder: String) -> Self {
+        Self {
+            project: ProjectLocator::from_discovered(session.project_id, project_folder),
+            project_id: session.project_id,
+            id: session.id,
+            folder_name: session.folder_name.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

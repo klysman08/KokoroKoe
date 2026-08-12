@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-011 - Journal-backed transcript materialization
-- Date: 2026-08-11
-- Outcome: added a Rust-only bounded canonical `transcript.md` projection with journal sequence/checksum verification, exact golden bytes, exact-fingerprint conflict detection, synchronized atomic replacement, retained `.bak` recovery, fault rollback, and byte-identical replay rebuild.
-- Verification: Rust 1.88 locked fmt/Clippy, 207 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm/Cargo audits and 159-package license inventory; locked x64 release build and responsive native launch smoke.
-- Memory: [P4-011 checkpoint](docs/project-memory.md#p4-011---journal-backed-transcript-materialization)
+- Task: P4-012 - Rebuildable transcript search projection
+- Date: 2026-08-12
+- Outcome: added bounded valid-only transcript discovery and a Rust-only workspace/digest-bound SQLite/FTS5 segment projection with transactional rebuild, corruption quarantine/repair, deterministic snippets, and strict query/scope/generation-bound pagination.
+- Verification: Rust 1.88 locked fmt/Clippy, 214 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-012 checkpoint](docs/project-memory.md#p4-012---rebuildable-transcript-search-projection)

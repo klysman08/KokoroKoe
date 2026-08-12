@@ -16,7 +16,9 @@ use super::{
         atomic_publish_new, atomic_replace_existing, atomic_replace_with_backup,
         open_snapshot_without_write_share,
     },
-    session_journal::{JournalReplay, SessionJournal, SessionJournalError},
+    session_journal::{
+        FinalizedTranscriptSegment, JournalReplay, SessionJournal, SessionJournalError,
+    },
     session_store::{SessionLocator, SessionStore, SessionStoreError},
 };
 
@@ -24,6 +26,9 @@ const TRANSCRIPT_DOCUMENT: &str = "transcript.md";
 const TEMP_TRANSCRIPT_DOCUMENT: &str = ".transcript.md.tmp";
 const BACKUP_TRANSCRIPT_DOCUMENT: &str = "transcript.md.bak";
 const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_TRANSCRIPT_DISCOVERY_ISSUES: usize = 256;
+const MAX_DISCOVERED_SEGMENTS: usize = 100_000;
+const MAX_DISCOVERED_TEXT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TranscriptStoreError {
@@ -31,7 +36,7 @@ pub(crate) struct TranscriptStoreError {
 }
 
 impl TranscriptStoreError {
-    fn new(code: &'static str) -> Self {
+    pub(super) fn new(code: &'static str) -> Self {
         Self { code }
     }
 
@@ -56,6 +61,12 @@ impl std::error::Error for TranscriptStoreError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TranscriptSnapshotFingerprint([u8; 32]);
 
+impl TranscriptSnapshotFingerprint {
+    pub(super) fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TranscriptSnapshot {
     pub(crate) fingerprint: TranscriptSnapshotFingerprint,
@@ -63,6 +74,28 @@ pub(crate) struct TranscriptSnapshot {
     pub(crate) checkpoint_checksum: Option<String>,
     pub(crate) segment_count: usize,
     pub(crate) recovered_from_backup: bool,
+    pub(crate) segments: Vec<FinalizedTranscriptSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DiscoveredTranscript {
+    pub(crate) session: Session,
+    pub(crate) project_folder: String,
+    pub(crate) snapshot: TranscriptSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TranscriptDiscoveryIssue {
+    pub(crate) entry_name: Option<String>,
+    pub(crate) code: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TranscriptDiscoveryReport {
+    pub(crate) transcripts: Vec<DiscoveredTranscript>,
+    pub(crate) issues: Vec<TranscriptDiscoveryIssue>,
+    pub(crate) scanned_sessions: u32,
+    pub(crate) issues_truncated: bool,
 }
 
 pub(crate) struct TranscriptStore {
@@ -124,6 +157,67 @@ impl TranscriptStore {
             }
             Err(error) => Err(error.error),
         }
+    }
+
+    pub(crate) fn discover_transcripts(
+        &self,
+    ) -> Result<TranscriptDiscoveryReport, TranscriptStoreError> {
+        let sessions = self
+            .sessions
+            .discover_sessions()
+            .map_err(map_session_error)?;
+        let mut report = TranscriptDiscoveryReport {
+            transcripts: Vec::new(),
+            issues: Vec::new(),
+            scanned_sessions: sessions.scanned_entries,
+            issues_truncated: sessions.issues_truncated,
+        };
+        for issue in sessions.issues {
+            push_discovery_issue(&mut report, issue.entry_name, issue.code);
+        }
+        let mut discovered_segments = 0_usize;
+        let mut discovered_text_bytes = 0_usize;
+        for candidate in sessions.sessions {
+            let session = candidate.snapshot.session;
+            let project_folder = candidate.project_folder;
+            let locator = SessionLocator::from_discovered(&session, project_folder.clone());
+            match self.read_transcript(&locator) {
+                Ok(snapshot) => {
+                    discovered_segments = discovered_segments
+                        .checked_add(snapshot.segments.len())
+                        .ok_or_else(|| {
+                            TranscriptStoreError::new("transcript_discovery_limit_exceeded")
+                        })?;
+                    discovered_text_bytes = snapshot
+                        .segments
+                        .iter()
+                        .try_fold(discovered_text_bytes, |total, segment| {
+                            total.checked_add(segment.text.len())
+                        })
+                        .ok_or_else(|| {
+                            TranscriptStoreError::new("transcript_discovery_limit_exceeded")
+                        })?;
+                    if discovered_segments > MAX_DISCOVERED_SEGMENTS
+                        || discovered_text_bytes > MAX_DISCOVERED_TEXT_BYTES
+                    {
+                        return Err(TranscriptStoreError::new(
+                            "transcript_discovery_limit_exceeded",
+                        ));
+                    }
+                    report.transcripts.push(DiscoveredTranscript {
+                        session,
+                        project_folder,
+                        snapshot,
+                    });
+                }
+                Err(error) => push_discovery_issue(
+                    &mut report,
+                    safe_entry_name(&project_folder, &session.folder_name),
+                    error.code,
+                ),
+            }
+        }
+        Ok(report)
     }
 
     pub(crate) fn materialize(
@@ -268,6 +362,7 @@ impl TranscriptStore {
             checkpoint_sequence: sequence,
             checkpoint_checksum: checksum,
             segment_count: replay.finalized_segments.len(),
+            segments: replay.finalized_segments,
             bytes,
         })
     }
@@ -310,6 +405,7 @@ struct LockedTranscript {
     checkpoint_sequence: u64,
     checkpoint_checksum: Option<String>,
     segment_count: usize,
+    segments: Vec<FinalizedTranscriptSegment>,
 }
 
 impl LockedTranscript {
@@ -320,6 +416,7 @@ impl LockedTranscript {
             checkpoint_checksum: self.checkpoint_checksum,
             segment_count: self.segment_count,
             recovered_from_backup,
+            segments: self.segments,
         }
     }
 }
@@ -448,6 +545,26 @@ fn format_timestamp(milliseconds: u64) -> String {
     let seconds = (milliseconds / 1_000) % 60;
     let millis = milliseconds % 1_000;
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+fn safe_entry_name(project_folder: &str, session_folder: &str) -> Option<String> {
+    let combined = format!("{project_folder}/{session_folder}");
+    (!combined.is_empty() && combined.len() <= 257 && !combined.chars().any(char::is_control))
+        .then_some(combined)
+}
+
+fn push_discovery_issue(
+    report: &mut TranscriptDiscoveryReport,
+    entry_name: Option<String>,
+    code: &'static str,
+) {
+    if report.issues.len() < MAX_TRANSCRIPT_DISCOVERY_ISSUES {
+        report
+            .issues
+            .push(TranscriptDiscoveryIssue { entry_name, code });
+    } else {
+        report.issues_truncated = true;
+    }
 }
 
 fn write_synced_temporary(path: &Path, bytes: &[u8]) -> Result<(), TranscriptStoreError> {

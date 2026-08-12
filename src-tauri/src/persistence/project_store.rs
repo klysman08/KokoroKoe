@@ -76,6 +76,10 @@ impl ProjectLocator {
             folder_name: project.folder_name.clone(),
         })
     }
+
+    pub(super) fn from_discovered(id: ProjectId, folder_name: String) -> Self {
+        Self { id, folder_name }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

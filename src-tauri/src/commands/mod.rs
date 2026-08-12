@@ -5,3 +5,4 @@ pub(crate) mod sessions;
 pub(crate) mod settings;
 #[cfg(windows)]
 pub(crate) mod transcription;
+pub(crate) mod transcripts;

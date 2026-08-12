@@ -8,6 +8,7 @@ mod session_service;
 mod session_store;
 mod settings_store;
 mod transcript_index;
+mod transcript_service;
 mod transcript_store;
 
 #[allow(unused_imports)]
@@ -35,6 +36,7 @@ pub(crate) use settings_store::SettingsService;
 pub(crate) use transcript_index::{
     TranscriptSearchCatalog, TranscriptSearchPage, TranscriptSearchRequest, TranscriptSearchResult,
 };
+pub(crate) use transcript_service::TranscriptService;
 #[allow(unused_imports)]
 pub(crate) use transcript_store::{
     TranscriptSnapshot, TranscriptSnapshotFingerprint, TranscriptStore, TranscriptStoreError,

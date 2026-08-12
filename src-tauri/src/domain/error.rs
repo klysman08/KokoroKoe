@@ -100,6 +100,57 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn transcript_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "transcript_page_invalid"
+            | "transcript_page_cursor_invalid"
+            | "transcript_search_request_invalid"
+            | "transcript_search_cursor_invalid" => (
+                "The transcript request is not valid.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "project_not_found" | "session_not_found" => (
+                "That saved transcript is no longer available.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "transcript_snapshot_missing" => (
+                "This session does not have a saved transcript yet.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "transcript_page_stale" | "transcript_search_page_stale" => (
+                "The saved transcript changed. Reload it to continue.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "transcript_snapshot_invalid"
+            | "transcript_snapshot_recovery_failed"
+            | "transcript_search_index_invalid" => (
+                "The saved transcript could not be verified.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not complete the local transcript operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
+    pub(crate) fn transcript_worker_failed() -> Self {
+        Self::new(
+            "transcript_worker_failed",
+            "The local transcript service stopped unexpectedly.",
+            Some("The background transcript operation did not complete."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
     pub(crate) fn session_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "session_contract_invalid" | "session_update_invalid" | "session_page_invalid" => (

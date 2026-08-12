@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P4-012 - Rebuildable transcript search projection
+- Task: P4-013 - Product transcript reading and search boundary
 - Date: 2026-08-12
-- Outcome: added bounded valid-only transcript discovery and a Rust-only workspace/digest-bound SQLite/FTS5 segment projection with transactional rebuild, corruption quarantine/repair, deterministic snippets, and strict query/scope/generation-bound pagination.
-- Verification: Rust 1.88 locked fmt/Clippy, 214 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 128 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P4-012 checkpoint](docs/project-memory.md#p4-012---rebuildable-transcript-search-projection)
+- Outcome: exposed authoritative finalized-transcript paging and rebuildable FTS search through two exact-main blocking commands, strict shared Rust/Zod contracts, fingerprint/scope/generation-bound cursors, least-privilege permissions, and a bounded inert project/session UI.
+- Verification: Rust 1.88 locked fmt/Clippy, 217 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 134 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
+- Memory: [P4-013 checkpoint](docs/project-memory.md#p4-013---product-transcript-reading-and-search-boundary)

@@ -18,6 +18,14 @@ impl CredentialStatus {
             validated_at: None,
         }
     }
+
+    pub(crate) fn validated(validated_at: String) -> Result<Self, &'static str> {
+        crate::domain::validate_rfc3339(&validated_at)?;
+        Ok(Self {
+            configured: true,
+            validated_at: Some(validated_at),
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -25,6 +33,20 @@ impl CredentialStatus {
 pub(crate) struct OpenRouterApiKey(String);
 
 impl OpenRouterApiKey {
+    pub(crate) fn from_bytes(mut bytes: Vec<u8>) -> Result<Self, &'static str> {
+        let value = match String::from_utf8(bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                bytes = error.into_bytes();
+                bytes.fill(0);
+                return Err("credential_key_invalid");
+            }
+        };
+        let key = Self(value);
+        key.validate()?;
+        Ok(key)
+    }
+
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         let bytes = self.0.as_bytes();
         if !(MIN_API_KEY_BYTES..=MAX_API_KEY_BYTES).contains(&bytes.len())

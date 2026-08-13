@@ -1,6 +1,7 @@
 mod credentials;
 mod error;
 mod models;
+mod openrouter;
 mod projects;
 mod settings;
 mod transcription;
@@ -14,6 +15,9 @@ pub(crate) use models::{
     EventEnvelope, ModelBackend, ModelCompatibility, ModelDescriptor, ModelDownloadJob,
     ModelDownloadProgress, ModelDownloadStatus, ModelInstallation, ModelInstallationStatus,
     PerformanceClass, RequestId, now_rfc3339,
+};
+pub(crate) use openrouter::{
+    CredentialValidation, OpenRouterDataCollection, OpenRouterModel, validate_rfc3339,
 };
 pub(crate) use projects::{
     AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, LlmRoleModels,

@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod domain;
+mod llm;
 mod logging;
 mod models;
 mod persistence;

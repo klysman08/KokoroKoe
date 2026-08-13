@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-001 - Secure OpenRouter credential storage
+- Task: P5-002 - OpenRouter validation and model-catalog boundary
 - Date: 2026-08-13
-- Outcome: added exact-main set/status/delete commands backed by a fixed per-user Windows Credential Manager generic credential, sanitized credential failures, status-only strict contracts, minimal capability grants, and a Settings card whose password input remains component-local and clears after every save attempt.
-- Verification: Rust 1.88 locked fmt/Clippy, 235 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 143 Vitest tests; real debug and release Windows Credential Manager replacement/restart/delete tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P5-001 checkpoint](docs/project-memory.md#p5-001---secure-openrouter-credential-storage)
+- Outcome: added an internal Rust-only provider client for bodyless credential validation and a bounded, cached, text-only ZDR model catalog; redirects are disabled, responses and time are capped, raw bodies are discarded from errors, and only successful validation time is retained beside the OS credential.
+- Verification: Rust 1.88 locked fmt/Clippy, 243 ordinary tests plus 12 explicit ignored gates and 3 capability tests; 8 focused optimized provider/contract tests and a real optimized Credential Manager metadata round trip; Node 24 frontend gates and 143 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
+- Memory: [P5-002 checkpoint](docs/project-memory.md#p5-002---openrouter-validation-and-model-catalog-boundary)

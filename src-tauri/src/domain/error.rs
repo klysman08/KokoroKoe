@@ -100,6 +100,59 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn openrouter_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "openrouter_credential_missing" => (
+                "Add an OpenRouter API key before using online model features.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "openrouter_credential_invalid" | "openrouter_authentication_failed" => (
+                "OpenRouter did not accept the configured API key.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "openrouter_permission_denied" => (
+                "The OpenRouter API key does not allow this operation.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "openrouter_payment_required" => (
+                "The OpenRouter account does not have enough credit for this operation.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "openrouter_rate_limited" => (
+                "OpenRouter is rate limiting requests. Try again later.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "openrouter_timeout" | "openrouter_network_unavailable" => (
+                "KokoroKoe could not reach OpenRouter.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "openrouter_response_invalid"
+            | "openrouter_response_too_large"
+            | "openrouter_model_catalog_invalid" => (
+                "OpenRouter returned an unsupported response.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "openrouter_request_rejected" => (
+                "OpenRouter rejected the request.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            _ => (
+                "The OpenRouter service is temporarily unavailable.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn credential_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "credential_key_invalid" => (

@@ -1,0 +1,12 @@
+{
+  "id": "example/text-model",
+  "name": "Example Text Model",
+  "provider": "example",
+  "contextLength": 131072,
+  "promptPricePerToken": "0.000001",
+  "completionPricePerToken": "0.000002",
+  "supportsStructuredOutputs": true,
+  "supportsStreaming": true,
+  "zeroDataRetentionAvailable": true,
+  "dataCollection": "deny"
+}

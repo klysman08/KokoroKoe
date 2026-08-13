@@ -17,6 +17,7 @@ use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
 use persistence::{ProjectService, SessionService, SettingsService, TranscriptService};
+use security::CredentialService;
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
 
@@ -62,6 +63,7 @@ pub fn run() {
             let transcripts = TranscriptService::new(settings.clone(), app_data_directory.clone());
 
             app.manage(settings);
+            app.manage(CredentialService::open());
             app.manage(models);
             app.manage(projects);
             app.manage(sessions);
@@ -98,6 +100,9 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::choose_workspace,
+            commands::credentials::get_openrouter_credential_status,
+            commands::credentials::set_openrouter_api_key,
+            commands::credentials::delete_openrouter_api_key,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

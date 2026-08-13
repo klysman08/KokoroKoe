@@ -1,7 +1,9 @@
 mod authorization;
+mod credentials;
 mod workspace;
 
 pub(crate) use authorization::authorize_main_window;
+pub(crate) use credentials::CredentialService;
 pub(crate) use workspace::{
     prepare_foundation_workspace, probe_workspace, reject_reparse_points,
     validate_workspace_path_syntax,

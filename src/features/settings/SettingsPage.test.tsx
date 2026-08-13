@@ -17,6 +17,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@/features/settings/AudioDeviceSettings", () => ({
   AudioDeviceSettings: () => null,
 }))
+vi.mock("@/features/settings/OpenRouterCredentialCard", () => ({
+  OpenRouterCredentialCard: () => null,
+}))
 
 const invokeMock = vi.mocked(invoke)
 const conflictError = {

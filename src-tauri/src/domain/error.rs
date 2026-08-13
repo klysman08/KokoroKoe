@@ -100,6 +100,27 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn credential_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "credential_key_invalid" => (
+                "Enter a valid OpenRouter API key without surrounding whitespace.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "credential_delete_unavailable" => (
+                "The OpenRouter API key could not be removed from Windows Credential Manager.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "Windows Credential Manager is unavailable for the OpenRouter API key.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn transcript_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "transcript_page_invalid"

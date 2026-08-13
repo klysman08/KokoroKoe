@@ -1,3 +1,4 @@
+mod credentials;
 mod error;
 mod models;
 mod projects;
@@ -5,6 +6,7 @@ mod settings;
 mod transcription;
 mod transcripts;
 
+pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
 pub(crate) use error::{AppError, CommandError};
 #[cfg(test)]
 pub(crate) use models::ModelContractFixture;

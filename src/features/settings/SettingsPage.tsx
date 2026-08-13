@@ -15,6 +15,7 @@ import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
 import { ApplicationError } from "@/contracts/app-error"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { AudioDeviceSettings } from "@/features/settings/AudioDeviceSettings"
+import { OpenRouterCredentialCard } from "@/features/settings/OpenRouterCredentialCard"
 import {
   useChooseWorkspaceMutation,
   useUpdateSettingsMutation,
@@ -122,6 +123,8 @@ export function SettingsPage() {
       </Card>
 
       <AudioDeviceSettings />
+
+      <OpenRouterCredentialCard />
 
       {settingsQuery.isSuccess && (
         <ModelManagement settings={settingsQuery.data} />

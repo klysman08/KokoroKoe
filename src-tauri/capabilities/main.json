@@ -10,6 +10,8 @@
     "allow-get-openrouter-credential-status",
     "allow-set-openrouter-api-key",
     "allow-delete-openrouter-api-key",
+    "allow-validate-openrouter-api-key",
+    "allow-list-openrouter-models",
     "allow-list-projects",
     "allow-get-project",
     "allow-create-project",

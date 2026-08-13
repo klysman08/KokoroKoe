@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRound, Trash2 } from "lucide-react"
+import { KeyRound, RefreshCw, ShieldCheck, Trash2 } from "lucide-react"
 import { useState, type FormEvent } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -19,19 +19,47 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { ApplicationError } from "@/contracts/app-error"
 import {
   openRouterApiKeySchema,
   type CredentialStatus,
 } from "@/contracts/credentials"
+import { type OpenRouterModel } from "@/contracts/openrouter"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import {
   deleteOpenRouterApiKey,
   getOpenRouterCredentialStatus,
   setOpenRouterApiKey,
 } from "@/lib/tauri/credentials"
+import {
+  listOpenRouterModels,
+  validateOpenRouterApiKey,
+} from "@/lib/tauri/openrouter"
 
 const credentialQueryKey = ["openrouter-credential-status"] as const
+const modelQueryKey = ["openrouter-models"] as const
+const visibleModelLimit = 100
+
+function pricePerMillion(value: string) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
+  }).format(Number(value) * 1_000_000)
+}
+
+function contextTokens(value: number) {
+  return new Intl.NumberFormat().format(value)
+}
 
 export function OpenRouterCredentialCard() {
   const queryClient = useQueryClient()
@@ -41,8 +69,17 @@ export function OpenRouterCredentialCard() {
     gcTime: 0,
     retry: false,
   })
+  const models = useQuery<OpenRouterModel[], ApplicationError>({
+    queryKey: modelQueryKey,
+    queryFn: () => listOpenRouterModels(false),
+    enabled: status.data?.validatedAt !== undefined,
+    staleTime: 15 * 60 * 1000,
+    retry: false,
+  })
   const [apiKey, setApiKey] = useState("")
-  const [pending, setPending] = useState<"set" | "delete">()
+  const [pending, setPending] = useState<
+    "set" | "delete" | "validate" | "refresh"
+  >()
   const [actionError, setActionError] = useState<ApplicationError>()
   const [saved, setSaved] = useState(false)
   const keyValid = openRouterApiKeySchema.safeParse(apiKey).success
@@ -56,6 +93,7 @@ export function OpenRouterCredentialCard() {
     try {
       const next = await setOpenRouterApiKey(apiKey)
       queryClient.setQueryData(credentialQueryKey, next)
+      queryClient.removeQueries({ queryKey: modelQueryKey })
       setSaved(true)
     } catch (error) {
       setActionError(error as ApplicationError)
@@ -73,6 +111,7 @@ export function OpenRouterCredentialCard() {
     try {
       const next = await deleteOpenRouterApiKey()
       queryClient.setQueryData(credentialQueryKey, next)
+      queryClient.removeQueries({ queryKey: modelQueryKey })
     } catch (error) {
       setActionError(error as ApplicationError)
     } finally {
@@ -80,6 +119,41 @@ export function OpenRouterCredentialCard() {
       setPending(undefined)
     }
   }
+
+  async function validate() {
+    if (pending || !status.data?.configured) return
+    setPending("validate")
+    setActionError(undefined)
+    setSaved(false)
+    try {
+      const result = await validateOpenRouterApiKey()
+      queryClient.setQueryData<CredentialStatus>(credentialQueryKey, {
+        configured: true,
+        validatedAt: result.validatedAt,
+      })
+      await queryClient.invalidateQueries({ queryKey: modelQueryKey })
+    } catch (error) {
+      setActionError(error as ApplicationError)
+    } finally {
+      setPending(undefined)
+    }
+  }
+
+  async function refreshModels() {
+    if (pending || !status.data?.validatedAt) return
+    setPending("refresh")
+    setActionError(undefined)
+    try {
+      const next = await listOpenRouterModels(true)
+      queryClient.setQueryData(modelQueryKey, next)
+    } catch (error) {
+      setActionError(error as ApplicationError)
+    } finally {
+      setPending(undefined)
+    }
+  }
+
+  const visibleModels = models.data?.slice(0, visibleModelLimit) ?? []
 
   return (
     <Card>
@@ -96,7 +170,11 @@ export function OpenRouterCredentialCard() {
           </div>
           {status.data && (
             <Badge variant={status.data.configured ? "secondary" : "outline"}>
-              {status.data.configured ? "Configured" : "Not configured"}
+              {status.data.validatedAt
+                ? "Validated"
+                : status.data.configured
+                  ? "Configured"
+                  : "Not configured"}
             </Badge>
           )}
         </div>
@@ -120,7 +198,8 @@ export function OpenRouterCredentialCard() {
               />
               <FieldDescription id="openrouter-api-key-help">
                 The key is sent once to Rust, cleared from this field after the
-                command, and never returned. Network validation is a later task.
+                command, and never returned. Validation sends no transcript or
+                audio.
               </FieldDescription>
               {apiKey.length > 0 && !keyValid && (
                 <FieldError>
@@ -138,6 +217,19 @@ export function OpenRouterCredentialCard() {
               {status.data?.configured && (
                 <Button
                   type="button"
+                  variant="secondary"
+                  disabled={pending !== undefined}
+                  onClick={() => void validate()}
+                >
+                  <ShieldCheck aria-hidden="true" data-icon="inline-start" />
+                  {pending === "validate"
+                    ? "Validating…"
+                    : "Validate credential"}
+                </Button>
+              )}
+              {status.data?.configured && (
+                <Button
+                  type="button"
                   variant="outline"
                   disabled={pending !== undefined}
                   onClick={remove}
@@ -151,7 +243,89 @@ export function OpenRouterCredentialCard() {
         </form>
         {saved && <p role="status">Credential saved securely.</p>}
         {status.isPending && <p role="status">Checking credential status…</p>}
+        {status.data?.validatedAt && (
+          <p className="text-muted-foreground text-sm">
+            <span>Last validated: </span>
+            <time dateTime={status.data.validatedAt}>
+              {status.data.validatedAt}
+            </time>
+          </p>
+        )}
+        {status.data?.configured && !status.data.validatedAt && (
+          <p className="text-muted-foreground text-sm">
+            Stored locally, but not yet validated with OpenRouter.
+          </p>
+        )}
+        {models.isPending && status.data?.validatedAt && (
+          <p role="status">Loading privacy-filtered text models…</p>
+        )}
+        {models.data && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">Available text models</p>
+                <p className="text-muted-foreground text-sm">
+                  Only models with a zero-data-retention endpoint are included.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending !== undefined}
+                onClick={() => void refreshModels()}
+              >
+                <RefreshCw aria-hidden="true" data-icon="inline-start" />
+                {pending === "refresh" ? "Refreshing…" : "Refresh models"}
+              </Button>
+            </div>
+            <Table>
+              <TableCaption>
+                Showing {visibleModels.length} of {models.data.length} validated
+                catalog models. Prices are approximate USD per million tokens.
+              </TableCaption>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Context</TableHead>
+                  <TableHead>Input</TableHead>
+                  <TableHead>Output</TableHead>
+                  <TableHead>Capabilities</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleModels.map((model) => (
+                  <TableRow key={model.id}>
+                    <TableCell className="max-w-72 whitespace-normal">
+                      <p className="font-medium">{model.name}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {model.provider} · {model.id}
+                      </p>
+                    </TableCell>
+                    <TableCell>{contextTokens(model.contextLength)}</TableCell>
+                    <TableCell>
+                      {pricePerMillion(model.promptPricePerToken)}
+                    </TableCell>
+                    <TableCell>
+                      {pricePerMillion(model.completionPricePerToken)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant="outline">Streaming</Badge>
+                        <Badge variant="outline">ZDR</Badge>
+                        {model.supportsStructuredOutputs && (
+                          <Badge variant="outline">Structured</Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
         {status.isError && <SanitizedErrorPanel error={status.error} />}
+        {models.isError && <SanitizedErrorPanel error={models.error} />}
         {actionError && <SanitizedErrorPanel error={actionError} />}
       </CardContent>
     </Card>

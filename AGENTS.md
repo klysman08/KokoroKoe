@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-002 - OpenRouter validation and model-catalog boundary
+- Task: P5-003 - Product OpenRouter validation and model catalog
 - Date: 2026-08-13
-- Outcome: added an internal Rust-only provider client for bodyless credential validation and a bounded, cached, text-only ZDR model catalog; redirects are disabled, responses and time are capped, raw bodies are discarded from errors, and only successful validation time is retained beside the OS credential.
-- Verification: Rust 1.88 locked fmt/Clippy, 243 ordinary tests plus 12 explicit ignored gates and 3 capability tests; 8 focused optimized provider/contract tests and a real optimized Credential Manager metadata round trip; Node 24 frontend gates and 143 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P5-002 checkpoint](docs/project-memory.md#p5-002---openrouter-validation-and-model-catalog-boundary)
+- Outcome: exposed exact-main credential validation and ZDR text-model discovery through strict blocking Rust commands, minimal permissions, Zod adapters, and a bounded Settings table showing validation time, provider/model identity, context, pricing, and capabilities without exposing the key or adding frontend network access.
+- Verification: Rust 1.88 locked fmt/Clippy, 244 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 149 Vitest tests including strict shared contracts, exact command arguments, cache refresh, and hostile-provider-text rendering; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
+- Memory: [P5-003 checkpoint](docs/project-memory.md#p5-003---product-openrouter-validation-and-model-catalog)

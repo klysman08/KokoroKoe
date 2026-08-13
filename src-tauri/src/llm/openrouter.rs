@@ -55,7 +55,6 @@ struct CachedCatalog {
 }
 
 impl OpenRouterService {
-    #[allow(dead_code)] // P5-002 is the internal provider boundary; product commands follow later.
     pub(crate) fn open(credentials: CredentialService) -> Result<Self, AppError> {
         Self::with_configuration(
             credentials,
@@ -88,7 +87,6 @@ impl OpenRouterService {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn validate_credential(&self) -> Result<CredentialValidation, AppError> {
         let api_key = self.credentials.load_api_key()?;
         let response = self.send_get("/api/v1/key", &api_key)?;
@@ -105,7 +103,6 @@ impl OpenRouterService {
         Ok(result)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn list_models(
         &self,
         force_refresh: bool,

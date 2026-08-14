@@ -4,6 +4,7 @@ import {
   createProjectInputSchema,
   updateProjectInputSchema,
   type CreateProjectInput,
+  type LlmRoleModels,
   type Project,
   type UpdateProjectInput,
 } from "@/contracts/projects"
@@ -20,6 +21,7 @@ type ProjectFormProps = {
   project?: Project | undefined
   defaultPresetId?: string | undefined
   defaultTranscriptionModelId?: string | undefined
+  defaultLlmModels?: LlmRoleModels | undefined
   busy: boolean
   onCancel: () => void
   onCreate: (input: CreateProjectInput) => void
@@ -44,6 +46,7 @@ export function ProjectForm({
   project,
   defaultPresetId,
   defaultTranscriptionModelId,
+  defaultLlmModels,
   busy,
   onCancel,
   onCreate,
@@ -82,7 +85,7 @@ export function ProjectForm({
       ...editable,
       defaultPresetId,
       defaultTranscriptionModelId,
-      preferredLlmModels: {},
+      preferredLlmModels: defaultLlmModels ?? {},
     })
     if (!parsed.success) {
       setValidationMessage("Check the project fields and setup defaults.")

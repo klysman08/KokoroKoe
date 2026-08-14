@@ -8,6 +8,7 @@ import appSettingsFixture from "../../../fixtures/contracts/app-settings-v1.json
 import commandErrorFixture from "../../../fixtures/contracts/command-error-v1.json"
 import workspaceStatusFixture from "../../../fixtures/contracts/workspace-status-v1.json"
 import modelFixture from "../../../fixtures/contracts/model-management-v1.json"
+import openRouterModelFixture from "../../../fixtures/contracts/openrouter-model-v1.json"
 
 import { SettingsPage } from "@/features/settings/SettingsPage"
 
@@ -139,6 +140,47 @@ describe("SettingsPage", () => {
       expect(invokeMock).toHaveBeenCalledWith("update_settings", {
         expectedRevision: 0,
         value: { retainAudioByDefault: true },
+      }),
+    )
+  })
+
+  it("selects a cached privacy-filtered role model and saves it by revision", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
+      if (command === "update_settings") {
+        return {
+          ...appSettingsFixture,
+          revision: 1,
+          defaultLlmModels: { insights: openRouterModelFixture.id },
+        }
+      }
+      return appSettingsFixture
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(["openrouter-models"], [openRouterModelFixture])
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    )
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Fast insights model",
+    })
+    await user.click(selector)
+    await user.click(
+      screen.getByRole("option", { name: /Example Text Model · example/i }),
+    )
+    await user.click(screen.getByRole("button", { name: /save settings/i }))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("update_settings", {
+        expectedRevision: 0,
+        value: {
+          defaultLlmModels: { insights: openRouterModelFixture.id },
+        },
       }),
     )
   })

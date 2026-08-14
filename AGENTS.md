@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-003 - Product OpenRouter validation and model catalog
+- Task: P5-004 - Persistent role-model and session budget defaults
 - Date: 2026-08-13
-- Outcome: exposed exact-main credential validation and ZDR text-model discovery through strict blocking Rust commands, minimal permissions, Zod adapters, and a bounded Settings table showing validation time, provider/model identity, context, pricing, and capabilities without exposing the key or adding frontend network access.
-- Verification: Rust 1.88 locked fmt/Clippy, 244 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 149 Vitest tests including strict shared contracts, exact command arguments, cache refresh, and hostile-provider-text rendering; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; locked x64 release build and responsive native launch smoke.
-- Memory: [P5-003 checkpoint](docs/project-memory.md#p5-003---product-openrouter-validation-and-model-catalog)
+- Outcome: persisted optional insight/summary/manual-question OpenRouter defaults through the existing optimistic non-secret settings record, validated changed IDs against the current Rust-owned ZDR text catalog without implicit network access, surfaced cached-catalog selectors, and froze resolved models plus budget/token caps into backward-compatible new Session snapshots.
+- Verification: Rust 1.88 locked fmt/Clippy, 246 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; clean npm audit and 159-package license inventory; Cargo policy/audit with 17 allowed warnings; unchanged dependencies/ACLs; locked x64 release build and responsive native launch smoke.
+- Memory: [P5-004 checkpoint](docs/project-memory.md#p5-004---persistent-role-model-and-session-budget-defaults)

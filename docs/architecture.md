@@ -248,6 +248,8 @@ type Session = {
   transcriptionEngine: "whisper"
   transcriptionModelId: string
   llmModels: LlmRoleModels
+  spendingLimitUsd: string
+  maxTokensPerRequest: number
   retainAudio: boolean
   state: SessionState
   channelHealth: Record<AudioSource, ChannelHealth>
@@ -439,6 +441,7 @@ type AppSettings = {
   workspacePath: string
   defaultPresetId: PresetId
   defaultTranscriptionModelId: string
+  defaultLlmModels: LlmRoleModels
   llmEnabled: boolean
   retainAudioByDefault: boolean
   requireZeroDataRetention: boolean
@@ -879,6 +882,8 @@ P5-001 stores the optional API key as a Windows Credential Manager generic crede
 P5-002 adds the internal Rust-only provider boundary. Credential validation performs one authenticated bodyless `GET /api/v1/key`; only a successful object response records an RFC 3339 timestamp in a separate per-user Credential Manager metadata target. Replacing or deleting the key clears that timestamp. Model discovery performs an authenticated `GET /api/v1/models` capped at 500 records with `input_modalities=text`, `output_modalities=text`, and `zdr=true`, then returns only bounded identity/provider/context/pricing/capability fields marked as ZDR available and data-collection denied. The catalog is deterministically sorted, rejects duplicate or non-text records, and is cached in memory for fifteen minutes unless explicitly refreshed. Both operations disable redirects, use five-second connect and twenty-second total timeouts, cap successful bodies at 64 KiB and 2 MiB respectively, classify HTTP/transport failures into fixed secret-free errors, and discard raw provider bodies. No audio, transcript text, prompt, completion request, streaming, retry, cost reservation, command, capability, event, frontend contract, or UI is added by this boundary.
 
 P5-003 exposes that boundary only through exact-main `validate_openrouter_api_key` and `list_openrouter_models` commands. Each accepts a fresh request UUID, authorizes before cloning service state, and runs credential/network work on a blocking task. Strict Zod adapters reject malformed, duplicate, noncanonical, non-ZDR, or unexpected response fields. The Settings credential card can validate the stored key, reports its persisted validation time, automatically requests the cached catalog only after validation, and explicitly refreshes it. It renders at most the first 100 of the bounded 500 models in an inert shadcn table with provider/ID, context, approximate per-million-token prices, streaming, structured-output, and ZDR indicators. P5-003 adds no key exposure, model-role selection or persistence, prompt/transcript/completion request, streaming request, retry, cost reservation, insight, event, extra window, or generic frontend network permission.
+
+P5-004 extends the existing versioned non-secret SQLite settings record with optional default models for fast insights, summaries, and manual questions. A role-model mutation is accepted only after the displayed settings revision matches and every selected identifier exists in the unexpired in-memory P5-002 ZDR text-model catalog; an absent or expired catalog requires an explicit model-list refresh and performs no implicit provider request. Empty role selections remain valid. New projects inherit the current role defaults, and new Session Markdown snapshots freeze the project-overridden/global-fallback role models together with the current fixed-decimal per-session spending limit and bounded maximum-token default. Older settings records upgrade to an empty role selection, and older Session snapshots upgrade to the established `0.00`/2,048 budget defaults when read. The Settings UI composes cached-catalog selectors with the existing optimistic update path. This boundary adds no prompt construction, transcript retrieval or transmission, completion, streaming request, retry, insight/summary generation, cost reservation, charge, event, extra window, or generic frontend network permission.
 
 The context builder combines frozen project/session/preset context, accumulated summary, a recent sliding window, deduplicated FTS-selected segments, and the requested output. It never resends the full transcript by default. Transcript text is delimited as untrusted data and cannot override internal instructions.
 

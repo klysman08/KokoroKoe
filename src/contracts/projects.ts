@@ -251,6 +251,8 @@ export const sessionSchema = z
     transcriptionEngine: z.literal("whisper"),
     transcriptionModelId: singleLine(128),
     llmModels: llmRoleFields,
+    spendingLimitUsd: fixedDecimalSchema,
+    maxTokensPerRequest: z.number().int().min(1).max(1_000_000),
     retainAudio: z.boolean(),
     state: sessionStateSchema,
     channelHealth: z.strictObject({
@@ -319,6 +321,8 @@ const sessionEditableFields = {
   systemOutput: audioDeviceSnapshotSchema,
   transcriptionModelId: singleLine(128),
   llmModels: llmRoleModelsSchema,
+  spendingLimitUsd: fixedDecimalSchema,
+  maxTokensPerRequest: z.number().int().min(1).max(1_000_000),
   retainAudio: z.boolean(),
 } as const
 
@@ -438,6 +442,7 @@ export const projectSessionFixtureSchema = z
   })
 
 export type ProjectId = z.infer<typeof projectIdSchema>
+export type LlmRoleModels = z.infer<typeof llmRoleModelsSchema>
 export type SessionId = z.infer<typeof sessionIdSchema>
 export type Project = z.infer<typeof projectSchema>
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>

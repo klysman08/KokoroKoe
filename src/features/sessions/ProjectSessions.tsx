@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { type Project, type Session } from "@/contracts/projects"
+import { type AppSettings } from "@/contracts/settings"
 import { type ApplicationError } from "@/contracts/app-error"
 import { type AudioDeviceList } from "@/contracts/audio"
 import { requestIdSchema } from "@/contracts/models"
@@ -42,9 +43,11 @@ import {
 export function ProjectSessions({
   project,
   onClose,
+  settings,
 }: {
   project: Project
   onClose: () => void
+  settings: AppSettings | undefined
 }) {
   const sessionsQuery = useSessionsQuery(project.id, true)
   const devicesQuery = useQuery<AudioDeviceList, ApplicationError>({
@@ -159,6 +162,7 @@ export function ProjectSessions({
                 )
               }
               project={project}
+              settings={settings}
               session={editing}
             />
           )}

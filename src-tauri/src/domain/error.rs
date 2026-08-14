@@ -139,6 +139,16 @@ impl AppError {
                 ErrorSeverity::Error,
                 true,
             ),
+            "openrouter_catalog_required" => (
+                "Refresh the OpenRouter model list before saving model defaults.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "openrouter_model_not_available" => (
+                "Choose models from the current privacy-filtered OpenRouter catalog.",
+                ErrorSeverity::Warning,
+                false,
+            ),
             "openrouter_request_rejected" => (
                 "OpenRouter rejected the request.",
                 ErrorSeverity::Warning,

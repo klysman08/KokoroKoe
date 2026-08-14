@@ -717,6 +717,8 @@ fn render_session_document(session: &Session) -> Result<String, SessionStoreErro
         ("transcription_engine", "transcriptionEngine"),
         ("transcription_model_id", "transcriptionModelId"),
         ("llm_models", "llmModels"),
+        ("spending_limit_usd", "spendingLimitUsd"),
+        ("max_tokens_per_request", "maxTokensPerRequest"),
         ("retain_audio", "retainAudio"),
         ("state", "state"),
         ("channel_health", "channelHealth"),
@@ -915,6 +917,36 @@ fn parse_session_document(bytes: &[u8]) -> Result<Session, SessionStoreError> {
         ("transcription_engine", "transcriptionEngine"),
         ("transcription_model_id", "transcriptionModelId"),
         ("llm_models", "llmModels"),
+    ] {
+        parse_exact_field(&mut lines, &mut object, yaml_name, json_name)?;
+    }
+    if lines
+        .peek()
+        .is_some_and(|line| line.starts_with("spending_limit_usd: "))
+    {
+        parse_exact_field(
+            &mut lines,
+            &mut object,
+            "spending_limit_usd",
+            "spendingLimitUsd",
+        )?;
+        parse_exact_field(
+            &mut lines,
+            &mut object,
+            "max_tokens_per_request",
+            "maxTokensPerRequest",
+        )?;
+    } else {
+        object.insert(
+            "spendingLimitUsd".to_owned(),
+            serde_json::Value::String("0.00".to_owned()),
+        );
+        object.insert(
+            "maxTokensPerRequest".to_owned(),
+            serde_json::Value::Number(2_048.into()),
+        );
+    }
+    for (yaml_name, json_name) in [
         ("retain_audio", "retainAudio"),
         ("state", "state"),
         ("channel_health", "channelHealth"),
@@ -1181,6 +1213,8 @@ mod tests {
             "systemOutput": source["systemOutput"],
             "transcriptionModelId": source["transcriptionModelId"],
             "llmModels": source["llmModels"],
+            "spendingLimitUsd": source["spendingLimitUsd"],
+            "maxTokensPerRequest": source["maxTokensPerRequest"],
             "retainAudio": true
         }))
         .unwrap();
@@ -1400,6 +1434,11 @@ mod tests {
         );
         let crlf = document.replace('\n', "\r\n");
         assert_eq!(parse_session_document(crlf.as_bytes()).unwrap(), session);
+        let legacy = document.replace(
+            "spending_limit_usd: \"0.00\"\nmax_tokens_per_request: 2048\n",
+            "",
+        );
+        assert_eq!(parse_session_document(legacy.as_bytes()).unwrap(), session);
 
         let invalid = [
             document.replace("document_type: \"session\"", "document_type: \"project\""),

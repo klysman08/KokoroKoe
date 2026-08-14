@@ -14,6 +14,8 @@ system_output: {"endpointId": "render-endpoint", "friendlyName": "Desktop speake
 transcription_engine: "whisper"
 transcription_model_id: "whisper-tiny-multilingual"
 llm_models: {}
+spending_limit_usd: "0.00"
+max_tokens_per_request: 2048
 retain_audio: false
 state: "transcribing"
 channel_health: {"microphone": {"endpointId": "microphone-endpoint", "status": "active", "updatedAt": "2026-08-11T09:00:02Z"}, "systemOutput": {"endpointId": "render-endpoint", "status": "active", "updatedAt": "2026-08-11T09:00:02Z"}}

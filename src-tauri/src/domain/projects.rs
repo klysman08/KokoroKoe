@@ -28,7 +28,7 @@ impl SessionId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LlmRoleModels {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
@@ -40,6 +40,22 @@ pub(crate) struct LlmRoleModels {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) manual_questions: Option<String>,
+}
+
+impl LlmRoleModels {
+    pub(crate) fn is_transport_valid(&self) -> bool {
+        valid_llm_models(self)
+    }
+
+    pub(crate) fn selected_ids(&self) -> impl Iterator<Item = &str> {
+        [
+            self.insights.as_deref(),
+            self.summaries.as_deref(),
+            self.manual_questions.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -245,6 +261,8 @@ pub(crate) struct CreateSessionSnapshotInput {
     pub(crate) system_output: AudioDeviceSnapshot,
     pub(crate) transcription_model_id: String,
     pub(crate) llm_models: LlmRoleModels,
+    pub(crate) spending_limit_usd: String,
+    pub(crate) max_tokens_per_request: u32,
     pub(crate) retain_audio: bool,
 }
 
@@ -278,6 +296,12 @@ pub(crate) struct UpdateSessionInput {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) llm_models: Option<LlmRoleModels>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) spending_limit_usd: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_tokens_per_request: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) retain_audio: Option<bool>,
@@ -365,6 +389,8 @@ pub(crate) struct Session {
     pub(crate) transcription_engine: TranscriptionEngine,
     pub(crate) transcription_model_id: String,
     pub(crate) llm_models: LlmRoleModels,
+    pub(crate) spending_limit_usd: String,
+    pub(crate) max_tokens_per_request: u32,
     pub(crate) retain_audio: bool,
     pub(crate) state: SessionState,
     pub(crate) channel_health: ChannelHealthBySource,
@@ -434,6 +460,10 @@ struct RawSession {
     transcription_engine: TranscriptionEngine,
     transcription_model_id: String,
     llm_models: LlmRoleModels,
+    #[serde(default = "default_spending_limit_usd")]
+    spending_limit_usd: String,
+    #[serde(default = "default_max_tokens_per_request")]
+    max_tokens_per_request: u32,
     retain_audio: bool,
     state: SessionState,
     channel_health: ChannelHealthBySource,
@@ -469,6 +499,8 @@ impl<'de> Deserialize<'de> for Session {
             transcription_engine: raw.transcription_engine,
             transcription_model_id: raw.transcription_model_id,
             llm_models: raw.llm_models,
+            spending_limit_usd: raw.spending_limit_usd,
+            max_tokens_per_request: raw.max_tokens_per_request,
             retain_audio: raw.retain_audio,
             state: raw.state,
             channel_health: raw.channel_health,
@@ -673,6 +705,8 @@ impl Session {
             transcription_engine: TranscriptionEngine::Whisper,
             transcription_model_id: input.transcription_model_id,
             llm_models: input.llm_models,
+            spending_limit_usd: input.spending_limit_usd,
+            max_tokens_per_request: input.max_tokens_per_request,
             retain_audio: input.retain_audio,
             state: SessionState::Idle,
             channel_health,
@@ -705,6 +739,8 @@ impl Session {
             || !valid_preset(&self.preset)
             || !bounded_text(&self.transcription_model_id, 1, 128, false)
             || !valid_llm_models(&self.llm_models)
+            || !fixed_decimal(&self.spending_limit_usd)
+            || !(1..=1_000_000).contains(&self.max_tokens_per_request)
             || !valid_channel_health(&self.channel_health.microphone)
             || !valid_channel_health(&self.channel_health.system_output)
             || !valid_usage(&self.usage)
@@ -756,6 +792,12 @@ impl Session {
             .transcription_model_id
             .unwrap_or_else(|| self.transcription_model_id.clone());
         value.llm_models = update.llm_models.unwrap_or_else(|| self.llm_models.clone());
+        value.spending_limit_usd = update
+            .spending_limit_usd
+            .unwrap_or_else(|| self.spending_limit_usd.clone());
+        value.max_tokens_per_request = update
+            .max_tokens_per_request
+            .unwrap_or(self.max_tokens_per_request);
         value.retain_audio = update.retain_audio.unwrap_or(self.retain_audio);
         value.channel_health.microphone.endpoint_id = Some(microphone.endpoint_id);
         value.channel_health.system_output.endpoint_id = Some(system_output.endpoint_id);
@@ -849,6 +891,8 @@ impl UpdateSessionInput {
             && self.system_output.is_none()
             && self.transcription_model_id.is_none()
             && self.llm_models.is_none()
+            && self.spending_limit_usd.is_none()
+            && self.max_tokens_per_request.is_none()
             && self.retain_audio.is_none()
     }
 }
@@ -938,6 +982,14 @@ fn valid_usage(value: &UsageAggregate) -> bool {
         && value.output_tokens <= JSON_SAFE_INTEGER_MAX
         && fixed_decimal(&value.estimated_cost_usd)
         && fixed_decimal(&value.actual_cost_usd)
+}
+
+fn default_spending_limit_usd() -> String {
+    "0.00".to_owned()
+}
+
+fn default_max_tokens_per_request() -> u32 {
+    2_048
 }
 
 fn valid_llm_models(value: &LlmRoleModels) -> bool {
@@ -1201,6 +1253,8 @@ mod tests {
             "systemOutput": source["systemOutput"],
             "transcriptionModelId": source["transcriptionModelId"],
             "llmModels": source["llmModels"],
+            "spendingLimitUsd": source["spendingLimitUsd"],
+            "maxTokensPerRequest": source["maxTokensPerRequest"],
             "retainAudio": true
         }))
         .unwrap();
@@ -1238,6 +1292,8 @@ mod tests {
             "systemOutput": source["systemOutput"],
             "transcriptionModelId": source["transcriptionModelId"],
             "llmModels": source["llmModels"],
+            "spendingLimitUsd": source["spendingLimitUsd"],
+            "maxTokensPerRequest": source["maxTokensPerRequest"],
             "retainAudio": false
         });
         input["unknown"] = serde_json::json!(true);
@@ -1253,6 +1309,8 @@ mod tests {
             "systemOutput": source["systemOutput"],
             "transcriptionModelId": source["transcriptionModelId"],
             "llmModels": source["llmModels"],
+            "spendingLimitUsd": source["spendingLimitUsd"],
+            "maxTokensPerRequest": source["maxTokensPerRequest"],
             "retainAudio": false
         }))
         .unwrap();

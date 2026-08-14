@@ -3,6 +3,11 @@
   "value": {
     "defaultPresetId": "00000000-0000-4000-8000-000000000001",
     "defaultTranscriptionModelId": "whisper-base-multilingual",
+    "defaultLlmModels": {
+      "insights": "openai/gpt-5-mini",
+      "summaries": "anthropic/claude-sonnet-4.5",
+      "manualQuestions": "google/gemini-2.5-flash"
+    },
     "llmEnabled": false,
     "retainAudioByDefault": false,
     "requireZeroDataRetention": true,

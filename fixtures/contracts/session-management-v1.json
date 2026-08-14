@@ -42,6 +42,8 @@
       },
       "transcriptionModelId": "whisper-tiny-multilingual",
       "llmModels": {},
+      "spendingLimitUsd": "0.00",
+      "maxTokensPerRequest": 2048,
       "retainAudio": false
     }
   },

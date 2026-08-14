@@ -143,6 +143,9 @@ describe("HomePage project management", () => {
           language: "en-GB",
           transcriptionModelId:
             projects.page.items[0]!.defaultTranscriptionModelId,
+          llmModels: appSettingsFixture.defaultLlmModels,
+          spendingLimitUsd: appSettingsFixture.defaultSessionBudgetUsd,
+          maxTokensPerRequest: appSettingsFixture.maxTokensPerRequest,
           retainAudio: false,
         }),
       ),

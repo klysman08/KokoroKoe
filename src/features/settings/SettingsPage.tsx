@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Cpu, Database, Download, HardDrive, ShieldCheck } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -11,11 +12,29 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
 import { ApplicationError } from "@/contracts/app-error"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { AudioDeviceSettings } from "@/features/settings/AudioDeviceSettings"
 import { OpenRouterCredentialCard } from "@/features/settings/OpenRouterCredentialCard"
+import { openRouterModelQueryKey } from "@/features/settings/openrouter-query"
+import { type OpenRouterModel } from "@/contracts/openrouter"
+import { listOpenRouterModels } from "@/lib/tauri/openrouter"
 import {
   useChooseWorkspaceMutation,
   useUpdateSettingsMutation,
@@ -358,6 +377,11 @@ function ModelManagement({ settings }: { settings: AppSettings | undefined }) {
 
 function PreferencesForm({ settings }: { settings: AppSettings }) {
   const mutation = useUpdateSettingsMutation()
+  const catalog = useQuery<OpenRouterModel[], ApplicationError>({
+    queryKey: openRouterModelQueryKey,
+    queryFn: () => listOpenRouterModels(false),
+    enabled: false,
+  })
   const [retainAudio, setRetainAudio] = useState(settings.retainAudioByDefault)
   const [requireZdr, setRequireZdr] = useState(
     settings.requireZeroDataRetention,
@@ -369,6 +393,7 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
     String(settings.maxTokensPerRequest),
   )
   const [budget, setBudget] = useState(settings.defaultSessionBudgetUsd)
+  const [llmModels, setLlmModels] = useState(settings.defaultLlmModels)
   const [retentionConfirmed, setRetentionConfirmed] = useState(false)
   const [privacyRelaxationConfirmed, setPrivacyRelaxationConfirmed] =
     useState(false)
@@ -384,6 +409,8 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
   const privacyNeedsConfirmation =
     (!requireZdr && settings.requireZeroDataRetention) ||
     (!denyCollection && settings.denyProviderDataCollection)
+  const modelSelectionChanged =
+    JSON.stringify(llmModels) !== JSON.stringify(settings.defaultLlmModels)
   const patch: AppSettingsUpdate = {
     ...(retainAudio !== settings.retainAudioByDefault && {
       retainAudioByDefault: retainAudio,
@@ -402,6 +429,7 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
       budget !== settings.defaultSessionBudgetUsd && {
         defaultSessionBudgetUsd: budget,
       }),
+    ...(modelSelectionChanged && { defaultLlmModels: llmModels }),
   }
   const dirty = Object.keys(patch).length > 0
   const confirmationsValid =
@@ -473,44 +501,83 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
               description="This confirmation is required before saving."
             />
           )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-2 text-sm" htmlFor="max-tokens">
-              <span className="font-medium">Maximum tokens per request</span>
-              <input
-                id="max-tokens"
-                className="border-input bg-background w-full rounded-md border px-3 py-2"
-                inputMode="numeric"
-                value={maxTokens}
-                aria-invalid={!tokensValid}
-                aria-describedby="max-tokens-help"
-                onChange={(event) => setMaxTokens(event.currentTarget.value)}
+          <FieldGroup>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <ModelRoleField
+                id="insights-model"
+                label="Fast insights model"
+                description="Frozen into new sessions for future real-time insights."
+                models={catalog.data ?? []}
+                value={llmModels.insights}
+                onChange={(insights) =>
+                  setLlmModels((current) => ({ ...current, insights }))
+                }
               />
-              <span
-                id="max-tokens-help"
-                className="text-muted-foreground block"
-              >
-                Enter a whole number from 1 to 1,000,000.
-              </span>
-            </label>
-            <label className="space-y-2 text-sm" htmlFor="session-budget">
-              <span className="font-medium">Default session budget (USD)</span>
-              <input
-                id="session-budget"
-                className="border-input bg-background w-full rounded-md border px-3 py-2"
-                inputMode="decimal"
-                value={budget}
-                aria-invalid={!budgetValid}
-                aria-describedby="session-budget-help"
-                onChange={(event) => setBudget(event.currentTarget.value)}
+              <ModelRoleField
+                id="summaries-model"
+                label="Summary model"
+                description="Frozen into new sessions for accumulated and final summaries."
+                models={catalog.data ?? []}
+                value={llmModels.summaries}
+                onChange={(summaries) =>
+                  setLlmModels((current) => ({ ...current, summaries }))
+                }
               />
-              <span
-                id="session-budget-help"
-                className="text-muted-foreground block"
-              >
-                Use a fixed amount such as 0.00 or 5.00.
-              </span>
-            </label>
-          </div>
+              <ModelRoleField
+                id="questions-model"
+                label="Manual questions model"
+                description="Frozen into new sessions for future transcript questions."
+                models={catalog.data ?? []}
+                value={llmModels.manualQuestions}
+                onChange={(manualQuestions) =>
+                  setLlmModels((current) => ({
+                    ...current,
+                    manualQuestions,
+                  }))
+                }
+              />
+            </div>
+            {!catalog.data && (
+              <p className="text-muted-foreground text-sm">
+                Validate the credential and load the privacy-filtered catalog
+                above before choosing role models.
+              </p>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field data-invalid={!tokensValid}>
+                <FieldLabel htmlFor="max-tokens">
+                  Maximum tokens per request
+                </FieldLabel>
+                <Input
+                  id="max-tokens"
+                  inputMode="numeric"
+                  value={maxTokens}
+                  aria-invalid={!tokensValid}
+                  aria-describedby="max-tokens-help"
+                  onChange={(event) => setMaxTokens(event.currentTarget.value)}
+                />
+                <FieldDescription id="max-tokens-help">
+                  Enter a whole number from 1 to 1,000,000.
+                </FieldDescription>
+              </Field>
+              <Field data-invalid={!budgetValid}>
+                <FieldLabel htmlFor="session-budget">
+                  Default session budget (USD)
+                </FieldLabel>
+                <Input
+                  id="session-budget"
+                  inputMode="decimal"
+                  value={budget}
+                  aria-invalid={!budgetValid}
+                  aria-describedby="session-budget-help"
+                  onChange={(event) => setBudget(event.currentTarget.value)}
+                />
+                <FieldDescription id="session-budget-help">
+                  Use a fixed amount such as 0.00 or 5.00.
+                </FieldDescription>
+              </Field>
+            </div>
+          </FieldGroup>
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={!canSave}>
               {mutation.isPending ? "Saving…" : "Save settings"}
@@ -525,6 +592,59 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
         </form>
       </CardContent>
     </Card>
+  )
+}
+
+const noModelValue = "__none__"
+
+function ModelRoleField({
+  id,
+  label,
+  description,
+  models,
+  value,
+  onChange,
+}: {
+  id: string
+  label: string
+  description: string
+  models: OpenRouterModel[]
+  value: string | undefined
+  onChange: (value: string | undefined) => void
+}) {
+  const currentMissing =
+    value !== undefined && !models.some((model) => model.id === value)
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        value={value ?? noModelValue}
+        onValueChange={(next) =>
+          onChange(next === noModelValue || next === null ? undefined : next)
+        }
+        disabled={models.length === 0}
+      >
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder="Choose a model" />
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectGroup>
+            <SelectItem value={noModelValue}>Not selected</SelectItem>
+            {currentMissing && value && (
+              <SelectItem value={value} disabled>
+                Unavailable · {value}
+              </SelectItem>
+            )}
+            {models.map((model) => (
+              <SelectItem key={model.id} value={model.id}>
+                {model.name} · {model.provider}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <FieldDescription>{description}</FieldDescription>
+    </Field>
   )
 }
 

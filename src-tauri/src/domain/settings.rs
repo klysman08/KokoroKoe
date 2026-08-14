@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use uuid::Uuid;
 
-use super::AppError;
+use super::{AppError, LlmRoleModels};
 
 const TECHNICAL_INTERVIEW_PRESET_ID: &str = "00000000-0000-4000-8000-000000000001";
 const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
@@ -19,6 +19,7 @@ pub(crate) struct AppSettings {
     pub(crate) workspace_path: String,
     pub(crate) default_preset_id: PresetId,
     pub(crate) default_transcription_model_id: String,
+    pub(crate) default_llm_models: LlmRoleModels,
     pub(crate) llm_enabled: bool,
     pub(crate) retain_audio_by_default: bool,
     pub(crate) require_zero_data_retention: bool,
@@ -36,6 +37,9 @@ pub(crate) struct AppSettingsUpdate {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) default_transcription_model_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_llm_models: Option<LlmRoleModels>,
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) llm_enabled: Option<bool>,
@@ -64,6 +68,8 @@ struct RawAppSettingsUpdate {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     default_transcription_model_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    default_llm_models: Option<LlmRoleModels>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     llm_enabled: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     retain_audio_by_default: Option<bool>,
@@ -86,6 +92,7 @@ impl<'de> Deserialize<'de> for AppSettingsUpdate {
         let update = Self {
             default_preset_id: raw.default_preset_id,
             default_transcription_model_id: raw.default_transcription_model_id,
+            default_llm_models: raw.default_llm_models,
             llm_enabled: raw.llm_enabled,
             retain_audio_by_default: raw.retain_audio_by_default,
             require_zero_data_retention: raw.require_zero_data_retention,
@@ -220,6 +227,8 @@ struct RawAppSettings {
     workspace_path: String,
     default_preset_id: PresetId,
     default_transcription_model_id: String,
+    #[serde(default)]
+    default_llm_models: LlmRoleModels,
     llm_enabled: bool,
     retain_audio_by_default: bool,
     require_zero_data_retention: bool,
@@ -239,6 +248,7 @@ impl<'de> Deserialize<'de> for AppSettings {
             workspace_path: raw.workspace_path,
             default_preset_id: raw.default_preset_id,
             default_transcription_model_id: raw.default_transcription_model_id,
+            default_llm_models: raw.default_llm_models,
             llm_enabled: raw.llm_enabled,
             retain_audio_by_default: raw.retain_audio_by_default,
             require_zero_data_retention: raw.require_zero_data_retention,
@@ -287,6 +297,7 @@ impl AppSettings {
             workspace_path,
             default_preset_id: PresetId(default_preset_id),
             default_transcription_model_id: "whisper-base-multilingual".to_owned(),
+            default_llm_models: LlmRoleModels::default(),
             llm_enabled: false,
             retain_audio_by_default: false,
             require_zero_data_retention: true,
@@ -310,6 +321,9 @@ impl AppSettings {
         }
         if let Some(value) = update.default_transcription_model_id {
             self.default_transcription_model_id = value;
+        }
+        if let Some(value) = update.default_llm_models {
+            self.default_llm_models = value;
         }
         if let Some(value) = update.llm_enabled {
             self.llm_enabled = value;
@@ -392,6 +406,9 @@ impl AppSettings {
         if !has_bounded_utf16_length(&self.default_transcription_model_id, 1, 128) {
             return Err("The transcription model identifier length is invalid.");
         }
+        if !self.default_llm_models.is_transport_valid() {
+            return Err("An OpenRouter model identifier is invalid.");
+        }
         if !(1..=1_000_000).contains(&self.max_tokens_per_request) {
             return Err("The maximum token count is outside its transport range.");
         }
@@ -412,6 +429,7 @@ impl AppSettingsUpdate {
         Self {
             default_preset_id: None,
             default_transcription_model_id: Some(model_id),
+            default_llm_models: None,
             llm_enabled: None,
             retain_audio_by_default: None,
             require_zero_data_retention: None,
@@ -433,6 +451,13 @@ impl AppSettingsUpdate {
             return Err("The transcription model identifier length is invalid.");
         }
         if self
+            .default_llm_models
+            .as_ref()
+            .is_some_and(|value| !value.is_transport_valid())
+        {
+            return Err("An OpenRouter model identifier is invalid.");
+        }
+        if self
             .max_tokens_per_request
             .is_some_and(|value| !(1..=1_000_000).contains(&value))
         {
@@ -451,6 +476,7 @@ impl AppSettingsUpdate {
     fn is_empty(&self) -> bool {
         self.default_preset_id.is_none()
             && self.default_transcription_model_id.is_none()
+            && self.default_llm_models.is_none()
             && self.llm_enabled.is_none()
             && self.retain_audio_by_default.is_none()
             && self.require_zero_data_retention.is_none()
@@ -476,6 +502,20 @@ mod tests {
         let actual = serde_json::to_value(parsed).expect("AppSettings should serialize");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn legacy_settings_without_llm_defaults_upgrade_to_an_empty_selection() {
+        let mut fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/app-settings-v1.json"
+        ))
+        .unwrap();
+        fixture.as_object_mut().unwrap().remove("defaultLlmModels");
+        let parsed: AppSettings = serde_json::from_value(fixture).unwrap();
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap()["defaultLlmModels"],
+            serde_json::json!({})
+        );
     }
 
     #[test]

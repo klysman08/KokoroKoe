@@ -63,6 +63,8 @@ pub(crate) async fn create_session<R: tauri::Runtime>(
     system_output: AudioDeviceSnapshot,
     transcription_model_id: String,
     llm_models: LlmRoleModels,
+    spending_limit_usd: String,
+    max_tokens_per_request: u32,
     retain_audio: bool,
 ) -> Result<Session, CommandError> {
     let service =
@@ -77,6 +79,8 @@ pub(crate) async fn create_session<R: tauri::Runtime>(
         system_output,
         transcription_model_id,
         llm_models,
+        spending_limit_usd,
+        max_tokens_per_request,
         retain_audio,
     };
     run_blocking(move || service.create_session(project_id, input))

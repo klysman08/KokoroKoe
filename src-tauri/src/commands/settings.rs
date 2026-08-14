@@ -4,6 +4,7 @@ use tauri::{State, WebviewWindow};
 
 use crate::{
     domain::{AppError, AppSettings, AppSettingsUpdate, CommandError, Versioned, WorkspaceStatus},
+    llm::OpenRouterService,
     logging,
     persistence::SettingsService,
     security::authorize_main_window,
@@ -26,11 +27,14 @@ pub(crate) async fn get_settings<R: tauri::Runtime>(
 pub(crate) async fn update_settings<R: tauri::Runtime>(
     webview_window: WebviewWindow<R>,
     state: State<'_, SettingsService>,
+    openrouter_state: State<'_, OpenRouterService>,
     expected_revision: u64,
     value: AppSettingsUpdate,
 ) -> Result<AppSettings, CommandError> {
-    let service = authorize_before_side_effect(webview_window.label(), || state.inner().clone())
-        .map_err(record_error)?;
+    let (service, openrouter) = authorize_before_side_effect(webview_window.label(), || {
+        (state.inner().clone(), openrouter_state.inner().clone())
+    })
+    .map_err(record_error)?;
     if value.changes_default_transcription_model() {
         return Err(record_error(AppError::model_error(
             "model_settings_route_required",
@@ -38,9 +42,16 @@ pub(crate) async fn update_settings<R: tauri::Runtime>(
     }
     let request = Versioned::new(expected_revision, value).map_err(record_error)?;
 
-    run_blocking(move || service.update_settings(request.expected_revision, request.value))
-        .await
-        .map_err(record_error)
+    run_blocking(move || {
+        service.update_settings_validated(request.expected_revision, request.value, |update| {
+            if let Some(selection) = update.default_llm_models.as_ref() {
+                openrouter.validate_cached_model_selection(selection)?;
+            }
+            Ok(())
+        })
+    })
+    .await
+    .map_err(record_error)
 }
 
 #[tauri::command]

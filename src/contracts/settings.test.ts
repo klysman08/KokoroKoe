@@ -26,6 +26,7 @@ describe("AppSettings contract", () => {
     ["workspacePath", ""],
     ["defaultPresetId", "not-a-uuid"],
     ["defaultTranscriptionModelId", ""],
+    ["defaultLlmModels", { insights: "" }],
     ["defaultTranscriptionModelId", "😀".repeat(65)],
     ["maxTokensPerRequest", 0],
     ["defaultSessionBudgetUsd", "1.0"],
@@ -55,6 +56,12 @@ describe("AppSettings contract", () => {
       },
     ],
     [{ expectedRevision: 0, value: { maxTokensPerRequest: 0 } }],
+    [
+      {
+        expectedRevision: 0,
+        value: { defaultLlmModels: { summaries: "x".repeat(257) } },
+      },
+    ],
     [{ expectedRevision: 0, value: { defaultSessionBudgetUsd: "1.0" } }],
     [
       {

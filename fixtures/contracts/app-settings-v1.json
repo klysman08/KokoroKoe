@@ -3,6 +3,7 @@
   "workspacePath": "C:\\Users\\Example\\Documents\\KokoroKoe",
   "defaultPresetId": "00000000-0000-4000-8000-000000000001",
   "defaultTranscriptionModelId": "whisper-base-multilingual",
+  "defaultLlmModels": {},
   "llmEnabled": false,
   "retainAudioByDefault": false,
   "requireZeroDataRetention": true,

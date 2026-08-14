@@ -10,11 +10,13 @@ import {
   type UpdateSessionInput,
 } from "@/contracts/projects"
 import { type AudioDevice, type AudioDeviceList } from "@/contracts/audio"
+import { type AppSettings } from "@/contracts/settings"
 
 type SessionFormProps = {
   project: Project
   session?: Session | undefined
   devices: AudioDeviceList
+  settings: AppSettings | undefined
   busy: boolean
   onCancel: () => void
   onCreate: (input: CreateSessionInput) => void
@@ -54,6 +56,7 @@ export function SessionForm({
   project,
   session,
   devices,
+  settings,
   busy,
   onCancel,
   onCreate,
@@ -96,7 +99,13 @@ export function SessionForm({
       systemOutput: snapshot(output),
       transcriptionModelId:
         session?.transcriptionModelId ?? project.defaultTranscriptionModelId,
-      llmModels: session?.llmModels ?? project.preferredLlmModels,
+      llmModels:
+        session?.llmModels ??
+        mergeLlmModels(project.preferredLlmModels, settings?.defaultLlmModels),
+      spendingLimitUsd:
+        session?.spendingLimitUsd ?? settings?.defaultSessionBudgetUsd,
+      maxTokensPerRequest:
+        session?.maxTokensPerRequest ?? settings?.maxTokensPerRequest,
       retainAudio,
     }
     if (session) {
@@ -230,4 +239,15 @@ export function SessionForm({
       </div>
     </form>
   )
+}
+
+function mergeLlmModels(
+  project: Project["preferredLlmModels"],
+  defaults: AppSettings["defaultLlmModels"] | undefined,
+) {
+  return {
+    insights: project.insights ?? defaults?.insights,
+    summaries: project.summaries ?? defaults?.summaries,
+    manualQuestions: project.manualQuestions ?? defaults?.manualQuestions,
+  }
 }

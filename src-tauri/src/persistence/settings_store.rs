@@ -65,6 +65,18 @@ impl SettingsService {
         expected_revision: u64,
         update: AppSettingsUpdate,
     ) -> Result<AppSettings, AppError> {
+        self.update_settings_validated(expected_revision, update, |_| Ok(()))
+    }
+
+    pub(crate) fn update_settings_validated<F>(
+        &self,
+        expected_revision: u64,
+        update: AppSettingsUpdate,
+        validate: F,
+    ) -> Result<AppSettings, AppError>
+    where
+        F: Fn(&AppSettingsUpdate) -> Result<(), AppError>,
+    {
         let _operation = self.lock_operation()?;
         self.with_database_recovery(|connection| {
             update_settings_on_connection(
@@ -72,6 +84,7 @@ impl SettingsService {
                 &self.foundation_defaults,
                 expected_revision,
                 update.clone(),
+                &validate,
             )
         })
     }
@@ -449,12 +462,16 @@ fn get_settings_on_connection(
     Ok(settings)
 }
 
-fn update_settings_on_connection(
+fn update_settings_on_connection<F>(
     connection: &mut Connection,
     defaults: &AppSettings,
     expected_revision: u64,
     update: AppSettingsUpdate,
-) -> Result<AppSettings, AppError> {
+    validate: F,
+) -> Result<AppSettings, AppError>
+where
+    F: Fn(&AppSettingsUpdate) -> Result<(), AppError>,
+{
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_sqlite_write_error)?;
@@ -462,6 +479,7 @@ fn update_settings_on_connection(
     if current.revision() != expected_revision {
         return Err(AppError::settings_revision_conflict());
     }
+    validate(&update)?;
     let updated = current.apply_update(update)?;
     store_settings(&transaction, &updated)?;
     transaction.commit().map_err(map_sqlite_write_error)?;
@@ -633,7 +651,10 @@ mod tests {
         fs,
         io::{Seek, SeekFrom, Write},
         ops::Deref,
-        sync::{Arc, Barrier},
+        sync::{
+            Arc, Barrier,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use super::{SETTINGS_DATABASE_NAME, SettingsService, schema_version};
@@ -816,6 +837,23 @@ mod tests {
             1
         );
         assert_eq!(first.get_settings().unwrap().revision(), 1);
+    }
+
+    #[test]
+    fn revision_conflict_precedes_external_model_validation() {
+        let service = service();
+        service.update_settings(0, update_fixture()).unwrap();
+        let validations = AtomicUsize::new(0);
+        let error = service
+            .update_settings_validated(0, update_fixture(), |_| {
+                validations.fetch_add(1, Ordering::SeqCst);
+                Err(crate::domain::AppError::openrouter_error(
+                    "openrouter_model_not_available",
+                ))
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "settings_revision_conflict");
+        assert_eq!(validations.load(Ordering::SeqCst), 0);
     }
 
     #[test]

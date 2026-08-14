@@ -75,6 +75,7 @@ export function HomePage() {
           defaultTranscriptionModelId={
             settingsQuery.data?.defaultTranscriptionModelId
           }
+          defaultLlmModels={settingsQuery.data?.defaultLlmModels}
           key={editing?.id ?? "create"}
           onCancel={closeForm}
           onCreate={(input) =>
@@ -202,6 +203,7 @@ export function HomePage() {
           key={sessionsProject.id}
           onClose={() => setSessionsProject(undefined)}
           project={sessionsProject}
+          settings={settingsQuery.data}
         />
       )}
     </div>

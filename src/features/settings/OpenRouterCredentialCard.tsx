@@ -35,6 +35,7 @@ import {
 } from "@/contracts/credentials"
 import { type OpenRouterModel } from "@/contracts/openrouter"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { openRouterModelQueryKey } from "@/features/settings/openrouter-query"
 import {
   deleteOpenRouterApiKey,
   getOpenRouterCredentialStatus,
@@ -46,7 +47,6 @@ import {
 } from "@/lib/tauri/openrouter"
 
 const credentialQueryKey = ["openrouter-credential-status"] as const
-const modelQueryKey = ["openrouter-models"] as const
 const visibleModelLimit = 100
 
 function pricePerMillion(value: string) {
@@ -70,7 +70,7 @@ export function OpenRouterCredentialCard() {
     retry: false,
   })
   const models = useQuery<OpenRouterModel[], ApplicationError>({
-    queryKey: modelQueryKey,
+    queryKey: openRouterModelQueryKey,
     queryFn: () => listOpenRouterModels(false),
     enabled: status.data?.validatedAt !== undefined,
     staleTime: 15 * 60 * 1000,
@@ -93,7 +93,7 @@ export function OpenRouterCredentialCard() {
     try {
       const next = await setOpenRouterApiKey(apiKey)
       queryClient.setQueryData(credentialQueryKey, next)
-      queryClient.removeQueries({ queryKey: modelQueryKey })
+      queryClient.removeQueries({ queryKey: openRouterModelQueryKey })
       setSaved(true)
     } catch (error) {
       setActionError(error as ApplicationError)
@@ -111,7 +111,7 @@ export function OpenRouterCredentialCard() {
     try {
       const next = await deleteOpenRouterApiKey()
       queryClient.setQueryData(credentialQueryKey, next)
-      queryClient.removeQueries({ queryKey: modelQueryKey })
+      queryClient.removeQueries({ queryKey: openRouterModelQueryKey })
     } catch (error) {
       setActionError(error as ApplicationError)
     } finally {
@@ -131,7 +131,7 @@ export function OpenRouterCredentialCard() {
         configured: true,
         validatedAt: result.validatedAt,
       })
-      await queryClient.invalidateQueries({ queryKey: modelQueryKey })
+      await queryClient.invalidateQueries({ queryKey: openRouterModelQueryKey })
     } catch (error) {
       setActionError(error as ApplicationError)
     } finally {
@@ -145,7 +145,7 @@ export function OpenRouterCredentialCard() {
     setActionError(undefined)
     try {
       const next = await listOpenRouterModels(true)
-      queryClient.setQueryData(modelQueryKey, next)
+      queryClient.setQueryData(openRouterModelQueryKey, next)
     } catch (error) {
       setActionError(error as ApplicationError)
     } finally {

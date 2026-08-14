@@ -9,6 +9,14 @@ const revisionSchema = z
   .max(Number.MAX_SAFE_INTEGER)
 const workspacePathSchema = z.string().min(1).max(32_767)
 const modelIdSchema = z.string().min(1).max(128)
+const openRouterModelIdSchema = z.string().min(1).max(256)
+const defaultLlmModelsSchema = z
+  .object({
+    insights: openRouterModelIdSchema.optional(),
+    summaries: openRouterModelIdSchema.optional(),
+    manualQuestions: openRouterModelIdSchema.optional(),
+  })
+  .strict()
 const maxTokensSchema = z.number().int().min(1).max(1_000_000)
 const budgetSchema = z
   .string()
@@ -21,6 +29,7 @@ export const appSettingsSchema = z
     workspacePath: workspacePathSchema,
     defaultPresetId: presetIdSchema,
     defaultTranscriptionModelId: modelIdSchema,
+    defaultLlmModels: defaultLlmModelsSchema,
     llmEnabled: z.boolean(),
     retainAudioByDefault: z.boolean(),
     requireZeroDataRetention: z.boolean(),
@@ -36,6 +45,7 @@ export const appSettingsUpdateSchema = z
   .object({
     defaultPresetId: presetIdSchema.optional(),
     defaultTranscriptionModelId: modelIdSchema.optional(),
+    defaultLlmModels: defaultLlmModelsSchema.optional(),
     llmEnabled: z.boolean().optional(),
     retainAudioByDefault: z.boolean().optional(),
     requireZeroDataRetention: z.boolean().optional(),

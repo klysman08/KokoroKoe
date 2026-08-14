@@ -14,7 +14,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     domain::{
-        AppError, CredentialValidation, OpenRouterApiKey, OpenRouterDataCollection, OpenRouterModel,
+        AppError, CredentialValidation, LlmRoleModels, OpenRouterApiKey, OpenRouterDataCollection,
+        OpenRouterModel,
     },
     security::CredentialService,
 };
@@ -155,6 +156,32 @@ impl OpenRouterService {
             models: models.clone(),
         });
         Ok(models)
+    }
+
+    pub(crate) fn validate_cached_model_selection(
+        &self,
+        selection: &LlmRoleModels,
+    ) -> Result<(), AppError> {
+        let selected = selection.selected_ids().collect::<Vec<_>>();
+        if selected.is_empty() {
+            return Ok(());
+        }
+        let cache = self
+            .catalog
+            .lock()
+            .map_err(|_| AppError::openrouter_error("openrouter_catalog_unavailable"))?;
+        let catalog = cache
+            .as_ref()
+            .filter(|cached| cached.stored_at.elapsed() < CATALOG_CACHE_TTL)
+            .ok_or_else(|| AppError::openrouter_error("openrouter_catalog_required"))?;
+        if selected
+            .iter()
+            .all(|id| catalog.models.iter().any(|model| model.id == *id))
+        {
+            Ok(())
+        } else {
+            Err(AppError::openrouter_error("openrouter_model_not_available"))
+        }
     }
 
     fn send_get(&self, path: &str, api_key: &OpenRouterApiKey) -> Result<Response, AppError> {
@@ -482,6 +509,25 @@ mod tests {
         assert_eq!(service.list_models(false).unwrap(), models);
         assert_eq!(service.list_models(true).unwrap(), models);
 
+        let selected = LlmRoleModels {
+            insights: Some("alpha/first".to_owned()),
+            summaries: Some("zeta/second".to_owned()),
+            manual_questions: None,
+        };
+        service.validate_cached_model_selection(&selected).unwrap();
+        let unknown = LlmRoleModels {
+            insights: Some("missing/model".to_owned()),
+            summaries: None,
+            manual_questions: None,
+        };
+        assert_eq!(
+            service
+                .validate_cached_model_selection(&unknown)
+                .unwrap_err()
+                .code,
+            "openrouter_model_not_available"
+        );
+
         for _ in 0..2 {
             let request = requests.recv_timeout(Duration::from_secs(1)).unwrap();
             assert!(request.starts_with("GET /api/v1/models?limit=500&input_modalities=text&output_modalities=text&zdr=true HTTP/1.1\r\n"));
@@ -562,6 +608,18 @@ mod tests {
         assert_eq!(
             service.validate_credential().unwrap_err().code,
             "openrouter_credential_missing"
+        );
+        let selection = LlmRoleModels {
+            insights: Some("example/model".to_owned()),
+            summaries: None,
+            manual_questions: None,
+        };
+        assert_eq!(
+            service
+                .validate_cached_model_selection(&selection)
+                .unwrap_err()
+                .code,
+            "openrouter_catalog_required"
         );
     }
 }

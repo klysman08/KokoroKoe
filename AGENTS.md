@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-006 - Conservative usage reservation and reconciliation
+- Task: P5-007 - Single-attempt private streaming completion transport
 - Date: 2026-08-15
-- Outcome: added exact cache-priced full-envelope reservations, clone-shared atomic Session limit enforcement, bounded final-token reconciliation, and exactly-once failure/cancellation release without provider completion, persistence, or product surface changes.
-- Verification: 6 focused budget/cache tests; Rust 1.88 locked fmt/Clippy with 258 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke.
-- Memory: [P5-006 checkpoint](docs/project-memory.md#p5-006---conservative-usage-reservation-and-reconciliation)
+- Outcome: added a Rust-only reserve-before-send OpenRouter completion POST with exact ZDR/data-denied structured-output framing, bounded SSE/delta/cancellation handling, final-usage reconciliation, and conservative cleanup for uncertain billable failures.
+- Verification: 7 focused transport tests; Rust 1.88 locked fmt/Clippy with 265 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; Rust audits and 159-package frontend license inventory; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke. The current production frontend audit reports one unrelated transitive `nanoid <3.3.18` advisory recorded in project memory.
+- Memory: [P5-007 checkpoint](docs/project-memory.md#p5-007---single-attempt-private-streaming-completion-transport)

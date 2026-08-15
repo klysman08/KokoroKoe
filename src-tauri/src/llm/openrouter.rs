@@ -7,7 +7,7 @@ use std::{
 use reqwest::{
     StatusCode,
     blocking::{Client, Response},
-    header::{ACCEPT, AUTHORIZATION, HeaderValue, USER_AGENT},
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue, USER_AGENT},
 };
 use serde::Deserialize;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -217,13 +217,7 @@ impl OpenRouterService {
     }
 
     fn send_get(&self, path: &str, api_key: &OpenRouterApiKey) -> Result<Response, AppError> {
-        let mut authorization = Vec::with_capacity(7 + api_key.expose().len());
-        authorization.extend_from_slice(b"Bearer ");
-        authorization.extend_from_slice(api_key.expose());
-        let mut authorization_header = HeaderValue::from_bytes(&authorization)
-            .map_err(|_| AppError::openrouter_error("openrouter_credential_invalid"))?;
-        authorization.fill(0);
-        authorization_header.set_sensitive(true);
+        let authorization_header = authorization_header(api_key)?;
 
         self.client
             .get(format!("{}{path}", self.base_url))
@@ -234,6 +228,45 @@ impl OpenRouterService {
             .map_err(map_transport_error)
             .and_then(check_status)
     }
+
+    pub(super) fn send_completion(&self, body: Vec<u8>) -> Result<Response, AppError> {
+        let api_key = self.credentials.load_api_key()?;
+        let authorization_header = authorization_header(&api_key)?;
+
+        self.client
+            .post(format!("{}/api/v1/chat/completions", self.base_url))
+            .header(AUTHORIZATION, authorization_header)
+            .header(ACCEPT, "text/event-stream")
+            .header(CONTENT_TYPE, "application/json")
+            .header(USER_AGENT, "KokoroKoe/0.1.0")
+            .body(body)
+            .send()
+            .map_err(map_transport_error)
+            .and_then(check_status)
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_completion_test(base_url: &str, api_key: &str, timeout: Duration) -> Self {
+        Self::with_configuration(
+            CredentialService::in_memory(Some(api_key)),
+            base_url,
+            timeout,
+            timeout,
+            Arc::new(SystemClock),
+        )
+        .expect("completion test client should be constructed")
+    }
+}
+
+fn authorization_header(api_key: &OpenRouterApiKey) -> Result<HeaderValue, AppError> {
+    let mut authorization = Vec::with_capacity(7 + api_key.expose().len());
+    authorization.extend_from_slice(b"Bearer ");
+    authorization.extend_from_slice(api_key.expose());
+    let mut authorization_header = HeaderValue::from_bytes(&authorization)
+        .map_err(|_| AppError::openrouter_error("openrouter_credential_invalid"))?;
+    authorization.fill(0);
+    authorization_header.set_sensitive(true);
+    Ok(authorization_header)
 }
 
 fn map_transport_error(error: reqwest::Error) -> AppError {

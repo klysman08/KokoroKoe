@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-005 - Versioned prompts and bounded text context
+- Task: P5-006 - Conservative usage reservation and reconciliation
 - Date: 2026-08-15
-- Outcome: froze three Rust-only prompt specifications and strict JSON schemas, resolved matching frozen Session role models, and built conservative identity-validated relevant/recent transcript context inside explicit untrusted JSON framing without provider execution or product surface changes.
-- Verification: 6 focused prompt/context tests; Rust 1.88 locked fmt/Clippy with 252 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke.
-- Memory: [P5-005 checkpoint](docs/project-memory.md#p5-005---versioned-prompts-and-bounded-text-context)
+- Outcome: added exact cache-priced full-envelope reservations, clone-shared atomic Session limit enforcement, bounded final-token reconciliation, and exactly-once failure/cancellation release without provider completion, persistence, or product surface changes.
+- Verification: 6 focused budget/cache tests; Rust 1.88 locked fmt/Clippy with 258 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke.
+- Memory: [P5-006 checkpoint](docs/project-memory.md#p5-006---conservative-usage-reservation-and-reconciliation)

@@ -20,6 +20,8 @@ use crate::{
     security::CredentialService,
 };
 
+use super::budget::UsageBudgetService;
+
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai";
 const VALIDATION_RESPONSE_LIMIT: usize = 64 * 1024;
 const MODEL_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
@@ -47,6 +49,7 @@ pub(crate) struct OpenRouterService {
     base_url: String,
     clock: Arc<dyn Clock>,
     catalog: Arc<Mutex<Option<CachedCatalog>>>,
+    pub(super) usage_budget: UsageBudgetService,
 }
 
 #[derive(Clone)]
@@ -85,6 +88,7 @@ impl OpenRouterService {
             base_url: base_url.trim_end_matches('/').to_owned(),
             clock,
             catalog: Arc::new(Mutex::new(None)),
+            usage_budget: UsageBudgetService::default(),
         })
     }
 
@@ -182,6 +186,34 @@ impl OpenRouterService {
         } else {
             Err(AppError::openrouter_error("openrouter_model_not_available"))
         }
+    }
+
+    pub(super) fn cached_model_for_pricing(
+        &self,
+        model_id: &str,
+    ) -> Result<OpenRouterModel, &'static str> {
+        let cache = self
+            .catalog
+            .lock()
+            .map_err(|_| "usage_catalog_unavailable")?;
+        let catalog = cache
+            .as_ref()
+            .filter(|cached| cached.stored_at.elapsed() < CATALOG_CACHE_TTL)
+            .ok_or("usage_catalog_required")?;
+        catalog
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .cloned()
+            .ok_or("usage_model_not_available")
+    }
+
+    #[cfg(test)]
+    pub(super) fn seed_catalog_for_test(&self, models: Vec<OpenRouterModel>) {
+        *self.catalog.lock().unwrap() = Some(CachedCatalog {
+            stored_at: Instant::now(),
+            models,
+        });
     }
 
     fn send_get(&self, path: &str, api_key: &OpenRouterApiKey) -> Result<Response, AppError> {
@@ -507,6 +539,10 @@ mod tests {
                 .all(|model| model.data_collection == OpenRouterDataCollection::Deny)
         );
         assert_eq!(service.list_models(false).unwrap(), models);
+        assert_eq!(
+            service.cached_model_for_pricing("alpha/first").unwrap(),
+            models[0]
+        );
         assert_eq!(service.list_models(true).unwrap(), models);
 
         let selected = LlmRoleModels {
@@ -533,6 +569,12 @@ mod tests {
             assert!(request.starts_with("GET /api/v1/models?limit=500&input_modalities=text&output_modalities=text&zdr=true HTTP/1.1\r\n"));
             assert!(!request.contains("audio"));
         }
+        service.catalog.lock().unwrap().as_mut().unwrap().stored_at =
+            Instant::now() - CATALOG_CACHE_TTL;
+        assert_eq!(
+            service.cached_model_for_pricing("alpha/first").unwrap_err(),
+            "usage_catalog_required"
+        );
     }
 
     #[test]

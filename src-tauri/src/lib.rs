@@ -5,6 +5,9 @@ mod llm;
 mod logging;
 mod models;
 mod persistence;
+#[allow(dead_code)]
+// P5-005 is a Rust-only prompt/context boundary until request execution is added.
+mod prompts;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
 mod transcription;

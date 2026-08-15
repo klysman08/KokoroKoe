@@ -20,9 +20,9 @@ pub(crate) use openrouter::{
     CredentialValidation, OpenRouterDataCollection, OpenRouterModel, validate_rfc3339,
 };
 pub(crate) use projects::{
-    AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, LlmRoleModels,
-    PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session, SessionId, SessionPage,
-    SessionState, UpdateProjectInput, UpdateSessionInput,
+    AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, InsightType,
+    LlmRoleModels, PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session,
+    SessionId, SessionPage, SessionState, UpdateProjectInput, UpdateSessionInput,
 };
 pub(crate) use settings::{AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceStatus};
 pub(crate) use transcription::{

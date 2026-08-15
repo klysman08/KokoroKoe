@@ -1,0 +1,176 @@
+{
+  "specifications": [
+    {
+      "id": "kokorokoe.insight.recent",
+      "version": 1,
+      "purpose": "insight",
+      "variables": [
+        "project",
+        "session",
+        "preset",
+        "requestedInsightTypes",
+        "transcriptSegments"
+      ],
+      "approximateRequestTokenLimit": 8192,
+      "maximumOutputTokens": 1024,
+      "outputSchemaId": "insight_batch_v1",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["insights"],
+        "properties": {
+          "insights": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "title", "content", "relatedSegmentIds"],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "suggested_response",
+                    "follow_up_question",
+                    "clarification",
+                    "fact_or_number",
+                    "risk",
+                    "objection",
+                    "decision",
+                    "action_item",
+                    "contradiction",
+                    "unaddressed_topic"
+                  ]
+                },
+                "title": { "type": "string", "maxLength": 160 },
+                "content": { "type": "string", "maxLength": 2000 },
+                "rationale": { "type": "string", "maxLength": 1000 },
+                "relatedSegmentIds": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": { "type": "string", "format": "uuid" }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "fallbackStrategy": "single_json_repair_then_fail"
+    },
+    {
+      "id": "kokorokoe.summary.session",
+      "version": 1,
+      "purpose": "summary",
+      "variables": [
+        "project",
+        "session",
+        "preset",
+        "summaryKind",
+        "transcriptSegments"
+      ],
+      "approximateRequestTokenLimit": 16384,
+      "maximumOutputTokens": 4096,
+      "outputSchemaId": "session_summary_v1",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executiveSummary",
+          "mainTopics",
+          "decisions",
+          "actionItems",
+          "risks",
+          "openQuestions",
+          "nextSteps"
+        ],
+        "properties": {
+          "executiveSummary": { "type": "string", "maxLength": 8000 },
+          "mainTopics": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "type": "string", "maxLength": 1000 }
+          },
+          "decisions": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "type": "string", "maxLength": 2000 }
+          },
+          "actionItems": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text", "relatedSegmentIds"],
+              "properties": {
+                "text": { "type": "string", "maxLength": 2000 },
+                "owner": { "type": "string", "maxLength": 256 },
+                "deadline": { "type": "string", "format": "date-time" },
+                "relatedSegmentIds": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": { "type": "string", "format": "uuid" }
+                }
+              }
+            }
+          },
+          "risks": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "type": "string", "maxLength": 2000 }
+          },
+          "openQuestions": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "type": "string", "maxLength": 2000 }
+          },
+          "nextSteps": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "type": "string", "maxLength": 2000 }
+          }
+        }
+      },
+      "fallbackStrategy": "single_json_repair_then_fail"
+    },
+    {
+      "id": "kokorokoe.manual_question.segment",
+      "version": 1,
+      "purpose": "manual_question",
+      "variables": [
+        "project",
+        "session",
+        "preset",
+        "question",
+        "selectedSegmentId",
+        "transcriptSegments"
+      ],
+      "approximateRequestTokenLimit": 8192,
+      "maximumOutputTokens": 2048,
+      "outputSchemaId": "manual_answer_v1",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["answer", "relatedSegmentIds", "limitations"],
+        "properties": {
+          "answer": { "type": "string", "maxLength": 8000 },
+          "relatedSegmentIds": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "type": "string", "format": "uuid" }
+          },
+          "limitations": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      },
+      "fallbackStrategy": "single_json_repair_then_fail"
+    }
+  ]
+}

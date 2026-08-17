@@ -15,11 +15,15 @@ When an LLM feature is enabled, the interface must show that text is leaving the
 
 Important project and session content remains readable Markdown with YAML front matter. SQLite is a rebuildable index and cache. Users can choose the workspace, export without the application, disable LLM features, disable audio retention, delete credentials, and permanently delete projects/sessions through a confirmed inventory.
 
+The active Session sidebar state contains only Session identity, title, lifecycle state, and revision. Its live transcript view holds at most 500 scoped inert records in transient React memory; it does not create an additional transcript store and is cleared when the view is destroyed or the app exits. Final transcript authority remains the Rust journal and verified Markdown snapshot. Browser local storage contains only the `light`/`dark` appearance preference—never transcript text, paths, credentials, model catalogs, provider output, or Session metadata.
+
 The application validates paths beneath the configured workspace and rejects traversal, alternate data streams, unexpected absolute paths, and reparse-point escapes. Transcript content and generated Markdown are treated as untrusted data and are never executed.
 
 The foundation Markdown renderer ignores raw HTML, rejects executable or embedded elements and images, applies an explicit sanitize schema, and renders external links inertly after an `http`, `https`, or `mailto` allowlist check. Future project and session views must use this boundary. Opening an external link is intentionally deferred until it can cross a separately authorized Rust command.
 
 For the Windows MVP, native workspace selection accepts only existing folders on fixed local drive-letter volumes. Network shares, device/verbatim paths, drive roots, removable volumes, reserved Windows names, and paths whose ancestor chain contains a symbolic link or reparse point are rejected. This can exclude redirected or OneDrive-backed Documents folders. A successful write probe is only a point-in-time health result; later persistence must revalidate directory identity and containment before every sensitive write. Windows or third-party folder synchronization may still copy data from an otherwise local folder.
+
+The workspace shortcut re-runs the same local-volume, reparse-point, and write-health probe before Rust passes the configured canonical root to Windows File Explorer. React cannot provide a path or process argument, and the main webview receives no generic filesystem, shell, or process capability.
 
 Sanitized error reports contain stable error codes, application/component versions, non-secret configuration categories, and opaque correlation IDs. They exclude API keys, authorization headers, prompts, transcript text, raw provider bodies, and user paths where unnecessary.
 
@@ -48,6 +52,8 @@ P3-006 schedules only generated in-memory test jobs. Production-shaped jobs own 
 P3-007 adds only aggregate capture-health fields to the existing strict status contract. The deterministic two-hour clock test generates timestamps and no audio. The opt-in live probe injects one fixed test-only microphone-loop failure after real dual-source capture begins, retains samples only in the existing bounded Rust pipeline, prints fixed counters without endpoint metadata, and exposes no production injection command, capability, event, or frontend control.
 
 P3-008 sends one bounded finalized utterance at a time through anonymous local pipes to the supervised Vulkan worker. Samples and complete transcript results exist transiently in Rust-owned process memory and are never written, logged, emitted to React, or transmitted over a network. The exact probe reuses the external generated P3-005 fixture and prints only aggregate result/failure counts. Worker startup paths remain inside local IPC and fixed failures expose no paths. All malformed/hang/termination/descendant modes are debug-only and absent from release builds.
+
+P5-013 uses that same supervised local worker for product partial and final transcription when the separately staged private Vulkan runtime attests successfully. The worker receives only the already bounded local sample request and verified model path over inherited anonymous pipes; it has no network or frontend permission. Incomplete accelerated output is discarded, the child is terminated, and the same utterance is retried once by the separately staged CPU runtime. The Vulkan-only product gate substitutes an invalid CPU adapter, prints only aggregate partial/final/gap counts, and therefore proves accelerated execution without retaining or printing transcript text or audio.
 
 P3-009 connects processing/VAD outcomes to scheduling and inference entirely inside Rust. Its ordering frontier contains timestamps and buffer position only, never samples or text. Deterministic integration tests use generated constant samples and fixed result text, retain them only in bounded test memory, and print aggregate counts. Results and explicit gaps remain internal prototype values; no Tauri command/event, React state, file, database, log, retained-audio, or network boundary is added.
 
@@ -87,6 +93,7 @@ P3-010 adds a Rust-owned HTTPS model-download boundary but does not expose it th
 - A local per-session spending limit is enforced through conservative reservation plus actual response usage, but an in-flight provider request cannot be guaranteed to stop billing immediately after cancellation.
 - Streaming requests can fail after HTTP 200; partial output is provisional until the complete validated response is received.
 - Strict zero-data-retention routing can reduce the available model/provider set.
+- A privacy-qualified model can temporarily have no provider endpoint that simultaneously supports ZDR, data-collection denial, and structured JSON output. KokoroKoe reports this separately and asks the user to refresh the catalog or select another model.
 - OpenRouter unavailability never stops local capture, transcription, persistence, or recovery. A summary may remain deferred and be retried later.
 
 ## Desktop-window limitations

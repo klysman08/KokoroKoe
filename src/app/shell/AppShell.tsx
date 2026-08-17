@@ -4,14 +4,24 @@ import {
   ChevronRight,
   Home,
   MessageSquareText,
+  Moon,
+  Pause,
   Settings,
+  Square,
+  Sun,
 } from "lucide-react"
+import { useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
+import { useSessionLifecycleMutation } from "@/features/sessions/use-sessions"
 import { cn } from "@/lib/utils"
+import {
+  type ActiveSession,
+  useActiveSessionStore,
+} from "@/stores/active-session-store"
 import {
   type AppRoute,
   routeHref,
@@ -30,6 +40,14 @@ export function AppShell() {
   const navigate = useNavigationStore((state) => state.navigate)
   const collapsed = useShellStore((state) => state.navigationCollapsed)
   const toggleNavigation = useShellStore((state) => state.toggleNavigation)
+  const theme = useShellStore((state) => state.theme)
+  const toggleTheme = useShellStore((state) => state.toggleTheme)
+  const activeSession = useActiveSessionStore((state) => state.activeSession)
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark")
+    document.documentElement.style.colorScheme = theme
+  }, [theme])
 
   const navigateFromLink = (event: React.MouseEvent, route: AppRoute) => {
     event.preventDefault()
@@ -82,6 +100,12 @@ export function AppShell() {
         </nav>
 
         <div className="mt-auto">
+          {activeSession && (
+            <ActiveSessionControls
+              collapsed={collapsed}
+              session={activeSession}
+            />
+          )}
           {!collapsed && (
             <div className="bg-card text-muted-foreground mb-3 rounded-xl border p-3 text-xs leading-relaxed">
               Audio stays local. External analysis remains off until explicitly
@@ -109,12 +133,19 @@ export function AppShell() {
               Foundation checkpoint
             </p>
           </div>
-          <div className="text-muted-foreground flex items-center gap-2 text-xs">
-            <span
-              className="size-2 rounded-full bg-emerald-500"
-              aria-hidden="true"
-            />
-            Local mode
+          <div className="flex items-center gap-2">
+            <Button
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              onClick={toggleTheme}
+              size="icon"
+              variant="ghost"
+            >
+              {theme === "dark" ? <Sun /> : <Moon />}
+            </Button>
+            <div className="text-muted-foreground flex items-center gap-2 text-xs">
+              <BadgeDot />
+              Local mode
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl p-6 lg:p-8">
@@ -129,4 +160,71 @@ export function AppShell() {
       </div>
     </div>
   )
+}
+
+function ActiveSessionControls({
+  collapsed,
+  session,
+}: {
+  collapsed: boolean
+  session: ActiveSession
+}) {
+  const lifecycle = useSessionLifecycleMutation(session.projectId)
+  const boundary = {
+    projectId: session.projectId,
+    sessionId: session.id,
+    expectedRevision: session.revision,
+  }
+
+  if (collapsed) {
+    return (
+      <div className="mb-3 flex justify-center" title={session.title}>
+        <span className="bg-primary text-primary-foreground grid size-9 place-items-center rounded-lg">
+          <AudioLines aria-hidden="true" />
+          <span className="sr-only">Active session: {session.title}</span>
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <section aria-label="Active session" className="mb-3 rounded-xl border p-3">
+      <div className="flex items-center gap-2 text-xs font-medium">
+        <BadgeDot />
+        {session.state === "paused" ? "Session paused" : "Now transcribing"}
+      </div>
+      <p className="mt-2 truncate text-sm font-medium">{session.title}</p>
+      <div className="mt-3 flex gap-2">
+        {session.state === "transcribing" && (
+          <Button
+            disabled={lifecycle.isPending}
+            onClick={() =>
+              lifecycle.mutate({ kind: "pause", request: boundary })
+            }
+            size="sm"
+            variant="outline"
+          >
+            <Pause data-icon="inline-start" /> Pause
+          </Button>
+        )}
+        <Button
+          disabled={lifecycle.isPending}
+          onClick={() => lifecycle.mutate({ kind: "stop", request: boundary })}
+          size="sm"
+          variant="outline"
+        >
+          <Square data-icon="inline-start" /> Stop
+        </Button>
+      </div>
+      {lifecycle.error && (
+        <p className="text-destructive mt-2 text-xs" role="alert">
+          {lifecycle.error.details.userMessage}
+        </p>
+      )}
+    </section>
+  )
+}
+
+function BadgeDot() {
+  return <span className="bg-primary size-2 rounded-full" aria-hidden="true" />
 }

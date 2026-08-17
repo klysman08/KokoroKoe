@@ -25,6 +25,7 @@ use super::budget::UsageBudgetService;
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai";
 const VALIDATION_RESPONSE_LIMIT: usize = 64 * 1024;
 const MODEL_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
+const COMPLETION_ERROR_RESPONSE_LIMIT: usize = 64 * 1024;
 const MODEL_LIMIT: usize = 500;
 const CATALOG_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const COMPLETION_RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
@@ -47,6 +48,7 @@ impl Clock for SystemClock {
 pub(crate) struct OpenRouterService {
     credentials: CredentialService,
     client: Client,
+    completion_request_timeout: Duration,
     base_url: String,
     clock: Arc<dyn Clock>,
     catalog: Arc<Mutex<Option<CachedCatalog>>>,
@@ -85,20 +87,40 @@ impl CompletionSendError {
 
 impl OpenRouterService {
     pub(crate) fn open(credentials: CredentialService) -> Result<Self, AppError> {
-        Self::with_configuration(
+        Self::with_timeouts(
             credentials,
             OPENROUTER_BASE_URL,
             Duration::from_secs(5),
             Duration::from_secs(20),
+            Duration::from_secs(90),
             Arc::new(SystemClock),
         )
     }
 
+    #[cfg(test)]
     fn with_configuration(
         credentials: CredentialService,
         base_url: &str,
         connect_timeout: Duration,
         request_timeout: Duration,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, AppError> {
+        Self::with_timeouts(
+            credentials,
+            base_url,
+            connect_timeout,
+            request_timeout,
+            request_timeout,
+            clock,
+        )
+    }
+
+    fn with_timeouts(
+        credentials: CredentialService,
+        base_url: &str,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+        completion_request_timeout: Duration,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, AppError> {
         let client = Client::builder()
@@ -110,6 +132,7 @@ impl OpenRouterService {
         Ok(Self {
             credentials,
             client,
+            completion_request_timeout,
             base_url: base_url.trim_end_matches('/').to_owned(),
             clock,
             catalog: Arc::new(Mutex::new(None)),
@@ -270,6 +293,7 @@ impl OpenRouterService {
             .header(CONTENT_TYPE, "application/json")
             .header(USER_AGENT, "KokoroKoe/0.1.0")
             .body(body)
+            .timeout(self.completion_request_timeout)
             .send()
             .map_err(|error| CompletionSendError::ambiguous(map_transport_error(error)))?;
         check_completion_status(response)
@@ -323,7 +347,7 @@ fn check_status(response: Response) -> Result<Response, AppError> {
     Err(AppError::openrouter_error(code))
 }
 
-fn check_completion_status(response: Response) -> Result<Response, CompletionSendError> {
+fn check_completion_status(mut response: Response) -> Result<Response, CompletionSendError> {
     if response.status().is_success() {
         return Ok(response);
     }
@@ -339,13 +363,64 @@ fn check_completion_status(response: Response) -> Result<Response, CompletionSen
             .and_then(parse_retry_after)
     })
     .flatten();
-    let error = check_status(response)
-        .expect_err("a non-success completion response must map to a fixed error");
+    let provider_error_type = read_provider_error_type(&mut response);
+    let code = map_completion_status(status, provider_error_type.as_deref());
     Err(CompletionSendError {
-        error,
+        error: AppError::openrouter_error(code),
         definitely_not_started: true,
         retry_after,
     })
+}
+
+fn read_provider_error_type(response: &mut Response) -> Option<String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > COMPLETION_ERROR_RESPONSE_LIMIT as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    response
+        .by_ref()
+        .take(COMPLETION_ERROR_RESPONSE_LIMIT as u64 + 1)
+        .read_to_end(&mut body)
+        .ok()?;
+    if body.len() > COMPLETION_ERROR_RESPONSE_LIMIT {
+        return None;
+    }
+    serde_json::from_slice::<ProviderErrorEnvelope>(&body)
+        .ok()?
+        .error
+        .metadata?
+        .error_type
+}
+
+fn map_completion_status(status: StatusCode, error_type: Option<&str>) -> &'static str {
+    match error_type {
+        Some("authentication") | Some("authentication_error") => "openrouter_authentication_failed",
+        Some("permission_denied") => "openrouter_permission_denied",
+        Some("payment_required") | Some("insufficient_credits") => "openrouter_payment_required",
+        Some("rate_limit_exceeded") | Some("rate_limit_error") => "openrouter_rate_limited",
+        Some("provider_overloaded") => "openrouter_provider_overloaded",
+        Some("provider_unavailable") if status == StatusCode::SERVICE_UNAVAILABLE => {
+            "openrouter_provider_requirements_unavailable"
+        }
+        Some("provider_unavailable") => "openrouter_provider_unavailable",
+        Some("timeout") => "openrouter_timeout",
+        Some("context_length_exceeded") => "openrouter_context_rejected",
+        Some("invalid_request") => "openrouter_request_rejected",
+        _ => match status {
+            StatusCode::UNAUTHORIZED => "openrouter_authentication_failed",
+            StatusCode::PAYMENT_REQUIRED => "openrouter_payment_required",
+            StatusCode::FORBIDDEN => "openrouter_permission_denied",
+            StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => "openrouter_timeout",
+            StatusCode::TOO_MANY_REQUESTS => "openrouter_rate_limited",
+            StatusCode::BAD_GATEWAY => "openrouter_provider_unavailable",
+            StatusCode::SERVICE_UNAVAILABLE => "openrouter_provider_requirements_unavailable",
+            status if status.is_server_error() => "openrouter_provider_unavailable",
+            _ => "openrouter_request_rejected",
+        },
+    }
 }
 
 fn parse_retry_after(value: &HeaderValue) -> Option<Duration> {
@@ -383,6 +458,21 @@ fn read_success_body(mut response: Response, limit: usize) -> Result<Vec<u8>, Ap
 #[serde(deny_unknown_fields)]
 struct KeyEnvelope {
     data: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct ProviderErrorEnvelope {
+    error: ProviderErrorBody,
+}
+
+#[derive(Deserialize)]
+struct ProviderErrorBody {
+    metadata: Option<ProviderErrorMetadata>,
+}
+
+#[derive(Deserialize)]
+struct ProviderErrorMetadata {
+    error_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -598,6 +688,43 @@ mod tests {
             assert_eq!(error.code, expected);
             assert!(!serde_json::to_string(&error).unwrap().contains(TEST_KEY));
         }
+    }
+
+    #[test]
+    fn completion_errors_use_bounded_provider_types_without_exposing_the_body() {
+        for (status, error_type, expected) in [
+            (
+                503,
+                "provider_unavailable",
+                "openrouter_provider_requirements_unavailable",
+            ),
+            (400, "invalid_request", "openrouter_request_rejected"),
+            (402, "payment_required", "openrouter_payment_required"),
+            (401, "authentication", "openrouter_authentication_failed"),
+        ] {
+            let (base_url, _) = start_server(vec![MockResponse {
+                status,
+                body: format!(
+                    r#"{{"error":{{"message":"{TEST_KEY}","metadata":{{"error_type":"{error_type}"}}}}}}"#
+                ),
+                delay: Duration::ZERO,
+                content_length: None,
+            }]);
+            let (service, _) = make_service(&base_url, Duration::from_secs(2));
+            let error = service.send_completion(b"{}".to_vec()).unwrap_err();
+            assert_eq!(error.error.code, expected);
+            assert!(error.definitely_not_started);
+            assert!(
+                !serde_json::to_string(&error.error)
+                    .unwrap()
+                    .contains(TEST_KEY)
+            );
+        }
+
+        assert_eq!(
+            map_completion_status(StatusCode::SERVICE_UNAVAILABLE, None),
+            "openrouter_provider_requirements_unavailable"
+        );
     }
 
     #[test]

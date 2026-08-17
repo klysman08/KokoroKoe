@@ -101,6 +101,34 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument()
   })
 
+  it("opens the configured workspace without exposing its path to the command", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
+      if (command === "open_workspace_folder") return undefined
+      return appSettingsFixture
+    })
+    const queryClient = new QueryClient()
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText(appSettingsFixture.workspacePath)
+    await user.click(screen.getByRole("button", { name: /open workspace/i }))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("open_workspace_folder"),
+    )
+    expect(
+      invokeMock.mock.calls.find(
+        ([command]) => command === "open_workspace_folder",
+      ),
+    ).toHaveLength(1)
+  })
+
   it("requires confirmation before enabling retained audio and saves by revision", async () => {
     const user = userEvent.setup()
     invokeMock.mockImplementation(async (command) => {

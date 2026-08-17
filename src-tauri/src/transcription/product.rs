@@ -22,7 +22,13 @@ use crate::{
     models::ModelService,
 };
 
-use super::{LivePipelineEvent, load_verified_cpu_engine, spawn_live_coordinator};
+use super::{
+    LivePipelineEvent, load_verified_cpu_engine, spawn_live_coordinator, whisper_model_kind,
+    worker::{
+        SupervisedFallbackEngine, VulkanWorkerConfig, VulkanWorkerProcess, WorkerFailure,
+        WorkerFailureKind, WorkerTimeouts,
+    },
+};
 
 const AUDIO_HANDOFF_CAPACITY: usize = 64;
 const EVENT_HANDOFF_CAPACITY: usize = 64;
@@ -52,15 +58,24 @@ struct ProductState {
 #[derive(Clone)]
 pub(crate) struct LiveTranscriptionService {
     models: ModelService,
-    adapter_path: PathBuf,
+    worker_executable_path: PathBuf,
+    cpu_adapter_path: PathBuf,
+    vulkan_adapter_path: PathBuf,
     state: Arc<Mutex<ProductState>>,
 }
 
 impl LiveTranscriptionService {
-    pub(crate) fn new(models: ModelService, adapter_path: PathBuf) -> Self {
+    pub(crate) fn new(
+        models: ModelService,
+        worker_executable_path: PathBuf,
+        cpu_adapter_path: PathBuf,
+        vulkan_adapter_path: PathBuf,
+    ) -> Self {
         Self {
             models,
-            adapter_path,
+            worker_executable_path,
+            cpu_adapter_path,
+            vulkan_adapter_path,
             state: Arc::new(Mutex::new(ProductState::default())),
         }
     }
@@ -160,7 +175,7 @@ impl LiveTranscriptionService {
         model_id: Option<&str>,
         emit: EventSink,
     ) -> Result<ActiveRun, AppError> {
-        if !self.adapter_path.is_file() {
+        if !self.cpu_adapter_path.is_file() {
             return Err(AppError::live_transcription_error(
                 "live_transcription_runtime_unavailable",
             ));
@@ -172,8 +187,28 @@ impl LiveTranscriptionService {
         let threads = thread::available_parallelism()
             .map_or(1, usize::from)
             .clamp(1, 8);
-        let engine = load_verified_cpu_engine(artifact, self.adapter_path.clone(), threads)
+        let model_kind = whisper_model_kind(&artifact)
             .map_err(|error| AppError::live_transcription_error(error.code()))?;
+        let accelerated =
+            if self.worker_executable_path.is_file() && self.vulkan_adapter_path.is_file() {
+                VulkanWorkerProcess::spawn(
+                    VulkanWorkerConfig {
+                        executable_path: self.worker_executable_path.clone(),
+                        adapter_path: self.vulkan_adapter_path.clone(),
+                        model_path: artifact.path.clone(),
+                        model_kind,
+                        threads,
+                        environment: Vec::new(),
+                    },
+                    WorkerTimeouts::default(),
+                )
+            } else {
+                Err(WorkerFailure::new(WorkerFailureKind::Startup))
+            };
+        let cpu_adapter_path = self.cpu_adapter_path.clone();
+        let engine = SupervisedFallbackEngine::new(accelerated, move || {
+            load_verified_cpu_engine(artifact, cpu_adapter_path, threads)
+        });
         let config = AudioPrototypeConfig {
             microphone: input.microphone_selection,
             system_output: input.system_output_selection,
@@ -494,6 +529,14 @@ mod tests {
         let adapter = PathBuf::from(
             env::var_os("KOKOROKOE_P3_015_ADAPTER").expect("KOKOROKOE_P3_015_ADAPTER is required"),
         );
+        let worker_executable = PathBuf::from(
+            env::var_os("KOKOROKOE_P5_013_WORKER_EXE")
+                .expect("KOKOROKOE_P5_013_WORKER_EXE is required"),
+        );
+        let vulkan_adapter = PathBuf::from(
+            env::var_os("KOKOROKOE_P5_013_VULKAN_ADAPTER")
+                .expect("KOKOROKOE_P5_013_VULKAN_ADAPTER is required"),
+        );
         let audio = PathBuf::from(
             env::var_os("KOKOROKOE_P3_015_AUDIO").expect("KOKOROKOE_P3_015_AUDIO is required"),
         );
@@ -502,7 +545,9 @@ mod tests {
         let settings = SettingsService::open(app_data.clone(), documents).unwrap();
         let service = LiveTranscriptionService::new(
             ModelService::open(&app_data, settings).unwrap(),
+            worker_executable,
             adapter,
+            vulkan_adapter,
         );
         let aggregate = Arc::new(Mutex::new(ProductProbeAggregate::default()));
         let sink_aggregate = Arc::clone(&aggregate);
@@ -552,20 +597,30 @@ mod tests {
         let conflict = service.start(input, RequestId::new(), sink).unwrap_err();
         assert_eq!(conflict.code, "live_transcription_already_running");
 
-        std::thread::sleep(Duration::from_secs(24));
+        let capture_seconds = env::var("KOKOROKOE_P5_013_CAPTURE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(24)
+            .clamp(20, 120);
+        std::thread::sleep(Duration::from_secs(capture_seconds));
         let stopped = service.stop(request_id).unwrap();
         assert_eq!(stopped.state, LiveTranscriptionRunState::Stopped);
         assert_eq!(service.stop(request_id).unwrap(), stopped);
 
         let aggregate = aggregate.lock().unwrap();
+        eprintln!(
+            "P5-013 Vulkan product aggregate: partials={}, nonempty_partials={}, finals={}, nonempty_finals={}, matching_finals={}, gaps={}",
+            aggregate.partials,
+            aggregate.nonempty_partials,
+            aggregate.finals,
+            aggregate.nonempty_finals,
+            aggregate.matching_finals,
+            aggregate.gaps
+        );
         assert!(aggregate.partials > 0);
         assert!(aggregate.nonempty_partials > 0);
         assert!(aggregate.finals > 0);
         assert!(aggregate.nonempty_finals > 0);
         assert!(aggregate.matching_finals > 0);
-        eprintln!(
-            "P3-015 aggregate: partials={}, finals={}, matching_finals={}, gaps={}",
-            aggregate.partials, aggregate.finals, aggregate.matching_finals, aggregate.gaps
-        );
     }
 }

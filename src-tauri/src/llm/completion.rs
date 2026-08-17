@@ -615,8 +615,10 @@ fn map_provider_error(error_type: Option<&str>) -> &'static str {
         Some("provider_overloaded") => "completion_provider_overloaded",
         Some("provider_unavailable") | Some("server") => "completion_provider_unavailable",
         Some("timeout") => "completion_timeout",
-        Some("authentication_error") => "completion_authentication_failed",
-        Some("insufficient_credits") => "completion_payment_required",
+        Some("authentication") | Some("authentication_error") => "completion_authentication_failed",
+        Some("permission_denied") => "completion_permission_denied",
+        Some("payment_required") | Some("insufficient_credits") => "completion_payment_required",
+        Some("invalid_request") => "completion_request_rejected",
         Some("context_length_exceeded") => "completion_context_rejected",
         _ => "completion_provider_failed",
     }
@@ -634,7 +636,14 @@ fn map_openrouter_code(code: &str) -> &'static str {
         "openrouter_timeout" => "completion_timeout",
         "openrouter_network_unavailable" => "completion_network_unavailable",
         "openrouter_request_rejected" => "completion_request_rejected",
-        "openrouter_service_unavailable" => "completion_provider_unavailable",
+        "openrouter_context_rejected" => "completion_context_rejected",
+        "openrouter_provider_overloaded" => "completion_provider_overloaded",
+        "openrouter_provider_unavailable" | "openrouter_service_unavailable" => {
+            "completion_provider_unavailable"
+        }
+        "openrouter_provider_requirements_unavailable" => {
+            "completion_provider_requirements_unavailable"
+        }
         _ => "completion_provider_unavailable",
     }
 }

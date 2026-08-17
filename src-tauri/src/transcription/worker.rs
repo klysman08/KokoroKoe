@@ -358,7 +358,7 @@ fn validate_wire_result(
 }
 
 struct JobGuard {
-    handle: HANDLE,
+    handle: usize,
 }
 
 impl JobGuard {
@@ -385,13 +385,15 @@ impl JobGuard {
             }
             return Err(WorkerFailure::new(WorkerFailureKind::Startup));
         }
-        Ok(Self { handle })
+        Ok(Self {
+            handle: handle as usize,
+        })
     }
 
     fn terminate(&self) {
-        if !self.handle.is_null() {
+        if self.handle != 0 {
             unsafe {
-                TerminateJobObject(self.handle, 1);
+                TerminateJobObject(self.handle as HANDLE, 1);
             }
         }
     }
@@ -399,11 +401,11 @@ impl JobGuard {
 
 impl Drop for JobGuard {
     fn drop(&mut self) {
-        if !self.handle.is_null() {
+        if self.handle != 0 {
             unsafe {
-                CloseHandle(self.handle);
+                CloseHandle(self.handle as HANDLE);
             }
-            self.handle = ptr::null_mut();
+            self.handle = 0;
         }
     }
 }

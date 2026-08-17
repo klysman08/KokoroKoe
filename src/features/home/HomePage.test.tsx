@@ -9,6 +9,7 @@ import appSettingsFixture from "../../../fixtures/contracts/app-settings-v1.json
 import audioFixture from "../../../fixtures/contracts/audio-device-test-v1.json"
 import projectFixture from "../../../fixtures/contracts/project-management-v1.json"
 import projectSessionFixture from "../../../fixtures/contracts/project-session-v1.json"
+import sessionLifecycleFixture from "../../../fixtures/contracts/session-lifecycle-v1.json"
 
 import { projectManagementFixtureSchema } from "@/contracts/projects"
 import { HomePage } from "@/features/home/HomePage"
@@ -206,5 +207,44 @@ describe("HomePage project management", () => {
         acknowledgedCaptureConsent: true,
       }),
     )
+  })
+
+  it("shows scoped live session text and replaces its partial at the live edge", async () => {
+    const user = userEvent.setup()
+    const handlers = new Map<string, (event: { payload: unknown }) => void>()
+    vi.mocked(listen).mockImplementation(async (event, handler) => {
+      handlers.set(event, handler as (event: { payload: unknown }) => void)
+      return () => undefined
+    })
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_settings") return appSettingsFixture
+      if (command === "list_projects") return projects.page
+      if (command === "list_sessions") {
+        return { items: [projectSessionFixture.session] }
+      }
+      if (command === "list_audio_devices") return audioFixture.deviceList
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderHome()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage sessions" }),
+    )
+    expect(
+      await screen.findByRole("region", {
+        name: /live transcript for sprint planning/i,
+      }),
+    ).toHaveTextContent("Listening for speech")
+
+    handlers.get("session-transcription-partial")?.({
+      payload: sessionLifecycleFixture.partialEvent,
+    })
+    expect(await screen.findByText("provisional words")).toBeInTheDocument()
+
+    handlers.get("session-transcription-final")?.({
+      payload: sessionLifecycleFixture.finalEvent,
+    })
+    expect(await screen.findByText("final words")).toBeInTheDocument()
+    expect(screen.queryByText("provisional words")).not.toBeInTheDocument()
   })
 })

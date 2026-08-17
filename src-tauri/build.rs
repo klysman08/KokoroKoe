@@ -4,6 +4,7 @@ fn main() {
             "get_settings",
             "update_settings",
             "choose_workspace",
+            "open_workspace_folder",
             "list_audio_devices",
             "start_audio_device_test",
             "stop_audio_device_test",

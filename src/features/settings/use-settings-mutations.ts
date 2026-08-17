@@ -8,7 +8,11 @@ import {
   type WorkspaceStatus,
 } from "@/contracts/settings"
 import { settingsQueryKey } from "@/features/settings/use-settings-query"
-import { chooseWorkspace, updateSettings } from "@/lib/tauri/settings"
+import {
+  chooseWorkspace,
+  openWorkspaceFolder,
+  updateSettings,
+} from "@/lib/tauri/settings"
 
 export function useUpdateSettingsMutation() {
   const queryClient = useQueryClient()
@@ -63,5 +67,13 @@ export function useChooseWorkspaceMutation() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: settingsQueryKey })
     },
+  })
+}
+
+export function useOpenWorkspaceFolderMutation() {
+  return useMutation<void, ApplicationError>({
+    mutationFn: openWorkspaceFolder,
+    retry: false,
+    gcTime: 0,
   })
 }

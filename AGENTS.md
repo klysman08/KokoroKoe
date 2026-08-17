@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-012 - Reproducible POC transcription-runtime staging
+- Task: P5-014 - Session console and actionable provider diagnostics
 - Date: 2026-08-17
-- Outcome: diagnosed the real-user start failure as the deliberately unbundled CPU Whisper DLL set, staged exactly five verified runtime files beside the release executable, and added an idempotent byte/hash-verifying preparation command to the POC runbook.
-- Verification: the staging helper passed twice; the exact staged adapter path passed the real dual-device product gate in 85.02 seconds with 32 partials, one matching final and zero gaps; no model, audio, transcript, credential, database, log, dependency, lockfile, capability or runtime binary entered the tracked patch. P5-011's locked Rust/frontend/release baseline remains unchanged.
-- Memory: [P5-012 checkpoint](docs/project-memory.md#p5-012---reproducible-poc-transcription-runtime-staging)
+- Outcome: fixed the generic manual-question provider blind spot with bounded typed OpenRouter diagnostics and a completion-only ninety-second ceiling; added scoped follow-latest Session text, active sidebar Pause/Stop, persisted semantic dark mode, searchable cached model selectors, and a Rust-owned verified-workspace Explorer shortcut.
+- Verification: locked frontend checks passed 34 Vitest files/162 tests; locked Rust checks passed 284 ordinary tests, 12 explicit ignored gates, and 4 capability tests; the locked no-bundle x64 release built and remained alive/responsive during a five-second native smoke. The 160-package production license inventory passed; the existing transitive `nanoid <3.3.18` finding remains. The only new main-window permission is the exact `open_workspace_folder` command, and no generic filesystem, shell, process, HTTP, credential, provider-body, transcript-persistence, audio, model, database, log, runtime-binary, or installer boundary was added.
+- Memory: [P5-014 checkpoint](docs/project-memory.md#p5-014---session-console-and-actionable-provider-diagnostics)

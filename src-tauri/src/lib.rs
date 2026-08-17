@@ -84,13 +84,23 @@ pub fn run() {
             app.manage(AudioDeviceTestService::default());
             #[cfg(windows)]
             {
-                let adapter_path = std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
-                    .unwrap_or_else(|| app_data_directory.clone())
+                let worker_executable_path = std::env::current_exe()
+                    .unwrap_or_else(|_| app_data_directory.join("kokorokoe.exe"));
+                let runtime_directory = worker_executable_path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| app_data_directory.clone());
+                let cpu_adapter_path = runtime_directory.join("kokorokoe_whisper_adapter.dll");
+                let vulkan_adapter_path = runtime_directory
+                    .join("vulkan")
                     .join("kokorokoe_whisper_adapter.dll");
                 let models = app.state::<ModelService>().inner().clone();
-                let live = LiveTranscriptionService::new(models, adapter_path);
+                let live = LiveTranscriptionService::new(
+                    models,
+                    worker_executable_path,
+                    cpu_adapter_path,
+                    vulkan_adapter_path,
+                );
                 let lifecycle = PersistedSessionLifecycleService::new(
                     app.state::<SettingsService>().inner().clone(),
                     app_data_directory.clone(),
@@ -113,6 +123,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::choose_workspace,
+            commands::settings::open_workspace_folder,
             commands::credentials::get_openrouter_credential_status,
             commands::credentials::set_openrouter_api_key,
             commands::credentials::delete_openrouter_api_key,

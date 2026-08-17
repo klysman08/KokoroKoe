@@ -7,7 +7,7 @@ use crate::{
     llm::OpenRouterService,
     logging,
     persistence::SettingsService,
-    security::authorize_main_window,
+    security::{authorize_main_window, probe_workspace},
 };
 
 #[tauri::command]
@@ -71,6 +71,38 @@ pub(crate) async fn choose_workspace<R: tauri::Runtime>(
     })
     .await
     .map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn open_workspace_folder<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, SettingsService>,
+) -> Result<(), CommandError> {
+    let service = authorize_before_side_effect(webview_window.label(), || state.inner().clone())
+        .map_err(record_error)?;
+
+    run_blocking(move || {
+        service.with_workspace_operation(|workspace| {
+            let verified = probe_workspace(workspace)?;
+            open_in_file_explorer(std::path::Path::new(&verified.path))
+        })
+    })
+    .await
+    .map_err(record_error)
+}
+
+#[cfg(windows)]
+fn open_in_file_explorer(path: &std::path::Path) -> Result<(), AppError> {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| AppError::workspace_open_failed())
+}
+
+#[cfg(not(windows))]
+fn open_in_file_explorer(_path: &std::path::Path) -> Result<(), AppError> {
+    Err(AppError::workspace_open_failed())
 }
 
 fn pick_workspace_folder() -> Option<PathBuf> {

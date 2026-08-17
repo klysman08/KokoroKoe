@@ -39,17 +39,24 @@ pub(crate) fn load_verified_cpu_engine(
     adapter_path: impl Into<std::path::PathBuf>,
     threads: usize,
 ) -> Result<WhisperEngine, TranscriptionError> {
-    let model_kind = match artifact.model_id.as_str() {
-        "whisper-tiny-multilingual" => WhisperModelKind::Tiny,
-        "whisper-base-multilingual" => WhisperModelKind::Base,
-        _ => return Err(TranscriptionError::ModelUnavailable),
-    };
+    let model_kind = whisper_model_kind(&artifact)?;
     WhisperEngine::load(WhisperConfig::cpu(
         adapter_path,
         artifact.path,
         model_kind,
         threads,
     ))
+}
+
+#[cfg(windows)]
+pub(crate) fn whisper_model_kind(
+    artifact: &VerifiedModelArtifact,
+) -> Result<WhisperModelKind, TranscriptionError> {
+    Ok(match artifact.model_id.as_str() {
+        "whisper-tiny-multilingual" => WhisperModelKind::Tiny,
+        "whisper-base-multilingual" => WhisperModelKind::Base,
+        _ => return Err(TranscriptionError::ModelUnavailable),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

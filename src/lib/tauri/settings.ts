@@ -67,3 +67,11 @@ export async function chooseWorkspace(): Promise<WorkspaceStatus> {
   }
   return parsed.data
 }
+
+export async function openWorkspaceFolder(): Promise<void> {
+  try {
+    await invoke("open_workspace_folder")
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+}

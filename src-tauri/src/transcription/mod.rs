@@ -17,7 +17,7 @@ pub(crate) use product::{EventSink, LiveTranscriptionService, ProductTranscripti
 pub(crate) use worker::{WORKER_MODE_ARGUMENT, run_worker_if_requested};
 
 pub(crate) use integration::LivePipelineEvent;
-pub(crate) use live::{load_verified_cpu_engine, spawn_live_coordinator};
+pub(crate) use live::{load_verified_cpu_engine, spawn_live_coordinator, whisper_model_kind};
 
 pub(crate) use model::{
     MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionError,

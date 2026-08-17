@@ -157,6 +157,31 @@ impl AppError {
                 ErrorSeverity::Info,
                 true,
             ),
+            "manual_question_provider_requirements_unavailable" => (
+                "The selected model has no available private provider that supports this structured question. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "manual_question_request_rejected" => (
+                "OpenRouter rejected this question. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "manual_question_timeout" => (
+                "OpenRouter took too long to answer. Try the question again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "manual_question_network_unavailable" => (
+                "KokoroKoe could not reach OpenRouter. Check the network and try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "manual_question_provider_temporarily_unavailable" => (
+                "The selected OpenRouter provider is temporarily unavailable. Try again or choose another model.",
+                ErrorSeverity::Info,
+                true,
+            ),
             "manual_question_content_filtered" => (
                 "The selected model could not return an answer for this question.",
                 ErrorSeverity::Warning,
@@ -615,6 +640,16 @@ impl AppError {
             "workspace_unwritable",
             "KokoroKoe cannot write to that workspace folder.",
             Some("The temporary write and synchronization probe failed."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn workspace_open_failed() -> Self {
+        Self::new(
+            "workspace_open_failed",
+            "KokoroKoe could not open the workspace folder in File Explorer.",
+            Some("Windows File Explorer did not accept the verified workspace path."),
             ErrorSeverity::Error,
             true,
         )

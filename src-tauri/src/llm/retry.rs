@@ -135,6 +135,7 @@ fn should_retry(error: CompletionError) -> bool {
         "completion_rate_limited"
             | "completion_provider_overloaded"
             | "completion_provider_unavailable"
+            | "completion_provider_requirements_unavailable"
             | "completion_timeout"
             | "completion_network_unavailable"
     )

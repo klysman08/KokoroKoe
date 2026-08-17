@@ -8,9 +8,10 @@ import {
   Plus,
   Square,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -19,6 +20,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
 import { type Project, type Session } from "@/contracts/projects"
 import { type AppSettings } from "@/contracts/settings"
 import { type ApplicationError } from "@/contracts/app-error"
@@ -36,9 +46,16 @@ import {
 import { listAudioDevices } from "@/lib/tauri/audio"
 import { SavedTranscript } from "@/features/transcript/SavedTranscript"
 import {
+  reduceLiveRecords,
+  type TranscriptRecord,
+} from "@/features/transcript/live-transcript-records"
+import {
   listenToPersistenceStatus,
   listenToSessionTranscriptionFinals,
+  listenToSessionTranscriptionGaps,
+  listenToSessionTranscriptionPartials,
 } from "@/lib/tauri/sessions"
+import { useActiveSessionStore } from "@/stores/active-session-store"
 
 export function ProjectSessions({
   project,
@@ -66,7 +83,14 @@ export function ProjectSessions({
   const [persistence, setPersistence] = useState<
     Record<string, PersistenceStatus>
   >({})
-  const sessions = sessionsQuery.data?.pages.flatMap((page) => page.items) ?? []
+  const [liveRecords, setLiveRecords] = useState<
+    Record<string, TranscriptRecord[]>
+  >({})
+  const syncActiveSession = useActiveSessionStore((state) => state.syncSession)
+  const sessions = useMemo(
+    () => sessionsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [sessionsQuery.data?.pages],
+  )
   const busy =
     createMutation.isPending ||
     updateMutation.isPending ||
@@ -77,6 +101,14 @@ export function ProjectSessions({
     createMutation.reset()
     updateMutation.reset()
   }
+
+  useEffect(() => {
+    const active = sessions.find(
+      (session) =>
+        session.state === "transcribing" || session.state === "paused",
+    )
+    if (active) syncActiveSession(active)
+  }, [sessions, syncActiveSession])
 
   useEffect(() => {
     let disposed = false
@@ -91,9 +123,36 @@ export function ProjectSessions({
       }),
       listenToSessionTranscriptionFinals((envelope) => {
         if (envelope.projectId !== project.id) return
+        setLiveRecords((current) => ({
+          ...current,
+          [envelope.sessionId]: reduceLiveRecords(
+            current[envelope.sessionId] ?? [],
+            envelope.event,
+          ),
+        }))
         void queryClient.invalidateQueries({
           queryKey: ["saved-transcript", project.id, envelope.sessionId],
         })
+      }),
+      listenToSessionTranscriptionPartials((envelope) => {
+        if (envelope.projectId !== project.id) return
+        setLiveRecords((current) => ({
+          ...current,
+          [envelope.sessionId]: reduceLiveRecords(
+            current[envelope.sessionId] ?? [],
+            envelope.event,
+          ),
+        }))
+      }),
+      listenToSessionTranscriptionGaps((envelope) => {
+        if (envelope.projectId !== project.id) return
+        setLiveRecords((current) => ({
+          ...current,
+          [envelope.sessionId]: reduceLiveRecords(
+            current[envelope.sessionId] ?? [],
+            envelope.event,
+          ),
+        }))
       }),
     ]) {
       void subscription
@@ -340,6 +399,13 @@ export function ProjectSessions({
                       </p>
                     )}
                     <PersistenceLine status={persistence[session.id]} />
+                    {(session.state === "transcribing" ||
+                      session.state === "paused") && (
+                      <SessionLiveTranscript
+                        records={liveRecords[session.id] ?? []}
+                        session={session}
+                      />
+                    )}
                   </div>
                 </div>
               ))}
@@ -368,6 +434,96 @@ export function ProjectSessions({
       )}
     </>
   )
+}
+
+function SessionLiveTranscript({
+  records,
+  session,
+}: {
+  records: TranscriptRecord[]
+  session: Session
+}) {
+  return (
+    <section aria-label={`Live transcript for ${session.title}`}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-medium">Live transcript</p>
+        <Badge variant="outline">
+          {session.state === "paused" ? "Paused" : "Following latest"}
+        </Badge>
+      </div>
+      <div className="bg-muted/20 h-56 overflow-hidden rounded-lg border">
+        {records.length === 0 ? (
+          <div className="grid size-full place-items-center p-4 text-center">
+            <p className="text-muted-foreground text-xs">
+              {session.state === "paused"
+                ? "No live text was received before this pause."
+                : "Listening for speech…"}
+            </p>
+          </div>
+        ) : (
+          <MessageScrollerProvider autoScroll>
+            <MessageScroller>
+              <MessageScrollerViewport>
+                <MessageScrollerContent className="gap-3 p-3">
+                  {records.map((record) => (
+                    <MessageScrollerItem
+                      key={
+                        record.kind === "segment"
+                          ? record.segment.id
+                          : record.id
+                      }
+                      messageId={
+                        record.kind === "segment"
+                          ? record.segment.id
+                          : record.id
+                      }
+                    >
+                      <TranscriptMessage record={record} />
+                    </MessageScrollerItem>
+                  ))}
+                </MessageScrollerContent>
+              </MessageScrollerViewport>
+              <MessageScrollerButton />
+            </MessageScroller>
+          </MessageScrollerProvider>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function TranscriptMessage({ record }: { record: TranscriptRecord }) {
+  const source =
+    record.kind === "segment" ? record.segment.source : record.source
+  const startMs =
+    record.kind === "segment" ? record.segment.startMs : record.startMs
+  const status = record.kind === "segment" ? record.segment.status : "gap"
+  return (
+    <Message align={source === "microphone" ? "start" : "end"}>
+      <MessageContent>
+        <MessageHeader>
+          {source === "microphone" ? "Microphone" : "System output"} ·{" "}
+          {formatTimeline(startMs)} · {status}
+        </MessageHeader>
+        <Bubble
+          align={source === "microphone" ? "start" : "end"}
+          variant={record.kind === "gap" ? "destructive" : "muted"}
+        >
+          <BubbleContent>
+            {record.kind === "segment"
+              ? record.segment.text || "Listening…"
+              : `Audio gap: ${record.code}`}
+          </BubbleContent>
+        </Bubble>
+      </MessageContent>
+    </Message>
+  )
+}
+
+function formatTimeline(milliseconds: number) {
+  const seconds = Math.floor(milliseconds / 1_000)
+  const minutes = Math.floor(seconds / 60)
+  return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
 }
 
 function lifecycleBoundaryRequest(project: Project, session: Session) {

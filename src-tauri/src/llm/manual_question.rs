@@ -149,6 +149,16 @@ fn map_completion_error(error: CompletionError) -> AppError {
         "completion_budget_exceeded" => "manual_question_budget_exceeded",
         "completion_rate_limited" => "manual_question_rate_limited",
         "completion_cancelled" => "manual_question_cancelled",
+        "completion_provider_requirements_unavailable" => {
+            "manual_question_provider_requirements_unavailable"
+        }
+        "completion_context_rejected" => "manual_question_context_too_large",
+        "completion_request_rejected" => "manual_question_request_rejected",
+        "completion_timeout" => "manual_question_timeout",
+        "completion_network_unavailable" => "manual_question_network_unavailable",
+        "completion_provider_unavailable"
+        | "completion_provider_overloaded"
+        | "completion_provider_failed" => "manual_question_provider_temporarily_unavailable",
         _ => "manual_question_provider_unavailable",
     };
     AppError::manual_question_error(public)
@@ -317,6 +327,34 @@ mod tests {
             zero_data_retention_available: true,
             data_collection: OpenRouterDataCollection::Deny,
         }
+    }
+
+    #[test]
+    fn provider_requirement_failures_are_actionable_and_content_free() {
+        let error = super::map_completion_error(CompletionError::new(
+            "completion_provider_requirements_unavailable",
+            crate::llm::completion::ReservationDisposition::Released,
+        ));
+
+        assert_eq!(
+            error.code,
+            "manual_question_provider_requirements_unavailable"
+        );
+        assert!(error.user_message.contains("choose another model"));
+        assert_eq!(
+            error.technical_detail.as_deref(),
+            Some("manual_question_provider_requirements_unavailable")
+        );
+
+        let unavailable = super::map_completion_error(CompletionError::new(
+            "completion_provider_unavailable",
+            crate::llm::completion::ReservationDisposition::Released,
+        ));
+        assert_eq!(
+            unavailable.code,
+            "manual_question_provider_temporarily_unavailable"
+        );
+        assert!(unavailable.user_message.contains("choose another model"));
     }
 
     #[test]

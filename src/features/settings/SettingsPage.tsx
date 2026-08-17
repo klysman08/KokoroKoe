@@ -1,6 +1,13 @@
 import { useState, type FormEvent } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Cpu, Database, Download, HardDrive, ShieldCheck } from "lucide-react"
+import {
+  Cpu,
+  Database,
+  Download,
+  FolderOpen,
+  HardDrive,
+  ShieldCheck,
+} from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,13 +27,13 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
 import { type AppSettings, type AppSettingsUpdate } from "@/contracts/settings"
 import { ApplicationError } from "@/contracts/app-error"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
@@ -37,6 +44,7 @@ import { type OpenRouterModel } from "@/contracts/openrouter"
 import { listOpenRouterModels } from "@/lib/tauri/openrouter"
 import {
   useChooseWorkspaceMutation,
+  useOpenWorkspaceFolderMutation,
   useUpdateSettingsMutation,
 } from "@/features/settings/use-settings-mutations"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
@@ -53,6 +61,7 @@ import {
 export function SettingsPage() {
   const settingsQuery = useSettingsQuery()
   const workspaceMutation = useChooseWorkspaceMutation()
+  const openWorkspaceMutation = useOpenWorkspaceFolderMutation()
   const workspaceCancelled =
     workspaceMutation.error?.details.code === "workspace_selection_cancelled"
 
@@ -100,16 +109,26 @@ export function SettingsPage() {
               {settingsQuery.data?.workspacePath ?? "Workspace not loaded"}
             </p>
           </div>
-          <Button
-            type="button"
-            disabled={workspaceMutation.isPending}
-            onClick={() => workspaceMutation.mutate()}
-          >
-            <HardDrive aria-hidden="true" className="size-4" />
-            {workspaceMutation.isPending
-              ? "Waiting for folder selection…"
-              : "Choose workspace folder"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={workspaceMutation.isPending}
+              onClick={() => workspaceMutation.mutate()}
+            >
+              <HardDrive data-icon="inline-start" />
+              {workspaceMutation.isPending
+                ? "Waiting for folder selection…"
+                : "Choose workspace folder"}
+            </Button>
+            <Button
+              type="button"
+              disabled={!settingsQuery.data || openWorkspaceMutation.isPending}
+              onClick={() => openWorkspaceMutation.mutate()}
+              variant="outline"
+            >
+              <FolderOpen data-icon="inline-start" /> Open workspace
+            </Button>
+          </div>
           {workspaceMutation.isSuccess && (
             <div role="status" aria-live="polite" className="text-sm">
               <p className="font-medium">Workspace is writable and saved.</p>
@@ -137,6 +156,9 @@ export function SettingsPage() {
           )}
           {workspaceMutation.isError && !workspaceCancelled && (
             <SanitizedErrorPanel error={workspaceMutation.error} />
+          )}
+          {openWorkspaceMutation.isError && (
+            <SanitizedErrorPanel error={openWorkspaceMutation.error} />
           )}
         </CardContent>
       </Card>
@@ -595,7 +617,11 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
   )
 }
 
-const noModelValue = "__none__"
+type ModelChoice = {
+  value: string
+  label: string
+  disabled?: boolean
+}
 
 function ModelRoleField({
   id,
@@ -614,35 +640,48 @@ function ModelRoleField({
 }) {
   const currentMissing =
     value !== undefined && !models.some((model) => model.id === value)
+  const choices: ModelChoice[] = [
+    { value: "", label: "Not selected" },
+    ...(currentMissing && value
+      ? [{ value, label: `Unavailable · ${value}`, disabled: true }]
+      : []),
+    ...models.map((model) => ({
+      value: model.id,
+      label: `${model.name} · ${model.provider}`,
+    })),
+  ]
+  const selected = choices.find((choice) => choice.value === (value ?? ""))
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Select
-        value={value ?? noModelValue}
-        onValueChange={(next) =>
-          onChange(next === noModelValue || next === null ? undefined : next)
-        }
+      <Combobox
+        items={choices}
+        itemToStringValue={(choice) => choice.label}
+        value={selected ?? null}
+        onValueChange={(next) => onChange(next?.value || undefined)}
         disabled={models.length === 0}
       >
-        <SelectTrigger id={id} className="w-full">
-          <SelectValue placeholder="Choose a model" />
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          <SelectGroup>
-            <SelectItem value={noModelValue}>Not selected</SelectItem>
-            {currentMissing && value && (
-              <SelectItem value={value} disabled>
-                Unavailable · {value}
-              </SelectItem>
+        <ComboboxInput
+          id={id}
+          className="w-full"
+          placeholder="Search OpenRouter models…"
+          showClear
+        />
+        <ComboboxContent>
+          <ComboboxEmpty>No matching models.</ComboboxEmpty>
+          <ComboboxList>
+            {(choice: ModelChoice) => (
+              <ComboboxItem
+                key={choice.value || "not-selected"}
+                value={choice}
+                disabled={choice.disabled}
+              >
+                {choice.label}
+              </ComboboxItem>
             )}
-            {models.map((model) => (
-              <SelectItem key={model.id} value={model.id}>
-                {model.name} · {model.provider}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+          </ComboboxList>
+        </ComboboxContent>
+      </Combobox>
       <FieldDescription>{description}</FieldDescription>
     </Field>
   )

@@ -9,6 +9,7 @@
     "allow-get-settings",
     "allow-update-settings",
     "allow-choose-workspace",
+    "allow-open-workspace-folder",
     "allow-get-openrouter-credential-status",
     "allow-set-openrouter-api-key",
     "allow-delete-openrouter-api-key",

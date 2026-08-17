@@ -27,6 +27,7 @@ import {
   stopPersistedSession,
   updateSession,
 } from "@/lib/tauri/sessions"
+import { useActiveSessionStore } from "@/stores/active-session-store"
 
 const SESSION_PAGE_SIZE = 12
 export const sessionsQueryKey = (projectId: ProjectId) =>
@@ -104,6 +105,9 @@ export function useSessionLifecycleMutation(projectId: ProjectId) {
     },
     retry: false,
     gcTime: 0,
+    onSuccess: (session) => {
+      useActiveSessionStore.getState().syncSession(session)
+    },
     onSettled: async () => {
       await queryClient.invalidateQueries({
         queryKey: sessionsQueryKey(projectId),

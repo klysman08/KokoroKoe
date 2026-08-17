@@ -9,7 +9,7 @@ Status: Phase 1 candidate assessment plus the resolved Phase 2 foundation invent
 | Desktop runtime | `tauri` 2.11.5 | MIT OR Apache-2.0 | No optional features, commands, or plugins enabled |
 | Desktop build | `tauri-build` 2.6.3, Tauri CLI 2.11.4 | MIT OR Apache-2.0 | Windows x64 MSI and NSIS bundles verified |
 | UI runtime | React/React DOM 19.2.8 | MIT | Bundled into the WebView frontend |
-| UI primitives | Base UI 1.7.0, shadcn CLI/source 4.16.1 | MIT | shadcn is a development dependency; generated components are repository source |
+| UI primitives | Base UI 1.7.0, shadcn CLI/source 4.16.1, `@shadcn/react` 0.3.0 | MIT | shadcn is a development dependency; generated components are repository source; the message-scroller runtime supplies bounded follow-latest/anchoring behavior |
 | Styling | Tailwind CSS and Vite plugin 4.3.3, `tw-animate-css` 1.4.0 | MIT | Tailwind v4 Vite workflow |
 | State | Zustand 5.0.14 | MIT | UI-only shell/navigation state in P2-001 |
 | Icons/font | Lucide React 1.28.0, Inter variable 5.3.0 | ISC; OFL-1.1 | Inter is self-hosted in the bundle |
@@ -111,6 +111,8 @@ P3-007 reuses the existing Rust standard library, `wasapi` 0.23.0, `windows-sys`
 ## P3-008 worker protocol prototype inventory
 
 P3-008 uses Rust standard-library process/pipe/thread/JSON support, existing `serde`/`serde_json`, the existing project-owned whisper.cpp adapter API v2, and additional `windows-sys` 0.61.2 Job Objects/Threading feature projections. It adds no package, native library, model, audio fixture, network client, command, event, capability, or lockfile entry. The exact runner reuses the SHA-256-verified external Tiny model and P3-005 adapter/generated fixture; no external artifact is packaged or copied into the repository.
+
+P5-013 adds no dependency or lockfile change. It product-wires the same project-owned adapter, pinned MIT whisper.cpp Vulkan runtime, existing `windows-sys` Job Object ownership, and protocol-v1 supervisor. The POC helper stages the already verified CPU files beside the executable and the already verified Vulkan files in a private subdirectory, checking bytes and SHA-256 against their external sources. Those DLLs remain ignored local test inputs rather than repository or installer artifacts; Phase 7 still owns distribution notices and packaged-native validation.
 
 ## P3-010 model-management prototype inventory
 

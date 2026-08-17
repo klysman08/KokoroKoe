@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-007 - Single-attempt private streaming completion transport
+- Task: P5-008 - Strict generated-result validation and single JSON repair
 - Date: 2026-08-15
-- Outcome: added a Rust-only reserve-before-send OpenRouter completion POST with exact ZDR/data-denied structured-output framing, bounded SSE/delta/cancellation handling, final-usage reconciliation, and conservative cleanup for uncertain billable failures.
-- Verification: 7 focused transport tests; Rust 1.88 locked fmt/Clippy with 265 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; Rust audits and 159-package frontend license inventory; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke. The current production frontend audit reports one unrelated transitive `nanoid <3.3.18` advisory recorded in project memory.
-- Memory: [P5-007 checkpoint](docs/project-memory.md#p5-007---single-attempt-private-streaming-completion-transport)
+- Outcome: added strict bounded typed validation for insight, summary, action-item, and manual-answer outputs plus one non-recursive, distinctly reserved JSON repair request using minimal untrusted framing and the existing private transport.
+- Verification: 6 focused validation/repair tests; Rust 1.88 locked fmt/Clippy with 271 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; Rust audits and 159-package frontend license inventory; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke. The existing unrelated transitive `nanoid <3.3.18` production-audit finding remains recorded in project memory.
+- Memory: [P5-008 checkpoint](docs/project-memory.md#p5-008---strict-generated-result-validation-and-single-json-repair)

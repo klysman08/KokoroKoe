@@ -13,6 +13,7 @@ fn main() {
             "resume_model_download",
             "delete_transcription_model",
             "set_default_transcription_model",
+            "ask_manual_question",
         ]));
 
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

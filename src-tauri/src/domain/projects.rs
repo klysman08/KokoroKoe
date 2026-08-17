@@ -20,11 +20,19 @@ impl ProjectId {
     fn suffix(self) -> String {
         self.0.simple().to_string()[..8].to_owned()
     }
+
+    pub(crate) const fn as_uuid(self) -> Uuid {
+        self.0
+    }
 }
 
 impl SessionId {
     fn suffix(self) -> String {
         self.0.simple().to_string()[..8].to_owned()
+    }
+
+    pub(crate) const fn as_uuid(self) -> Uuid {
+        self.0
     }
 }
 

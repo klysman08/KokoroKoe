@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-008 - Strict generated-result validation and single JSON repair
-- Date: 2026-08-15
-- Outcome: added strict bounded typed validation for insight, summary, action-item, and manual-answer outputs plus one non-recursive, distinctly reserved JSON repair request using minimal untrusted framing and the existing private transport.
-- Verification: 6 focused validation/repair tests; Rust 1.88 locked fmt/Clippy with 271 ordinary tests plus 12 explicit ignored gates and 3 capability tests; Node 24 frontend gates and 152 Vitest tests; Rust audits and 159-package frontend license inventory; unchanged dependencies/lockfiles/ACLs; locked x64 release build and responsive native launch smoke. The existing unrelated transitive `nanoid <3.3.18` production-audit finding remains recorded in project memory.
-- Memory: [P5-008 checkpoint](docs/project-memory.md#p5-008---strict-generated-result-validation-and-single-json-repair)
+- Task: P5-012 - Reproducible POC transcription-runtime staging
+- Date: 2026-08-17
+- Outcome: diagnosed the real-user start failure as the deliberately unbundled CPU Whisper DLL set, staged exactly five verified runtime files beside the release executable, and added an idempotent byte/hash-verifying preparation command to the POC runbook.
+- Verification: the staging helper passed twice; the exact staged adapter path passed the real dual-device product gate in 85.02 seconds with 32 partials, one matching final and zero gaps; no model, audio, transcript, credential, database, log, dependency, lockfile, capability or runtime binary entered the tracked patch. P5-011's locked Rust/frontend/release baseline remains unchanged.
+- Memory: [P5-012 checkpoint](docs/project-memory.md#p5-012---reproducible-poc-transcription-runtime-staging)

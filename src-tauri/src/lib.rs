@@ -17,7 +17,7 @@ use std::io;
 use tauri::Manager;
 
 use audio::AudioDeviceTestService;
-use llm::OpenRouterService;
+use llm::{ManualQuestionService, OpenRouterService};
 use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
@@ -70,10 +70,13 @@ pub fn run() {
             let credentials = CredentialService::open();
             let openrouter = OpenRouterService::open(credentials.clone())
                 .map_err(|_| io::Error::other("OpenRouter service initialization failed"))?;
+            let manual_questions =
+                ManualQuestionService::new(transcripts.clone(), openrouter.clone());
 
             app.manage(settings);
             app.manage(credentials);
             app.manage(openrouter);
+            app.manage(manual_questions);
             app.manage(models);
             app.manage(projects);
             app.manage(sessions);
@@ -115,6 +118,7 @@ pub fn run() {
             commands::credentials::delete_openrouter_api_key,
             commands::openrouter::validate_openrouter_api_key,
             commands::openrouter::list_openrouter_models,
+            commands::manual_question::ask_manual_question,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

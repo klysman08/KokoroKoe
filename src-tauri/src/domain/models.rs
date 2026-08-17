@@ -48,7 +48,6 @@ pub(crate) enum ModelDownloadStatus {
 pub(crate) struct RequestId(Uuid);
 
 impl RequestId {
-    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self(Uuid::new_v4())
     }

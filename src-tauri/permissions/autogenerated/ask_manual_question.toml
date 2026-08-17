@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ask-manual-question"
+description = "Enables the ask_manual_question command without any pre-configured scope."
+commands.allow = ["ask_manual_question"]
+
+[[permission]]
+identifier = "deny-ask-manual-question"
+description = "Denies the ask_manual_question command without any pre-configured scope."
+commands.deny = ["ask_manual_question"]

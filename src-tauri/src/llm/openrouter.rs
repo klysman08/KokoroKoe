@@ -7,7 +7,7 @@ use std::{
 use reqwest::{
     StatusCode,
     blocking::{Client, Response},
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue, USER_AGENT},
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER, USER_AGENT},
 };
 use serde::Deserialize;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -27,6 +27,7 @@ const VALIDATION_RESPONSE_LIMIT: usize = 64 * 1024;
 const MODEL_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 const MODEL_LIMIT: usize = 500;
 const CATALOG_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+const COMPLETION_RETRY_AFTER_CAP: Duration = Duration::from_secs(30);
 
 trait Clock: Send + Sync {
     fn now_rfc3339(&self) -> Result<String, AppError>;
@@ -56,6 +57,30 @@ pub(crate) struct OpenRouterService {
 struct CachedCatalog {
     stored_at: Instant,
     models: Vec<OpenRouterModel>,
+}
+
+pub(super) struct CompletionSendError {
+    pub(super) error: AppError,
+    pub(super) definitely_not_started: bool,
+    pub(super) retry_after: Option<Duration>,
+}
+
+impl CompletionSendError {
+    fn before_send(error: AppError) -> Self {
+        Self {
+            error,
+            definitely_not_started: true,
+            retry_after: None,
+        }
+    }
+
+    fn ambiguous(error: AppError) -> Self {
+        Self {
+            error,
+            definitely_not_started: false,
+            retry_after: None,
+        }
+    }
 }
 
 impl OpenRouterService {
@@ -229,11 +254,16 @@ impl OpenRouterService {
             .and_then(check_status)
     }
 
-    pub(super) fn send_completion(&self, body: Vec<u8>) -> Result<Response, AppError> {
-        let api_key = self.credentials.load_api_key()?;
-        let authorization_header = authorization_header(&api_key)?;
+    pub(super) fn send_completion(&self, body: Vec<u8>) -> Result<Response, CompletionSendError> {
+        let api_key = self
+            .credentials
+            .load_api_key()
+            .map_err(CompletionSendError::before_send)?;
+        let authorization_header =
+            authorization_header(&api_key).map_err(CompletionSendError::before_send)?;
 
-        self.client
+        let response = self
+            .client
             .post(format!("{}/api/v1/chat/completions", self.base_url))
             .header(AUTHORIZATION, authorization_header)
             .header(ACCEPT, "text/event-stream")
@@ -241,8 +271,8 @@ impl OpenRouterService {
             .header(USER_AGENT, "KokoroKoe/0.1.0")
             .body(body)
             .send()
-            .map_err(map_transport_error)
-            .and_then(check_status)
+            .map_err(|error| CompletionSendError::ambiguous(map_transport_error(error)))?;
+        check_completion_status(response)
     }
 
     #[cfg(test)]
@@ -293,6 +323,43 @@ fn check_status(response: Response) -> Result<Response, AppError> {
     Err(AppError::openrouter_error(code))
 }
 
+fn check_completion_status(response: Response) -> Result<Response, CompletionSendError> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status();
+    let retry_after = matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    )
+    .then(|| {
+        response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(parse_retry_after)
+    })
+    .flatten();
+    let error = check_status(response)
+        .expect_err("a non-success completion response must map to a fixed error");
+    Err(CompletionSendError {
+        error,
+        definitely_not_started: true,
+        retry_after,
+    })
+}
+
+fn parse_retry_after(value: &HeaderValue) -> Option<Duration> {
+    let value = value.to_str().ok()?;
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let seconds = value.parse::<u64>().ok()?;
+    if seconds == 0 {
+        return None;
+    }
+    Some(Duration::from_secs(seconds).min(COMPLETION_RETRY_AFTER_CAP))
+}
+
 fn read_success_body(mut response: Response, limit: usize) -> Result<Vec<u8>, AppError> {
     if response
         .content_length()
@@ -319,7 +386,6 @@ struct KeyEnvelope {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ModelEnvelope {
     data: Vec<RemoteModel>,
 }
@@ -377,7 +443,7 @@ impl TryFrom<RemoteModel> for OpenRouterModel {
             .any(|value| value == "structured_outputs" || value == "response_format");
         let model = Self {
             id: remote.id,
-            name: remote.name,
+            name: remote.name.trim().to_owned(),
             provider,
             context_length: remote.context_length,
             prompt_price_per_token: remote.pricing.prompt,
@@ -419,6 +485,21 @@ mod tests {
         body: String,
         delay: Duration,
         content_length: Option<usize>,
+    }
+
+    #[test]
+    fn completion_retry_after_is_positive_decimal_only_and_capped() {
+        assert_eq!(
+            parse_retry_after(&HeaderValue::from_static("7")),
+            Some(Duration::from_secs(7))
+        );
+        assert_eq!(
+            parse_retry_after(&HeaderValue::from_static("999")),
+            Some(COMPLETION_RETRY_AFTER_CAP)
+        );
+        for value in ["0", "+1", " 1", "1.5", "Wed, 21 Oct 2015 07:28:00 GMT"] {
+            assert_eq!(parse_retry_after(&HeaderValue::from_static(value)), None);
+        }
     }
 
     fn start_server(responses: Vec<MockResponse>) -> (String, mpsc::Receiver<String>) {
@@ -608,6 +689,38 @@ mod tests {
             service.cached_model_for_pricing("alpha/first").unwrap_err(),
             "usage_catalog_required"
         );
+    }
+
+    #[test]
+    fn model_catalog_accepts_provider_envelope_metadata_without_exposing_it() {
+        let body = r#"{
+          "data": [{
+            "id": "alpha/first",
+            "name": " Alpha ",
+            "context_length": 4096,
+            "architecture": {"input_modalities":["text"],"output_modalities":["text"]},
+            "pricing": {"prompt":"0.000001","completion":"0.000003"},
+            "supported_parameters": ["response_format"]
+          }],
+          "total_count": 1,
+          "links": {"next": null, "previous": null}
+        }"#;
+        let (base_url, _) = start_server(vec![MockResponse {
+            status: 200,
+            body: body.into(),
+            delay: Duration::ZERO,
+            content_length: None,
+        }]);
+        let (service, _) = make_service(&base_url, Duration::from_secs(2));
+
+        let models = service.list_models(false).unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "alpha/first");
+        assert_eq!(models[0].name, "Alpha");
+        let public_models = serde_json::to_string(&models).unwrap();
+        assert!(!public_models.contains("total_count"));
+        assert!(!public_models.contains("links"));
     }
 
     #[test]

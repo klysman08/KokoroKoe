@@ -6,8 +6,9 @@ use std::{
 use serde::Serialize;
 
 use crate::domain::{
-    AppError, TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
-    TranscriptSearchQuery, TranscriptSegmentStatus, TranscriptSegmentView,
+    AppError, Project, ProjectId, Session, SessionId, TranscriptPage, TranscriptPageRequest,
+    TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
+    TranscriptSegmentView,
 };
 
 use super::{
@@ -17,6 +18,15 @@ use super::{
 
 const READ_CURSOR_PREFIX: &str = "r1:";
 const MAX_READ_CURSOR_OFFSET: usize = 100_000;
+const MANUAL_QUESTION_NEIGHBORS_PER_SIDE: usize = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManualQuestionContext {
+    pub(crate) project: Project,
+    pub(crate) session: Session,
+    pub(crate) selected_segment: TranscriptSegmentView,
+    pub(crate) neighboring_segments: Vec<TranscriptSegmentView>,
+}
 
 #[derive(Clone)]
 pub(crate) struct TranscriptService {
@@ -98,6 +108,68 @@ impl TranscriptService {
             let page = TranscriptPage { items, next_cursor };
             page.validate().map_err(AppError::transcript_error)?;
             Ok(page)
+        })
+    }
+
+    pub(crate) fn get_manual_question_context(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+        selected_segment_id: uuid::Uuid,
+    ) -> Result<ManualQuestionContext, AppError> {
+        if project_id.as_uuid().is_nil()
+            || session_id.as_uuid().is_nil()
+            || selected_segment_id.is_nil()
+        {
+            return Err(AppError::manual_question_error("manual_question_invalid"));
+        }
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(project_id, session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let snapshot = TranscriptStore::open(workspace)
+                .and_then(|store| store.read_transcript(&locator))
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let selected_index = snapshot
+                .segments
+                .iter()
+                .position(|segment| segment.id == selected_segment_id)
+                .ok_or_else(|| {
+                    AppError::manual_question_error("manual_question_segment_not_found")
+                })?;
+            let start = selected_index.saturating_sub(MANUAL_QUESTION_NEIGHBORS_PER_SIDE);
+            let end = selected_index
+                .saturating_add(MANUAL_QUESTION_NEIGHBORS_PER_SIDE + 1)
+                .min(snapshot.segments.len());
+            let neighboring_segments = snapshot.segments[start..end]
+                .iter()
+                .cloned()
+                .map(|segment| TranscriptSegmentView {
+                    id: segment.id,
+                    project_id,
+                    session_id,
+                    source: segment.source,
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    text: segment.text,
+                    status: TranscriptSegmentStatus::Final,
+                    language: segment.language,
+                })
+                .collect::<Vec<_>>();
+            let selected_segment = neighboring_segments[selected_index - start].clone();
+            Ok(ManualQuestionContext {
+                project,
+                session,
+                selected_segment,
+                neighboring_segments,
+            })
         })
     }
 
@@ -366,5 +438,79 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(stale.code, "transcript_page_stale");
+    }
+
+    #[test]
+    fn manual_question_context_keeps_only_four_verified_neighbors_per_side() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let journal = SessionJournal::open(&workspace).unwrap();
+        let segment_ids = (1..=11)
+            .map(|index| {
+                uuid::Uuid::parse_str(&format!("50000000-0000-4000-8000-{index:012}")).unwrap()
+            })
+            .collect::<Vec<_>>();
+        for (index, segment_id) in segment_ids.iter().enumerate() {
+            journal
+                .append(
+                    &locator,
+                    crate::persistence::JournalAppend {
+                        event_id: uuid::Uuid::new_v4(),
+                        recorded_at: format!("2026-08-12T10:00:{index:02}Z"),
+                        mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                            crate::persistence::FinalizedTranscriptSegment {
+                                id: *segment_id,
+                                source: crate::audio::AudioSource::Microphone,
+                                start_ms: index as u64 * 1_000,
+                                end_ms: index as u64 * 1_000 + 800,
+                                text: format!("verified segment {index}"),
+                                language: "en-US".to_owned(),
+                            },
+                        ),
+                    },
+                )
+                .unwrap();
+        }
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+
+        let context = service
+            .get_manual_question_context(project.id, session.id, segment_ids[5])
+            .unwrap();
+
+        assert_eq!(context.project.id, project.id);
+        assert_eq!(context.session.id, session.id);
+        assert_eq!(context.selected_segment.id, segment_ids[5]);
+        assert_eq!(
+            context
+                .neighboring_segments
+                .iter()
+                .map(|segment| segment.id)
+                .collect::<Vec<_>>(),
+            segment_ids[1..10]
+        );
+        assert!(
+            context
+                .neighboring_segments
+                .iter()
+                .all(|segment| segment.text.starts_with("verified segment"))
+        );
+        let missing = service
+            .get_manual_question_context(project.id, session.id, uuid::Uuid::new_v4())
+            .unwrap_err();
+        assert_eq!(missing.code, "manual_question_segment_not_found");
     }
 }

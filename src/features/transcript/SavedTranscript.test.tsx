@@ -5,13 +5,19 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import projectSessionFixture from "../../../fixtures/contracts/project-session-v1.json"
+import manualQuestionFixture from "../../../fixtures/contracts/manual-question-v1.json"
 import transcriptFixture from "../../../fixtures/contracts/transcript-reading-v1.json"
+import {
+  askManualQuestionRequestSchema,
+  manualQuestionFixtureSchema,
+} from "@/contracts/manual-question"
 import { projectSessionFixtureSchema } from "@/contracts/projects"
 import { SavedTranscript } from "./SavedTranscript"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
 
 const scope = projectSessionFixtureSchema.parse(projectSessionFixture)
+const manualQuestion = manualQuestionFixtureSchema.parse(manualQuestionFixture)
 const invokeMock = vi.mocked(invoke)
 
 function scopedPage() {
@@ -42,7 +48,7 @@ function renderTranscript() {
 describe("SavedTranscript", () => {
   beforeEach(() => {
     invokeMock.mockReset()
-    invokeMock.mockImplementation(async (command) => {
+    invokeMock.mockImplementation(async (command, args) => {
       if (command === "get_transcript_page") return scopedPage()
       if (command === "search_transcript")
         return {
@@ -55,6 +61,20 @@ describe("SavedTranscript", () => {
             },
           ],
         }
+      if (command === "ask_manual_question") {
+        const request = askManualQuestionRequestSchema.parse(
+          (args as { request: unknown }).request,
+        )
+        return {
+          ...manualQuestion.response,
+          requestId: request.requestId,
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+          selectedSegmentId: request.selectedSegmentId,
+          answer: "<img src=x onerror=alert(1)> Keep the transcript local.",
+          limitations: ["<script>untrusted model text</script>"],
+        }
+      }
       throw new Error(`Unexpected command: ${command}`)
     })
   })
@@ -97,5 +117,85 @@ describe("SavedTranscript", () => {
         limit: 20,
       }),
     )
+  })
+
+  it("asks from an explicit segment and renders only validated inert answer text", async () => {
+    const user = userEvent.setup()
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Ask about this segment" })[0]!,
+    )
+    expect(screen.getByText("What leaves this device")).toBeInTheDocument()
+    expect(screen.getByText(/It never sends audio/)).toBeInTheDocument()
+    await user.type(
+      screen.getByRole("textbox", { name: "Question" }),
+      "What decision was made?",
+    )
+    await user.click(screen.getByRole("button", { name: "Ask OpenRouter" }))
+
+    expect(
+      await screen.findByText(
+        "<img src=x onerror=alert(1)> Keep the transcript local.",
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("<script>untrusted model text</script>"),
+    ).toBeInTheDocument()
+    expect(document.querySelector("img")).toBeNull()
+    expect(document.querySelector("script")).toBeNull()
+    expect(invokeMock).toHaveBeenCalledWith("ask_manual_question", {
+      request: {
+        requestId: expect.any(String),
+        projectId: scope.project.id,
+        sessionId: scope.session.id,
+        selectedSegmentId: scopedPage().items[0]!.id,
+        question: "What decision was made?",
+      },
+    })
+  })
+
+  it("keeps the action pending and omits unexpected provider details from errors", async () => {
+    const user = userEvent.setup()
+    let rejectQuestion!: (reason: unknown) => void
+    const pendingQuestion = new Promise((_, reject) => {
+      rejectQuestion = reject
+    })
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "ask_manual_question") return pendingQuestion
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+    await user.click(
+      screen.getAllByRole("button", { name: "Ask about this segment" })[0]!,
+    )
+    await user.type(
+      screen.getByRole("textbox", { name: "Question" }),
+      "What decision was made?",
+    )
+    await user.click(screen.getByRole("button", { name: "Ask OpenRouter" }))
+
+    expect(
+      screen.getByRole("button", { name: "Asking OpenRouter…" }),
+    ).toBeDisabled()
+    expect(
+      screen.getByText("Generating a bounded, validated answer."),
+    ).toBeInTheDocument()
+    rejectQuestion(new Error("provider-secret and C:\\private\\meeting.md"))
+
+    expect(
+      await screen.findByText(
+        "KokoroKoe encountered an unexpected application error.",
+      ),
+    ).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent("provider-secret")
+    expect(document.body).not.toHaveTextContent("private\\meeting.md")
   })
 })

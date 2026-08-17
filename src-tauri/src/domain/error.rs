@@ -100,6 +100,87 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn manual_question_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "manual_question_invalid" => (
+                "Enter a valid question for that transcript segment.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_segment_not_found" => (
+                "That finalized transcript segment is no longer available.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "manual_question_model_required" => (
+                "Choose a manual-question model before asking OpenRouter.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_catalog_required" => (
+                "Refresh the privacy-filtered OpenRouter model list before asking a question.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "manual_question_credential_required" => (
+                "Add an OpenRouter API key before asking an online-model question.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_authentication_failed" => (
+                "OpenRouter did not accept the configured API key.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_payment_required" => (
+                "The OpenRouter account does not have enough credit for this question.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_budget_exceeded" => (
+                "This question would exceed the Session spending limit.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_context_too_large" => (
+                "The selected transcript segment does not fit this Session's model limit.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_cancelled" => (
+                "The OpenRouter question was cancelled.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "manual_question_rate_limited" => (
+                "OpenRouter is rate limiting questions. Try again later.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "manual_question_content_filtered" => (
+                "The selected model could not return an answer for this question.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "manual_question_response_invalid" => (
+                "The selected model returned an unsupported answer.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "manual_question_worker_failed" => (
+                "The OpenRouter question stopped unexpectedly.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not complete the OpenRouter question.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn openrouter_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "openrouter_credential_missing" => (

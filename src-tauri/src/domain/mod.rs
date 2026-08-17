@@ -1,5 +1,6 @@
 mod credentials;
 mod error;
+mod manual_question;
 mod models;
 mod openrouter;
 mod projects;
@@ -9,6 +10,9 @@ mod transcripts;
 
 pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
 pub(crate) use error::{AppError, CommandError};
+pub(crate) use manual_question::{
+    AskManualQuestionRequest, ManualQuestionResponse, ManualQuestionUsage,
+};
 #[cfg(test)]
 pub(crate) use models::ModelContractFixture;
 pub(crate) use models::{

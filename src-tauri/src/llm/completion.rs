@@ -4,6 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use reqwest::header::CONTENT_TYPE;
@@ -51,11 +52,21 @@ pub(crate) struct CompletionResult {
 pub(crate) struct CompletionError {
     pub(crate) code: &'static str,
     pub(crate) reservation: ReservationDisposition,
+    pub(crate) retry_after: Option<Duration>,
 }
 
 impl CompletionError {
-    const fn new(code: &'static str, reservation: ReservationDisposition) -> Self {
-        Self { code, reservation }
+    pub(super) const fn new(code: &'static str, reservation: ReservationDisposition) -> Self {
+        Self {
+            code,
+            reservation,
+            retry_after: None,
+        }
+    }
+
+    const fn with_retry_after(mut self, retry_after: Option<Duration>) -> Self {
+        self.retry_after = retry_after;
+        self
     }
 }
 
@@ -208,20 +219,14 @@ impl OpenRouterService {
 
         let response = match self.send_completion(body) {
             Ok(response) => response,
-            Err(error) => {
-                let code = map_openrouter_code(&error.code);
-                if matches!(
-                    error.code.as_str(),
-                    "openrouter_timeout" | "openrouter_network_unavailable"
-                ) {
+            Err(send_error) => {
+                let code = map_openrouter_code(&send_error.error.code);
+                if !send_error.definitely_not_started {
                     return Err(CompletionError::new(code, ReservationDisposition::Retained));
                 }
-                return Err(self.release_error(
-                    request_id,
-                    session,
-                    code,
-                    ReservationDisposition::Released,
-                ));
+                return Err(self
+                    .release_error(request_id, session, code, ReservationDisposition::Released)
+                    .with_retry_after(send_error.retry_after));
             }
         };
         let is_event_stream = response
@@ -607,6 +612,9 @@ fn process_chunk<F: FnMut(&str)>(
 fn map_provider_error(error_type: Option<&str>) -> &'static str {
     match error_type {
         Some("rate_limit_exceeded") | Some("rate_limit_error") => "completion_rate_limited",
+        Some("provider_overloaded") => "completion_provider_overloaded",
+        Some("provider_unavailable") | Some("server") => "completion_provider_unavailable",
+        Some("timeout") => "completion_timeout",
         Some("authentication_error") => "completion_authentication_failed",
         Some("insufficient_credits") => "completion_payment_required",
         Some("context_length_exceeded") => "completion_context_rejected",
@@ -626,6 +634,7 @@ fn map_openrouter_code(code: &str) -> &'static str {
         "openrouter_timeout" => "completion_timeout",
         "openrouter_network_unavailable" => "completion_network_unavailable",
         "openrouter_request_rejected" => "completion_request_rejected",
+        "openrouter_service_unavailable" => "completion_provider_unavailable",
         _ => "completion_provider_unavailable",
     }
 }

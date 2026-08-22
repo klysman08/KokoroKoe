@@ -44,8 +44,8 @@ After every accepted task:
 
 ## Latest completed checkpoint
 
-- Task: P5-014 - Session console and actionable provider diagnostics
-- Date: 2026-08-17
-- Outcome: fixed the generic manual-question provider blind spot with bounded typed OpenRouter diagnostics and a completion-only ninety-second ceiling; added scoped follow-latest Session text, active sidebar Pause/Stop, persisted semantic dark mode, searchable cached model selectors, and a Rust-owned verified-workspace Explorer shortcut.
-- Verification: locked frontend checks passed 34 Vitest files/162 tests; locked Rust checks passed 284 ordinary tests, 12 explicit ignored gates, and 4 capability tests; the locked no-bundle x64 release built and remained alive/responsive during a five-second native smoke. The 160-package production license inventory passed; the existing transitive `nanoid <3.3.18` finding remains. The only new main-window permission is the exact `open_workspace_folder` command, and no generic filesystem, shell, process, HTTP, credential, provider-body, transcript-persistence, audio, model, database, log, runtime-binary, or installer boundary was added.
-- Memory: [P5-014 checkpoint](docs/project-memory.md#p5-014---session-console-and-actionable-provider-diagnostics)
+- Task: P5-015 - Stronger multilingual transcription and Session language
+- Date: 2026-08-20
+- Outcome: added one immutable verified Large-v3 Turbo Q5_0 multilingual model; advanced the project adapter to API v3 and worker protocol to v2; and applies each frozen Session's normalized BCP-47 primary language identically to supervised Vulkan and lazy exact CPU fallback while transient transcription retains auto-detection.
+- Verification: the exact external 574,041,195-byte model/quality gate passed with Vulkan load 3.269 s, 0.378 s inference/RTF 0.0812, 18.518 s CPU load plus recovery, zero unaccounted finals, and 1,087,459,328-byte peak process-tree working set. Protocol adversarial and two-hour backpressure gates passed. Locked frontend checks passed 34 Vitest files/162 tests; locked Rust checks passed 288 ordinary tests, 14 ignored explicit gates, and 4 capability tests; audits, 160-package license inventory, the locked no-bundle x64 release, API-v3 runtime staging, and responsive smoke passed. The existing transitive `nanoid <3.3.18` finding remains; no dependency, lockfile, permission, model/audio/runtime artifact, retained transcript, external audio, or installer boundary was added.
+- Memory: [P5-015 checkpoint](docs/project-memory.md#p5-015---stronger-multilingual-transcription-and-session-language)

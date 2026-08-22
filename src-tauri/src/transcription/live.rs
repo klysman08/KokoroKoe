@@ -37,15 +37,14 @@ const PIPELINE_FAILURE_CODE: &str = "transcription_live_pipeline_failed";
 pub(crate) fn load_verified_cpu_engine(
     artifact: VerifiedModelArtifact,
     adapter_path: impl Into<std::path::PathBuf>,
+    language: &str,
     threads: usize,
 ) -> Result<WhisperEngine, TranscriptionError> {
     let model_kind = whisper_model_kind(&artifact)?;
-    WhisperEngine::load(WhisperConfig::cpu(
-        adapter_path,
-        artifact.path,
-        model_kind,
-        threads,
-    ))
+    WhisperEngine::load(
+        WhisperConfig::cpu(adapter_path, artifact.path, model_kind, threads)
+            .with_language(language)?,
+    )
 }
 
 #[cfg(windows)]
@@ -55,6 +54,7 @@ pub(crate) fn whisper_model_kind(
     Ok(match artifact.model_id.as_str() {
         "whisper-tiny-multilingual" => WhisperModelKind::Tiny,
         "whisper-base-multilingual" => WhisperModelKind::Base,
+        "whisper-large-v3-turbo-q5_0-multilingual" => WhisperModelKind::LargeV3TurboQ5_0,
         _ => return Err(TranscriptionError::ModelUnavailable),
     })
 }
@@ -509,6 +509,39 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn verified_catalog_model_ids_map_to_exact_runtime_kinds() {
+        use std::path::PathBuf;
+
+        use crate::models::VerifiedModelArtifact;
+
+        let cases = [
+            ("whisper-tiny-multilingual", WhisperModelKind::Tiny),
+            ("whisper-base-multilingual", WhisperModelKind::Base),
+            (
+                "whisper-large-v3-turbo-q5_0-multilingual",
+                WhisperModelKind::LargeV3TurboQ5_0,
+            ),
+        ];
+        for (model_id, expected) in cases {
+            let artifact = VerifiedModelArtifact {
+                model_id: model_id.to_owned(),
+                path: PathBuf::from("catalog-owned-model.bin"),
+            };
+            assert_eq!(whisper_model_kind(&artifact).unwrap(), expected);
+        }
+
+        let unknown = VerifiedModelArtifact {
+            model_id: "caller-controlled-model".to_owned(),
+            path: PathBuf::from("caller-controlled-model.bin"),
+        };
+        assert_eq!(
+            whisper_model_kind(&unknown),
+            Err(TranscriptionError::ModelUnavailable)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "requires default Windows endpoints, a verified selected model, the external adapter, and fixture playback"]
     fn hardware_probe_live_dual_capture_to_verified_local_partial_and_final() {
         use std::{env, path::PathBuf};
@@ -540,7 +573,7 @@ mod tests {
             .unwrap()
             .resolve_default_for_transcription()
             .unwrap();
-        let engine = load_verified_cpu_engine(artifact, adapter, 8).unwrap();
+        let engine = load_verified_cpu_engine(artifact, adapter, "auto", 8).unwrap();
 
         let (capture, updates) =
             RunningAudioPrototype::start_with_live_updates(AudioPrototypeConfig::default(), 64)

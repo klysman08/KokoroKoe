@@ -1,6 +1,6 @@
 param(
-    [string] $RuntimeDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-004\adapter-build\bin\Release"),
-    [string] $VulkanRuntimeDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-005\adapter-build\bin\Release"),
+    [string] $RuntimeDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p5-015\cpu-build\bin\Release"),
+    [string] $VulkanRuntimeDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p5-015\vulkan-build\bin\Release"),
     [string] $ExecutablePath = (Join-Path $PSScriptRoot "..\src-tauri\target\x86_64-pc-windows-msvc\release\kokorokoe.exe")
 )
 

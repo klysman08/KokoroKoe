@@ -1127,4 +1127,13 @@ mod tests {
         verify_file(Path::new(&tiny), &catalog::TINY).expect("Tiny catalog hash");
         verify_file(Path::new(&base), &catalog::BASE).expect("Base catalog hash");
     }
+
+    #[test]
+    #[ignore = "requires the external P5-015 Large-v3 Turbo Q5_0 model file"]
+    fn exact_external_large_v3_turbo_file_matches_pinned_hash() {
+        let turbo =
+            std::env::var_os("KOKOROKOE_P5_015_TURBO_MODEL").expect("Large-v3 Turbo model path");
+        verify_file(Path::new(&turbo), &catalog::LARGE_V3_TURBO_Q5_0)
+            .expect("Large-v3 Turbo catalog hash");
+    }
 }

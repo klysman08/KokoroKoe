@@ -1,22 +1,26 @@
 param(
-    [string] $ScratchPath = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-005")
+    [string] $ScratchPath = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-005"),
+    [string] $RuntimeDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p5-015\vulkan-build\bin\Release")
 )
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $scratch = [System.IO.Path]::GetFullPath($ScratchPath)
+$runtime = [System.IO.Path]::GetFullPath($RuntimeDirectory)
 $repositoryPrefix = $repositoryRoot.TrimEnd("\") + "\"
 if ($scratch.Equals([System.IO.Path]::GetPathRoot($scratch), [StringComparison]::OrdinalIgnoreCase) -or
-    $scratch.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    $scratch.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+    $runtime.Equals([System.IO.Path]::GetPathRoot($runtime), [StringComparison]::OrdinalIgnoreCase) -or
+    $runtime.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "The P3-008 scratch input must be a dedicated path outside the repository."
 }
 
-$adapter = Join-Path $scratch "adapter-build\bin\Release\kokorokoe_whisper_adapter.dll"
+$adapter = Join-Path $runtime "kokorokoe_whisper_adapter.dll"
 $model = Join-Path $scratch "models\ggml-tiny.bin"
 $fixture = Join-Path $scratch "fixture\generated-vulkan-recovery.f32le"
 foreach ($inputPath in @($adapter, $model, $fixture)) {
     if (-not (Test-Path -LiteralPath $inputPath -PathType Leaf)) {
-        throw "P3-008 requires the verified external P3-005 adapter, Tiny model, and generated fixture. Run scripts\run-whisper-vulkan-recovery-prototype.ps1 first."
+        throw "The worker gate requires the current verified API-v3 Vulkan adapter plus the external P3-005 Tiny model/generated fixture. Run the P5-015 quality gate and P3-005 recovery probe first."
     }
 }
 $modelHash = (Get-FileHash -LiteralPath $model -Algorithm SHA256).Hash.ToLowerInvariant()

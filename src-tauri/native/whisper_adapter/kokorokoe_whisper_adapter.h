@@ -21,6 +21,7 @@ typedef enum kk_whisper_backend {
 KK_WHISPER_API uint32_t kk_whisper_api_version(void);
 KK_WHISPER_API int32_t kk_whisper_model_load(
     const char *model_path_utf8,
+    const char *language_utf8,
     int32_t threads,
     int32_t backend,
     void **model_out);

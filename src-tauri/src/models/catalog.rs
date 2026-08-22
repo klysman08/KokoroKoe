@@ -40,7 +40,25 @@ pub const BASE: ModelDescriptor = ModelDescriptor {
     license_url: "https://huggingface.co/ggerganov/whisper.cpp/blob/5359861c739e955e79d9a303bcbc70fb988958b1/README.md",
 };
 
-pub const ALL: &[ModelDescriptor] = &[TINY, BASE];
+pub const LARGE_V3_TURBO_Q5_0: ModelDescriptor = ModelDescriptor {
+    id: "whisper-large-v3-turbo-q5_0-multilingual",
+    engine: "whisper",
+    name: "Whisper Large v3 Turbo Q5_0 (multilingual)",
+    source_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
+    source_revision: REVISION,
+    file_name: "ggml-large-v3-turbo-q5_0.bin",
+    sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    download_bytes: 574_041_195,
+    disk_bytes: 574_041_195,
+    languages: &["multilingual"],
+    approximate_memory_bytes: 2 * 1024 * 1024 * 1024,
+    performance_class: "accurate",
+    backends: &["cpu", "vulkan"],
+    license_spdx: "MIT",
+    license_url: "https://huggingface.co/ggerganov/whisper.cpp/blob/5359861c739e955e79d9a303bcbc70fb988958b1/README.md",
+};
+
+pub const ALL: &[ModelDescriptor] = &[TINY, BASE, LARGE_V3_TURBO_Q5_0];
 
 pub fn find(id: &str) -> Option<&'static ModelDescriptor> {
     ALL.iter().find(|descriptor| descriptor.id == id)
@@ -52,9 +70,15 @@ mod tests {
 
     #[test]
     fn catalog_is_exact_and_immutable() {
-        assert_eq!(ALL.len(), 2);
+        assert_eq!(ALL.len(), 3);
         assert_eq!(TINY.source_revision, REVISION);
         assert_eq!(BASE.source_revision, REVISION);
+        assert_eq!(LARGE_V3_TURBO_Q5_0.source_revision, REVISION);
+        assert_eq!(LARGE_V3_TURBO_Q5_0.download_bytes, 574_041_195);
+        assert_eq!(
+            LARGE_V3_TURBO_Q5_0.sha256,
+            "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        );
         for descriptor in ALL {
             assert!(descriptor.source_url.starts_with(REPOSITORY));
             assert!(descriptor.source_url.contains(descriptor.source_revision));

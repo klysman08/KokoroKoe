@@ -23,7 +23,8 @@ use crate::{
 };
 
 use super::{
-    LivePipelineEvent, load_verified_cpu_engine, spawn_live_coordinator, whisper_model_kind,
+    AUTO_WHISPER_LANGUAGE, LivePipelineEvent, load_verified_cpu_engine, normalize_session_language,
+    spawn_live_coordinator, whisper_model_kind,
     worker::{
         SupervisedFallbackEngine, VulkanWorkerConfig, VulkanWorkerProcess, WorkerFailure,
         WorkerFailureKind, WorkerTimeouts,
@@ -97,7 +98,7 @@ impl LiveTranscriptionService {
         request_id: RequestId,
         emit: EventSink,
     ) -> Result<LiveTranscriptionStatus, AppError> {
-        self.start_with_model(input, request_id, None, emit)
+        self.start_with_model(input, request_id, None, None, emit)
     }
 
     pub(crate) fn start_with_model(
@@ -105,14 +106,20 @@ impl LiveTranscriptionService {
         input: LiveTranscriptionInput,
         request_id: RequestId,
         model_id: Option<&str>,
+        session_language: Option<&str>,
         emit: EventSink,
     ) -> Result<LiveTranscriptionStatus, AppError> {
         input
             .validate()
             .map_err(AppError::live_transcription_error)?;
+        let language = session_language
+            .map(normalize_session_language)
+            .transpose()
+            .map_err(|error| AppError::live_transcription_error(error.code()))?
+            .unwrap_or_else(|| AUTO_WHISPER_LANGUAGE.to_owned());
         reserve_start(&self.state, request_id)?;
 
-        match self.start_runtime(input, request_id, model_id, emit) {
+        match self.start_runtime(input, request_id, model_id, language, emit) {
             Ok(active) => {
                 let mut state = self.state.lock().map_err(|_| {
                     AppError::live_transcription_error("live_transcription_state_unavailable")
@@ -173,6 +180,7 @@ impl LiveTranscriptionService {
         input: LiveTranscriptionInput,
         request_id: RequestId,
         model_id: Option<&str>,
+        language: String,
         emit: EventSink,
     ) -> Result<ActiveRun, AppError> {
         if !self.cpu_adapter_path.is_file() {
@@ -197,6 +205,7 @@ impl LiveTranscriptionService {
                         adapter_path: self.vulkan_adapter_path.clone(),
                         model_path: artifact.path.clone(),
                         model_kind,
+                        language: language.clone(),
                         threads,
                         environment: Vec::new(),
                     },
@@ -207,7 +216,7 @@ impl LiveTranscriptionService {
             };
         let cpu_adapter_path = self.cpu_adapter_path.clone();
         let engine = SupervisedFallbackEngine::new(accelerated, move || {
-            load_verified_cpu_engine(artifact, cpu_adapter_path, threads)
+            load_verified_cpu_engine(artifact, cpu_adapter_path, &language, threads)
         });
         let config = AudioPrototypeConfig {
             microphone: input.microphone_selection,

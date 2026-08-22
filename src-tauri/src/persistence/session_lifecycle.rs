@@ -77,6 +77,7 @@ trait SessionTranscriptionRuntime: Send + Sync {
         input: LiveTranscriptionInput,
         request_id: RequestId,
         model_id: &str,
+        language: &str,
         emit: EventSink,
     ) -> Result<(), AppError>;
 
@@ -89,10 +90,18 @@ impl SessionTranscriptionRuntime for LiveTranscriptionService {
         input: LiveTranscriptionInput,
         request_id: RequestId,
         model_id: &str,
+        language: &str,
         emit: EventSink,
     ) -> Result<(), AppError> {
-        LiveTranscriptionService::start_with_model(self, input, request_id, Some(model_id), emit)
-            .map(|_| ())
+        LiveTranscriptionService::start_with_model(
+            self,
+            input,
+            request_id,
+            Some(model_id),
+            Some(language),
+            emit,
+        )
+        .map(|_| ())
     }
 
     fn stop(&self, request_id: RequestId) -> Result<(), AppError> {
@@ -421,6 +430,7 @@ impl PersistedSessionLifecycleService {
                 input,
                 request_id,
                 &current.session.transcription_model_id,
+                &current.session.language,
                 runtime_emit,
             ) {
                 let timestamp = now_rfc3339()?;
@@ -1083,6 +1093,7 @@ mod tests {
         starts: AtomicUsize,
         stops: AtomicUsize,
         model_ids: Mutex<Vec<String>>,
+        languages: Mutex<Vec<String>>,
     }
 
     impl SessionTranscriptionRuntime for FakeRuntime {
@@ -1091,9 +1102,11 @@ mod tests {
             _input: LiveTranscriptionInput,
             request_id: RequestId,
             model_id: &str,
+            language: &str,
             emit: EventSink,
         ) -> Result<(), AppError> {
             self.model_ids.lock().unwrap().push(model_id.to_owned());
+            self.languages.lock().unwrap().push(language.to_owned());
             let index = self.starts.fetch_add(1, Ordering::SeqCst) as u64;
             let segment_id = Uuid::from_u128(100 + u128::from(index));
             let event = LiveEventEnvelope::new(
@@ -1240,6 +1253,10 @@ mod tests {
         assert_eq!(
             runtime.model_ids.lock().unwrap().as_slice(),
             ["whisper-tiny-multilingual", "whisper-tiny-multilingual"]
+        );
+        assert_eq!(
+            runtime.languages.lock().unwrap().as_slice(),
+            ["en-GB", "en-GB"]
         );
         assert_eq!(fixture.current(), completed);
 

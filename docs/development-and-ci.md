@@ -143,7 +143,7 @@ After the external P3-005 adapter, verified Tiny model, and generated fixture ex
 .\scripts\run-whisper-worker-protocol-prototype.ps1
 ```
 
-The runner verifies the external Tiny-model hash and fixture bound, builds the debug KokoroKoe worker executable, and tests Vulkan attestation, missing-driver startup, malformed hello/response frames, blocked writes, hung and nonzero-exit inference, cancellation, Job Object descendant cleanup, and exact lazy CPU recovery. Output is fixed aggregate status only. Debug fault modes are not compiled into release builds. See [P3-008 supervised Vulkan worker protocol prototype](whisper-worker-protocol-prototype.md).
+The runner verifies the external Tiny-model hash and fixture bound, uses the current verified API-v3 Vulkan runtime from the P5-015 scratch directory, builds the debug KokoroKoe worker executable, and tests protocol-v2 Vulkan attestation, missing-driver startup, malformed hello/response frames, blocked writes, hung and nonzero-exit inference, cancellation, Job Object descendant cleanup, and exact lazy CPU recovery. Output is fixed aggregate status only. Debug fault modes are not compiled into release builds. Use `-RuntimeDirectory` for another compatible verified build. See [P3-008 supervised Vulkan worker protocol prototype](whisper-worker-protocol-prototype.md).
 
 ## P3-009 live transcription integration gate
 
@@ -166,3 +166,13 @@ Run the exact external hash gate against the already verified P3-004 Tiny and Ba
 ```
 
 Use `-ModelDirectory` if those files live elsewhere. The command reads and hashes the two external files but neither copies them into the repository nor downloads replacements. See [P3-010 Whisper model management prototype](whisper-model-management-prototype.md).
+
+## P5-015 Large-v3 Turbo quality and fallback gate
+
+With Git, CMake, MSVC, FFmpeg, Windows System Speech, the previously verified Vulkan SDK, and a usable Vulkan driver available, run:
+
+```powershell
+.\scripts\run-whisper-model-quality-prototype.ps1
+```
+
+The script uses `%LOCALAPPDATA%\KokoroKoe\p5-015` only. It verifies pinned whisper.cpp source and the exact 574,041,195-byte Turbo Q5_0 artifact, generates a bounded non-sensitive en-US fixture, builds API-v3 CPU/Vulkan adapters, and runs the protocol-v2 configured-language Vulkan and forced CPU-recovery gate. Output contains aggregate timing, result accounting, and process-memory metrics only; the repository receives no model, audio, transcript, native binary, or generated log. See [Whisper model management prototype](whisper-model-management-prototype.md).

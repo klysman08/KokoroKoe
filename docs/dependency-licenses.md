@@ -83,7 +83,7 @@ The bundled comparison model is 2,327,524 bytes and originates from the MIT-lice
 | Area | Resolved version | License | Notes |
 | --- | ---: | --- | --- |
 | Native inference | `whisper.cpp` v1.9.2, commit `306c88f4d1286aec1bf96e544632897886af5501` | MIT | Official CPU-only library built outside the repository for the explicit throughput probe |
-| Rust/native boundary | KokoroKoe C ABI adapter API v2 | Project source | Bounded model/result ownership, explicit CPU/Vulkan selection and attestation, and fixed error boundary; no third-party Rust wrapper or wrapper license is introduced |
+| Rust/native boundary | KokoroKoe C ABI adapter API v3 | Project source | Bounded model/result ownership, validated configured language, explicit CPU/Vulkan selection and attestation, and fixed error boundary; no third-party Rust wrapper or wrapper license is introduced |
 | Windows loading | `windows-sys` 0.61.2 existing dependency, expanded features | MIT OR Apache-2.0 | Restricted native-library search and process-lifetime adapter handle; no new Rust package |
 | Probe decode | local FFmpeg executable | LGPL/GPL depending on local build | Development-only process invoked by the explicit script; not linked, bundled, or called by the application |
 
@@ -114,6 +114,8 @@ P3-008 uses Rust standard-library process/pipe/thread/JSON support, existing `se
 
 P5-013 adds no dependency or lockfile change. It product-wires the same project-owned adapter, pinned MIT whisper.cpp Vulkan runtime, existing `windows-sys` Job Object ownership, and protocol-v1 supervisor. The POC helper stages the already verified CPU files beside the executable and the already verified Vulkan files in a private subdirectory, checking bytes and SHA-256 against their external sources. Those DLLs remain ignored local test inputs rather than repository or installer artifacts; Phase 7 still owns distribution notices and packaged-native validation.
 
+P5-015 adds no package or lockfile change. It advances the project-owned adapter to API v3 and the internal worker wire contract to protocol v2, then adds one MIT-identified `ggml-large-v3-turbo-q5_0.bin` cache artifact from the same immutable `ggerganov/whisper.cpp` revision. The exact 574,041,195-byte/SHA-256-pinned model, generated speech fixture, Vulkan SDK, native builds, and logs remain external under `%LOCALAPPDATA%`; none is committed or packaged. Distribution notices, redistribution review, and packaged-runtime validation remain Phase 7 requirements.
+
 ## P3-010 model-management prototype inventory
 
 | Area | Resolved direct version | License | Notes |
@@ -122,7 +124,7 @@ P5-013 adds no dependency or lockfile change. It product-wires the same project-
 | Integrity | `sha2` 0.11.0 | MIT OR Apache-2.0 | Streaming SHA-256 over exact staged and installed model files |
 | TLS implementation | `rustls` 0.23.43, `rustls-platform-verifier` 0.7.0, AWS-LC transitive graph | MIT OR Apache-2.0, ISC, and compatible permissive licenses | Platform certificate verification and bundled cryptographic provider selected by reqwest's current `rustls` feature; adds build-time CMake/AWS-LC compilation but no separately managed application DLL |
 
-The curated Tiny/Base weights remain MIT-identified third-party cache artifacts from `ggerganov/whisper.cpp`, pinned to revision `5359861c739e955e79d9a303bcbc70fb988958b1`; they are neither committed nor packaged. The exact local gate verifies both existing P3-004 files. Distribution notices, model redistribution review, actual packaged download behavior, and native worker layout remain release prerequisites.
+The curated Tiny/Base/Large-v3 Turbo Q5_0 weights remain MIT-identified third-party cache artifacts from `ggerganov/whisper.cpp`, pinned to revision `5359861c739e955e79d9a303bcbc70fb988958b1`; they are neither committed nor packaged. Exact local gates verify Tiny/Base and the added Turbo artifact. Distribution notices, model redistribution review, actual packaged download behavior, and native worker layout remain release prerequisites.
 
 The Windows-targeted Cargo license policy now explicitly accepts ISC and MIT-0 in addition to its existing permissive allowlist. Those identifiers are required by `rustls-webpki`, `untrusted`, and the AWS-LC graph; no crate-specific license exception or copyleft term was added.
 
@@ -149,7 +151,7 @@ P2-001 audit evidence:
 | Desktop | `tauri` | 2.11.5 | MIT OR Apache-2.0 | Required |
 | Windows audio | `wasapi` | 0.23.0 | MIT | Preferred WASAPI wrapper |
 | Windows APIs | `windows` | 0.62.x | MIT OR Apache-2.0 | QPC and missing Core Audio APIs |
-| Transcription | KokoroKoe C ABI adapter | API v2 | Project source | Selected; bounded Rust wrapper over explicit CPU/Vulkan native selection |
+| Transcription | KokoroKoe C ABI adapter | API v3 | Project source | Selected; bounded Rust wrapper over configured language and explicit CPU/Vulkan native selection |
 | Native inference | `whisper.cpp` | v1.9.2 / `306c88f` | MIT | Selected CPU engine and supervised Vulkan-worker prototype |
 | Resampling | `rubato` | 4.0.0 | MIT OR Apache-2.0 | Required |
 | VAD | `earshot` | 1.2.1 | MIT OR Apache-2.0 | Initial candidate; compare with Silero |
@@ -171,7 +173,7 @@ P2-001 audit evidence:
 
 Model catalog entries must retain the model license, source repository and revision, exact byte count, SHA-256, supported languages, and attribution. Downloaded model weights are not covered by the application license.
 
-The initial catalog contains multilingual Tiny and Base. Base is only the provisional default; Phase 3 throughput results decide whether Base or Tiny is the shipped default.
+The catalog contains multilingual Tiny, Base, and optional quantized Large-v3 Turbo. Existing selection remains explicit; P5-015 does not silently promote the heavier model to the default.
 
 ## Frontend and testing candidates
 

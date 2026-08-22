@@ -14,20 +14,21 @@ use windows_sys::Win32::System::LibraryLoader::{
 };
 
 use super::{
-    MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionEngine,
-    TranscriptionError, TranscriptionRequest, TranscriptionResult, WhisperBackend,
-    WhisperModelKind,
+    AUTO_WHISPER_LANGUAGE, MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment,
+    TranscriptionEngine, TranscriptionError, TranscriptionRequest, TranscriptionResult,
+    WhisperBackend, WhisperModelKind, validate_runtime_language,
 };
 
 #[cfg(test)]
 use super::model::{MAX_TRANSCRIPTION_SAMPLES, TRANSCRIPTION_SAMPLE_RATE};
 
-const ADAPTER_API_VERSION: u32 = 2;
+const ADAPTER_API_VERSION: u32 = 3;
 const MAX_LANGUAGE_BYTES: usize = 15;
 static ADAPTER_API: Mutex<Option<(PathBuf, &'static AdapterApi)>> = Mutex::new(None);
 
 type ApiVersionFn = unsafe extern "C" fn() -> u32;
-type ModelLoadFn = unsafe extern "C" fn(*const c_char, c_int, c_int, *mut *mut c_void) -> c_int;
+type ModelLoadFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, c_int, c_int, *mut *mut c_void) -> c_int;
 type ModelFreeFn = unsafe extern "C" fn(*mut c_void);
 type ModelBackendFn = unsafe extern "C" fn(*const c_void) -> c_int;
 type TranscribeFn =
@@ -43,6 +44,7 @@ pub(crate) struct WhisperConfig {
     pub(crate) adapter_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) model_kind: WhisperModelKind,
+    pub(crate) language: String,
     pub(crate) threads: usize,
     pub(crate) backend: WhisperBackend,
 }
@@ -58,6 +60,7 @@ impl WhisperConfig {
             adapter_path: adapter_path.into(),
             model_path: model_path.into(),
             model_kind,
+            language: AUTO_WHISPER_LANGUAGE.to_owned(),
             threads,
             backend: WhisperBackend::Cpu,
         }
@@ -73,9 +76,19 @@ impl WhisperConfig {
             adapter_path: adapter_path.into(),
             model_path: model_path.into(),
             model_kind,
+            language: AUTO_WHISPER_LANGUAGE.to_owned(),
             threads,
             backend: WhisperBackend::Vulkan,
         }
+    }
+
+    pub(crate) fn with_language(
+        mut self,
+        language: impl Into<String>,
+    ) -> Result<Self, TranscriptionError> {
+        self.language = language.into();
+        validate_runtime_language(&self.language)?;
+        Ok(self)
     }
 }
 
@@ -146,7 +159,7 @@ impl AdapterApi {
                 };
                 unsafe {
                     // SAFETY: the KokoroKoe adapter header fixes each exported signature for API
-                    // version 1. The version is checked before any model operation.
+                    // version 3. The version is checked before any model operation.
                     std::mem::transmute::<unsafe extern "system" fn() -> isize, $ty>(address)
                 }
             }};
@@ -195,12 +208,15 @@ impl WhisperEngine {
         if !(1..=64).contains(&config.threads) {
             return Err(TranscriptionError::ModelLoadFailed);
         }
+        validate_runtime_language(&config.language)?;
         let model_path = config
             .model_path
             .to_str()
             .ok_or(TranscriptionError::ModelUnavailable)?;
         let model_path =
             CString::new(model_path).map_err(|_| TranscriptionError::ModelUnavailable)?;
+        let language =
+            CString::new(config.language).map_err(|_| TranscriptionError::UnsupportedLanguage)?;
         let api = AdapterApi::shared(&config.adapter_path)?;
         let mut model = ptr::null_mut();
         let status = unsafe {
@@ -208,6 +224,7 @@ impl WhisperEngine {
             // count is bounded, and `model` is a valid output slot.
             (api.model_load)(
                 model_path.as_ptr(),
+                language.as_ptr(),
                 config.threads as c_int,
                 config.backend as c_int,
                 &mut model,

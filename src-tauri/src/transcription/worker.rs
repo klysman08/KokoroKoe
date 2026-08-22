@@ -38,7 +38,7 @@ use super::{
 };
 
 pub(crate) const WORKER_MODE_ARGUMENT: &str = "--kokorokoe-vulkan-worker";
-const PROTOCOL_VERSION: u16 = 1;
+const PROTOCOL_VERSION: u16 = 2;
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PATH_UNITS: usize = 32_767;
 const MAX_LANGUAGE_BYTES: usize = 15;
@@ -53,6 +53,7 @@ pub(crate) struct VulkanWorkerConfig {
     pub(crate) adapter_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) model_kind: WhisperModelKind,
+    pub(crate) language: String,
     pub(crate) threads: usize,
     pub(crate) environment: Vec<(OsString, OsString)>,
 }
@@ -125,6 +126,7 @@ pub(crate) struct WorkerFallbackDiagnostics {
 enum WireModelKind {
     Tiny,
     Base,
+    LargeV3TurboQ5_0,
 }
 
 impl From<WhisperModelKind> for WireModelKind {
@@ -132,6 +134,7 @@ impl From<WhisperModelKind> for WireModelKind {
         match value {
             WhisperModelKind::Tiny => Self::Tiny,
             WhisperModelKind::Base => Self::Base,
+            WhisperModelKind::LargeV3TurboQ5_0 => Self::LargeV3TurboQ5_0,
         }
     }
 }
@@ -141,6 +144,7 @@ impl From<WireModelKind> for WhisperModelKind {
         match value {
             WireModelKind::Tiny => Self::Tiny,
             WireModelKind::Base => Self::Base,
+            WireModelKind::LargeV3TurboQ5_0 => Self::LargeV3TurboQ5_0,
         }
     }
 }
@@ -152,6 +156,7 @@ enum WireFailureCode {
     AdapterIncompatible,
     ModelUnavailable,
     ModelLoadFailed,
+    UnsupportedLanguage,
     BackendUnavailable,
     InvalidAudio,
     InvalidTimeline,
@@ -166,6 +171,7 @@ impl From<TranscriptionError> for WireFailureCode {
             TranscriptionError::AdapterIncompatible => Self::AdapterIncompatible,
             TranscriptionError::ModelUnavailable => Self::ModelUnavailable,
             TranscriptionError::ModelLoadFailed => Self::ModelLoadFailed,
+            TranscriptionError::UnsupportedLanguage => Self::UnsupportedLanguage,
             TranscriptionError::BackendUnavailable => Self::BackendUnavailable,
             TranscriptionError::InvalidAudio => Self::InvalidAudio,
             TranscriptionError::InvalidTimeline => Self::InvalidTimeline,
@@ -189,6 +195,7 @@ enum ClientMessage {
         adapter_path_utf16: Vec<u16>,
         model_path_utf16: Vec<u16>,
         model_kind: WireModelKind,
+        language: String,
         threads: usize,
     },
     Infer {
@@ -443,6 +450,7 @@ impl VulkanWorkerProcess {
             adapter_path_utf16: path_to_wire(config.adapter_path.as_os_str())?,
             model_path_utf16: path_to_wire(config.model_path.as_os_str())?,
             model_kind: config.model_kind.into(),
+            language: config.language,
             threads: config.threads,
         };
         let mut command = Command::new(config.executable_path);
@@ -885,6 +893,7 @@ fn serve_worker() -> i32 {
         adapter_path_utf16,
         model_path_utf16,
         model_kind,
+        language,
         threads,
     } = startup
     else {
@@ -898,12 +907,13 @@ fn serve_worker() -> i32 {
         Ok(path) => path,
         Err(_) => return WORKER_EXIT_PROTOCOL,
     };
-    let mut engine = match WhisperEngine::load(WhisperConfig::vulkan(
-        adapter_path,
-        model_path,
-        model_kind.into(),
-        threads,
-    )) {
+    let config = match WhisperConfig::vulkan(adapter_path, model_path, model_kind.into(), threads)
+        .with_language(language)
+    {
+        Ok(config) => config,
+        Err(_) => return WORKER_EXIT_PROTOCOL,
+    };
+    let mut engine = match WhisperEngine::load(config) {
         Ok(engine) if engine.backend() == WhisperBackend::Vulkan => engine,
         Ok(_) => return WORKER_EXIT_STARTUP,
         Err(error) => {
@@ -1118,6 +1128,27 @@ mod tests {
 
     #[test]
     fn protocol_round_trip_is_strict_bounded_and_source_labelled() {
+        let startup = ClientMessage::Startup {
+            protocol_version: PROTOCOL_VERSION,
+            adapter_path_utf16: vec![67, 58, 92, 97],
+            model_path_utf16: vec![67, 58, 92, 109],
+            model_kind: WireModelKind::LargeV3TurboQ5_0,
+            language: "en".to_owned(),
+            threads: 8,
+        };
+        let mut startup_bytes = Vec::new();
+        write_frame(&mut startup_bytes, &startup).unwrap();
+        let parsed: ClientMessage = read_frame(&mut startup_bytes.as_slice()).unwrap();
+        assert!(matches!(
+            parsed,
+            ClientMessage::Startup {
+                protocol_version: PROTOCOL_VERSION,
+                model_kind: WireModelKind::LargeV3TurboQ5_0,
+                language,
+                ..
+            } if language == "en"
+        ));
+
         let message = ClientMessage::Infer {
             protocol_version: PROTOCOL_VERSION,
             request_id: 7,
@@ -1300,6 +1331,98 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "explicit P5-015 Large-v3 Turbo Vulkan quality and CPU fallback gate"]
+    fn large_v3_turbo_quality_vulkan_and_cpu_fallback_gate() {
+        let samples = p3_008_samples();
+        let request = p3_008_request(&samples);
+        let model =
+            PathBuf::from(env::var_os("KOKOROKOE_P5_015_TURBO_MODEL").expect("Turbo model path"));
+        let worker_executable = PathBuf::from(
+            env::var_os("KOKOROKOE_P5_015_WORKER_EXE").expect("worker executable path"),
+        );
+        let vulkan_adapter = PathBuf::from(
+            env::var_os("KOKOROKOE_P5_015_VULKAN_ADAPTER").expect("Vulkan adapter path"),
+        );
+        let cpu_adapter =
+            PathBuf::from(env::var_os("KOKOROKOE_P5_015_CPU_ADAPTER").expect("CPU adapter path"));
+
+        let startup_started = Instant::now();
+        let worker = VulkanWorkerProcess::spawn(
+            VulkanWorkerConfig {
+                executable_path: worker_executable,
+                adapter_path: vulkan_adapter,
+                model_path: model.clone(),
+                model_kind: WhisperModelKind::LargeV3TurboQ5_0,
+                language: "en".to_owned(),
+                threads: 8,
+                environment: Vec::new(),
+            },
+            WorkerTimeouts::default(),
+        )
+        .expect("Large-v3 Turbo worker must attest Vulkan");
+        let vulkan_load_ms = startup_started.elapsed().as_millis();
+        let mut accelerated =
+            SupervisedFallbackEngine::new(Ok(worker), || -> Result<CountingCpu, _> {
+                panic!("healthy Large-v3 Turbo Vulkan inference must not load CPU")
+            });
+        let vulkan_started = Instant::now();
+        let vulkan_result = accelerated
+            .transcribe(request)
+            .expect("Large-v3 Turbo Vulkan inference");
+        let vulkan_inference_ms = vulkan_started.elapsed().as_millis();
+        assert_eq!(vulkan_result.language, "en");
+        assert_expected_quality(&vulkan_result.text);
+        let duration_ms = request.end_ms - request.start_ms;
+        assert!(
+            vulkan_inference_ms < u128::from(duration_ms),
+            "Vulkan RTF must stay below 1.0: inference={vulkan_inference_ms}ms audio={duration_ms}ms"
+        );
+        assert_eq!(accelerated.diagnostics().accelerated_results, 1);
+        drop(accelerated);
+
+        let cpu_model = model;
+        let cpu_started = Instant::now();
+        let mut fallback = SupervisedFallbackEngine::<VulkanWorkerProcess, _, _>::new(
+            Err(WorkerFailure::new(WorkerFailureKind::Startup)),
+            move || {
+                WhisperEngine::load(
+                    WhisperConfig::cpu(
+                        cpu_adapter,
+                        cpu_model,
+                        WhisperModelKind::LargeV3TurboQ5_0,
+                        8,
+                    )
+                    .with_language("en")?,
+                )
+            },
+        );
+        let cpu_result = fallback
+            .transcribe(request)
+            .expect("Large-v3 Turbo CPU fallback");
+        let cpu_fallback_ms = cpu_started.elapsed().as_millis();
+        assert_eq!(cpu_result.language, "en");
+        assert_expected_quality(&cpu_result.text);
+        assert_eq!(fallback.diagnostics().startup_failures, 1);
+        assert_eq!(fallback.diagnostics().cpu_load_attempts, 1);
+        assert_eq!(fallback.diagnostics().cpu_fallback_results, 1);
+
+        println!(
+            "protocol_version={PROTOCOL_VERSION} model=large-v3-turbo-q5_0 language=en audio_ms={duration_ms} vulkan_load_ms={vulkan_load_ms} vulkan_inference_ms={vulkan_inference_ms} vulkan_rtf={:.4} cpu_load_plus_fallback_ms={cpu_fallback_ms} vulkan_results=1 cpu_fallback_results=1 unaccounted_finals=0",
+            vulkan_inference_ms as f64 / duration_ms as f64,
+        );
+    }
+
+    fn assert_expected_quality(text: &str) {
+        let normalized = text.to_ascii_lowercase();
+        for expected in ["verifies", "transcription", "recovery", "windows"] {
+            assert!(
+                normalized.contains(expected),
+                "expected deterministic phrase token {expected:?} in bounded result"
+            );
+        }
+    }
+
     fn p3_008_samples() -> Vec<f32> {
         let path = env::var_os("KOKOROKOE_P3_008_FIXTURE").expect("generated fixture path");
         let bytes = fs::read(path).expect("read generated f32 fixture");
@@ -1350,6 +1473,7 @@ mod tests {
                 env::var_os("KOKOROKOE_WHISPER_TINY_MODEL").expect("Tiny model path"),
             ),
             model_kind: WhisperModelKind::Tiny,
+            language: "auto".to_owned(),
             threads: 8,
             environment,
         }
@@ -1535,7 +1659,7 @@ mod tests {
         assert!(!marker.exists(), "job termination must kill descendants");
 
         println!(
-            "protocol_version=1 vulkan_attested=true accelerated_results=1 failed_accelerated_attempts=7 cpu_results=7 cancelled_requests=1 duplicate_results=0 lost_results=0 protocol_corruption_rejected=true write_timeout_isolated=true inference_timeout_isolated=true crash_isolated=true descendant_cleanup=true"
+            "protocol_version={PROTOCOL_VERSION} vulkan_attested=true accelerated_results=1 failed_accelerated_attempts=7 cpu_results=7 cancelled_requests=1 duplicate_results=0 lost_results=0 protocol_corruption_rejected=true write_timeout_isolated=true inference_timeout_isolated=true crash_isolated=true descendant_cleanup=true"
         );
     }
 }

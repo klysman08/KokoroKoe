@@ -17,7 +17,7 @@
 
 namespace {
 
-constexpr uint32_t kApiVersion = 2;
+constexpr uint32_t kApiVersion = 3;
 constexpr size_t kMaximumSamples = 480000;
 constexpr size_t kMaximumSegments = 256;
 constexpr size_t kMaximumTextBytes = 1024 * 1024;
@@ -26,6 +26,7 @@ constexpr int32_t kBackendVulkan = KK_WHISPER_BACKEND_VULKAN;
 
 struct Model {
     whisper_context *context = nullptr;
+    std::string language = "auto";
     int32_t threads = 1;
     int32_t backend = kBackendCpu;
 
@@ -103,6 +104,7 @@ uint32_t kk_whisper_api_version(void) {
 
 int32_t kk_whisper_model_load(
     const char *model_path_utf8,
+    const char *language_utf8,
     int32_t threads,
     int32_t backend,
     void **model_out) {
@@ -110,8 +112,13 @@ int32_t kk_whisper_model_load(
         return 1;
     }
     *model_out = nullptr;
-    if (model_path_utf8 == nullptr || model_path_utf8[0] == '\0' || threads < 1 || threads > 64 ||
+    if (model_path_utf8 == nullptr || model_path_utf8[0] == '\0' || language_utf8 == nullptr ||
+        language_utf8[0] == '\0' || threads < 1 || threads > 64 ||
         (backend != kBackendCpu && backend != kBackendVulkan)) {
+        return 1;
+    }
+    const std::string language(language_utf8);
+    if (language != "auto" && whisper_lang_id(language.c_str()) < 0) {
         return 1;
     }
 
@@ -130,6 +137,7 @@ int32_t kk_whisper_model_load(
         }
         model->threads = threads;
         model->backend = backend;
+        model->language = language;
         *model_out = model.release();
         return 0;
     } catch (...) {
@@ -179,7 +187,7 @@ int32_t kk_whisper_transcribe(
         parameters.print_timestamps = false;
         parameters.suppress_blank = true;
         parameters.suppress_nst = true;
-        parameters.language = "auto";
+        parameters.language = model->language.c_str();
         parameters.detect_language = false;
 
         const int status = whisper_full(

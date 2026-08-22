@@ -20,9 +20,10 @@ pub(crate) use integration::LivePipelineEvent;
 pub(crate) use live::{load_verified_cpu_engine, spawn_live_coordinator, whisper_model_kind};
 
 pub(crate) use model::{
-    MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment, TranscriptionError,
-    TranscriptionFailure, TranscriptionOutcome, TranscriptionRequest, TranscriptionResult,
-    WhisperBackend, WhisperModelKind,
+    AUTO_WHISPER_LANGUAGE, MAX_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_SEGMENTS, TranscriptSegment,
+    TranscriptionError, TranscriptionFailure, TranscriptionOutcome, TranscriptionRequest,
+    TranscriptionResult, WhisperBackend, WhisperModelKind, normalize_session_language,
+    validate_runtime_language,
 };
 
 pub(crate) trait TranscriptionEngine {

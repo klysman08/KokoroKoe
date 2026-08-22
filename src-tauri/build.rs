@@ -15,6 +15,7 @@ fn main() {
             "delete_transcription_model",
             "set_default_transcription_model",
             "ask_manual_question",
+            "generate_recent_insights",
         ]));
 
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

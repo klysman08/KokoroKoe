@@ -19,6 +19,7 @@ use super::{
 const READ_CURSOR_PREFIX: &str = "r1:";
 const MAX_READ_CURSOR_OFFSET: usize = 100_000;
 const MANUAL_QUESTION_NEIGHBORS_PER_SIDE: usize = 4;
+const RECENT_INSIGHT_SEGMENTS: usize = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManualQuestionContext {
@@ -26,6 +27,13 @@ pub(crate) struct ManualQuestionContext {
     pub(crate) session: Session,
     pub(crate) selected_segment: TranscriptSegmentView,
     pub(crate) neighboring_segments: Vec<TranscriptSegmentView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecentInsightContext {
+    pub(crate) project: Project,
+    pub(crate) session: Session,
+    pub(crate) recent_segments: Vec<TranscriptSegmentView>,
 }
 
 #[derive(Clone)]
@@ -169,6 +177,62 @@ impl TranscriptService {
                 session,
                 selected_segment,
                 neighboring_segments,
+            })
+        })
+    }
+
+    /// Reads the bounded tail of the finalized transcript for proactive insights.
+    ///
+    /// A running Session is covered because the writer materializes the transcript
+    /// while the Session is still open.
+    pub(crate) fn get_recent_insight_context(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+    ) -> Result<RecentInsightContext, AppError> {
+        if project_id.as_uuid().is_nil() || session_id.as_uuid().is_nil() {
+            return Err(AppError::insight_error("insight_invalid"));
+        }
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(project_id, session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let snapshot = TranscriptStore::open(workspace)
+                .and_then(|store| store.read_transcript(&locator))
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            if snapshot.segments.is_empty() {
+                return Err(AppError::insight_error("insight_transcript_empty"));
+            }
+            let start = snapshot
+                .segments
+                .len()
+                .saturating_sub(RECENT_INSIGHT_SEGMENTS);
+            let recent_segments = snapshot.segments[start..]
+                .iter()
+                .cloned()
+                .map(|segment| TranscriptSegmentView {
+                    id: segment.id,
+                    project_id,
+                    session_id,
+                    source: segment.source,
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    text: segment.text,
+                    status: TranscriptSegmentStatus::Final,
+                    language: segment.language,
+                })
+                .collect::<Vec<_>>();
+            Ok(RecentInsightContext {
+                project,
+                session,
+                recent_segments,
             })
         })
     }

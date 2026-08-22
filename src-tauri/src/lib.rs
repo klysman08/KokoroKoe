@@ -6,7 +6,8 @@ mod logging;
 mod models;
 mod persistence;
 #[allow(dead_code)]
-// P5-005 is a Rust-only prompt/context boundary until request execution is added.
+// The insight and manual-question prompts are wired; the summary specification
+// and its catalog helpers stay unused until the P5-017 summary vertical slice.
 mod prompts;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
@@ -17,7 +18,7 @@ use std::io;
 use tauri::Manager;
 
 use audio::AudioDeviceTestService;
-use llm::{ManualQuestionService, OpenRouterService};
+use llm::{InsightService, ManualQuestionService, OpenRouterService};
 use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
@@ -72,11 +73,13 @@ pub fn run() {
                 .map_err(|_| io::Error::other("OpenRouter service initialization failed"))?;
             let manual_questions =
                 ManualQuestionService::new(transcripts.clone(), openrouter.clone());
+            let insights = InsightService::new(transcripts.clone(), openrouter.clone());
 
             app.manage(settings);
             app.manage(credentials);
             app.manage(openrouter);
             app.manage(manual_questions);
+            app.manage(insights);
             app.manage(models);
             app.manage(projects);
             app.manage(sessions);
@@ -130,6 +133,7 @@ pub fn run() {
             commands::openrouter::validate_openrouter_api_key,
             commands::openrouter::list_openrouter_models,
             commands::manual_question::ask_manual_question,
+            commands::insights::generate_recent_insights,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

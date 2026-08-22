@@ -1,0 +1,41 @@
+{
+  "request": {
+    "requestId": "55555555-5555-4555-8555-555555555555",
+    "projectId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "33333333-3333-4333-8333-333333333333"
+  },
+  "response": {
+    "schemaVersion": 1,
+    "requestId": "55555555-5555-4555-8555-555555555555",
+    "projectId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "33333333-3333-4333-8333-333333333333",
+    "insights": [
+      {
+        "type": "decision",
+        "title": "Transcript stays on this machine",
+        "content": "The participants agreed that the authoritative transcript remains local Markdown.",
+        "rationale": "Two speakers restated the local-only requirement without disagreement.",
+        "relatedSegmentIds": ["44444444-4444-4444-8444-444444444444"],
+        "confidence": 0.82
+      },
+      {
+        "type": "action_item",
+        "title": "Confirm the retention window",
+        "content": "Someone still needs to confirm how long retained audio may be kept.",
+        "relatedSegmentIds": [
+          "44444444-4444-4444-8444-444444444444",
+          "66666666-6666-4666-8666-666666666666"
+        ]
+      }
+    ],
+    "primaryAttempts": 2,
+    "repaired": false,
+    "primaryUsage": {
+      "inputTokens": 512,
+      "outputTokens": 96,
+      "actualCostUsd": "0.000704000000"
+    },
+    "sessionActualCostUsd": "0.000896000000",
+    "availableBudgetUsd": "0.999104000000"
+  }
+}

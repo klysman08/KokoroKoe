@@ -37,6 +37,7 @@ import { requestIdSchema } from "@/contracts/models"
 import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { SessionForm } from "@/features/sessions/SessionForm"
+import { SessionInsightsPanel } from "@/features/sessions/SessionInsightsPanel"
 import {
   useCreateSessionMutation,
   useSessionLifecycleMutation,
@@ -401,10 +402,16 @@ export function ProjectSessions({
                     <PersistenceLine status={persistence[session.id]} />
                     {(session.state === "transcribing" ||
                       session.state === "paused") && (
-                      <SessionLiveTranscript
-                        records={liveRecords[session.id] ?? []}
-                        session={session}
-                      />
+                      <>
+                        <SessionLiveTranscript
+                          records={liveRecords[session.id] ?? []}
+                          session={session}
+                        />
+                        <SessionInsightsPanel
+                          project={project}
+                          session={session}
+                        />
+                      </>
                     )}
                   </div>
                 </div>

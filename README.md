@@ -1,8 +1,46 @@
 # KokoroKoe
 
-KokoroKoe is a privacy-first Windows meeting assistant under active development. The current repository checkpoint contains the Tauri 2/React foundation plus bounded Windows audio capture, normalization, VAD, utterance segmentation, local Whisper CPU throughput, a supervised Vulkan worker protocol with lazy CPU recovery, transcription-scheduler/backpressure, cross-source live-pipeline ordering, long-run clock/source-recovery, and curated verified Whisper model-installation prototypes.
+KokoroKoe is a privacy-first Windows meeting assistant under active development. Audio never leaves
+the machine: capture, transcription, and storage are local, and only bounded transcript text is sent
+to OpenRouter, and only when you ask for it.
 
-Product capture controls, local transcription, retained audio, Markdown persistence, OpenRouter integration, and advanced desktop windows are not implemented yet. Prototype audio samples remain in bounded Rust memory and are discarded; the frontend receives only aggregate diagnostics. The foundation includes a reusable inert renderer for future untrusted Markdown content; it does not read project or session files yet.
+## What works today
+
+- **Dual-source capture.** Windows WASAPI capture of the microphone and system output as separate
+  channels, with normalization, source-local VAD, utterance segmentation, QPC clock alignment, and
+  visible gaps whenever a source drops or recovers.
+- **Local transcription.** Whisper inference through a project-owned C ABI shim over pinned MIT
+  whisper.cpp v1.9.2, running in a supervised Vulkan worker with a lazy exact CPU fallback, plus a
+  prioritized scheduler with bounded queues and backpressure. Partial and final results are labelled
+  by source and ordered chronologically across both channels.
+- **Curated model management.** A closed catalog of three SHA-256-pinned Whisper models — Tiny,
+  Base, and Large-v3 Turbo Q5_0 (multilingual) — with resumable verified downloads, disk checks, and
+  deletion, all owned by Rust.
+- **Projects and sessions.** Markdown is the source of truth: pinned `project.md` and `session.md`
+  snapshots with YAML front matter, a durable append-only journal, incremental transcript
+  materialization, interrupted-session recovery, and a rebuildable SQLite index for discovery and
+  full-text search.
+- **OpenRouter integration.** The API key lives only in Windows Credential Manager and is never
+  returned to the frontend. Rust owns validation, a privacy-filtered zero-data-retention model
+  catalog, per-role model selection, versioned prompts, conservative cost reservation with
+  reconciliation against a per-Session spending limit, bounded retries, and strict schema validation
+  with a single JSON repair attempt.
+- **Questions and insights.** Ask a question about a saved transcript segment, or generate insights
+  over the recent transcript of a running Session. Both are explicit, per-request user actions that
+  return transient, validated, typed results with their token and cost accounting.
+
+## Not implemented yet
+
+- The final session summary (decisions, action items, and open questions written into the session
+  Markdown when a Session ends).
+- The Phase 6 desktop experience: separate transcription and insights windows, per-window opacity,
+  always-on-top, compact mode, keyboard shortcuts, and persisted window geometry.
+- A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
+  staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
+
+Verification so far covers Windows 11 x64 on a single RTX 3070 Ti / Ryzen 7 3700X host. Windows 10,
+AMD and Intel GPUs, CPU-only minimum hardware, and broad real-speech accuracy across speakers,
+languages, accents, and noise remain unverified.
 
 ## Prerequisites
 
@@ -33,8 +71,12 @@ pnpm verify:frontend
 pnpm verify:rust
 ```
 
-Dependency audits, production-license inventory, installer builds, CI parity, and the secret-handling policy are documented in [Development and CI](docs/development-and-ci.md).
+Dependency audits, production-license inventory, installer builds, CI parity, and the secret-handling
+policy are documented in [Development and CI](docs/development-and-ci.md).
 
-See [the architecture](docs/architecture.md) and [project memory](docs/project-memory.md) for scope, decisions, and the active handoff.
+See [the architecture](docs/architecture.md) and [project memory](docs/project-memory.md) for scope,
+decisions, and the active handoff. [Privacy and limitations](docs/privacy-and-limitations.md)
+records what leaves the machine and what is still unverified.
 
-The focused P3-010 Rust-only model gate is documented in [Whisper model management prototype](docs/whisper-model-management-prototype.md).
+The focused P3-010 Rust-only model gate is documented in
+[Whisper model management prototype](docs/whisper-model-management-prototype.md).

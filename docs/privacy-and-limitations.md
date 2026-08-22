@@ -97,6 +97,8 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 - Strict zero-data-retention routing can reduce the available model/provider set.
 - A privacy-qualified model can temporarily have no provider endpoint that simultaneously supports ZDR, data-collection denial, and structured JSON output. KokoroKoe reports this separately and asks the user to refresh the catalog or select another model.
 - OpenRouter unavailability never stops local capture, transcription, persistence, or recovery. A summary may remain deferred and be retried later.
+- Recent-insight generation is an explicit per-request user action. It sends only the last twelve finalized transcript segments of the selected Session, together with the frozen project/session/preset context, and never sends audio, paths, devices, credentials, or the full transcript. Nothing is generated in the background or on a timer.
+- Generated insights are transient. They are shown once in the Session card and are never written to Markdown, SQLite, logs, or events, so they are not recoverable after the panel closes; the finalized transcript they were derived from remains saved locally.
 
 ## Desktop-window limitations
 

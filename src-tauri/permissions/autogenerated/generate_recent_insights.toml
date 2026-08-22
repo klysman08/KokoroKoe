@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-recent-insights"
+description = "Enables the generate_recent_insights command without any pre-configured scope."
+commands.allow = ["generate_recent_insights"]
+
+[[permission]]
+identifier = "deny-generate-recent-insights"
+description = "Denies the generate_recent_insights command without any pre-configured scope."
+commands.deny = ["generate_recent_insights"]

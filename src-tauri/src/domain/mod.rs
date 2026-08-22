@@ -1,5 +1,6 @@
 mod credentials;
 mod error;
+mod insights;
 mod manual_question;
 mod models;
 mod openrouter;
@@ -10,6 +11,9 @@ mod transcripts;
 
 pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
 pub(crate) use error::{AppError, CommandError};
+pub(crate) use insights::{
+    GenerateRecentInsightsRequest, InsightUsage, RecentInsight, RecentInsightsResponse,
+};
 pub(crate) use manual_question::{
     AskManualQuestionRequest, ManualQuestionResponse, ManualQuestionUsage,
 };

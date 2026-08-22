@@ -100,6 +100,117 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn insight_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "insight_invalid" => (
+                "Open a saved Session before generating insights.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_transcript_empty" => (
+                "No finalized transcript is available yet. Wait for speech to be transcribed and try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "insight_model_required" => (
+                "Choose an insights model for this Session before generating insights.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_types_required" => (
+                "This Session's preset requests no insight types.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_catalog_required" => (
+                "Refresh the privacy-filtered OpenRouter model list before generating insights.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "insight_credential_required" => (
+                "Add an OpenRouter API key before generating insights.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_authentication_failed" => (
+                "OpenRouter did not accept the configured API key.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_payment_required" => (
+                "The OpenRouter account does not have enough credit for these insights.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_budget_exceeded" => (
+                "Generating insights would exceed the Session spending limit.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_context_too_large" => (
+                "The recent transcript does not fit this Session's model limit.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_cancelled" => (
+                "Insight generation was cancelled.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "insight_rate_limited" => (
+                "OpenRouter is rate limiting requests. Try again later.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "insight_provider_requirements_unavailable" => (
+                "The selected model has no available private provider that supports this structured request. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "insight_request_rejected" => (
+                "OpenRouter rejected this insight request. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "insight_timeout" => (
+                "OpenRouter took too long to return insights. Try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "insight_network_unavailable" => (
+                "KokoroKoe could not reach OpenRouter. Check the network and try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "insight_provider_temporarily_unavailable" => (
+                "The selected OpenRouter provider is temporarily unavailable. Try again or choose another model.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "insight_content_filtered" => (
+                "The selected model could not return insights for this transcript.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "insight_response_invalid" => (
+                "The selected model returned unsupported insights.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "insight_worker_failed" => (
+                "Insight generation stopped unexpectedly.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not generate insights.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn manual_question_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "manual_question_invalid" => (

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-session-summary"
+description = "Enables the generate_session_summary command without any pre-configured scope."
+commands.allow = ["generate_session_summary"]
+
+[[permission]]
+identifier = "deny-generate-session-summary"
+description = "Denies the generate_session_summary command without any pre-configured scope."
+commands.deny = ["generate_session_summary"]

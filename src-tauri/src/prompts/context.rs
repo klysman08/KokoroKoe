@@ -24,6 +24,8 @@ const SYSTEM_INSTRUCTIONS: &str = "You are KokoroKoe's text-only meeting assista
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SummaryKind {
+    /// Reserved for the rolling in-session summary, which is not implemented yet.
+    #[allow(dead_code)]
     Accumulated,
     Final,
 }

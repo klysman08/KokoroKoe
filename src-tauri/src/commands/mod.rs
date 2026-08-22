@@ -7,6 +7,7 @@ pub(crate) mod openrouter;
 pub(crate) mod projects;
 pub(crate) mod sessions;
 pub(crate) mod settings;
+pub(crate) mod summaries;
 #[cfg(windows)]
 pub(crate) mod transcription;
 pub(crate) mod transcripts;

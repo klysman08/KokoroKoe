@@ -153,6 +153,8 @@ const PROMPT_SPECIFICATIONS: [PromptSpecification; 3] = [
     },
 ];
 
+// Catalog self-inspection helpers used only by the catalog's own invariant tests.
+#[allow(dead_code)]
 pub(crate) const fn prompt_specifications() -> &'static [PromptSpecification] {
     &PROMPT_SPECIFICATIONS
 }
@@ -164,6 +166,7 @@ pub(super) fn prompt_specification(purpose: PromptPurpose) -> &'static PromptSpe
         .expect("the fixed prompt catalog covers every purpose")
 }
 
+#[allow(dead_code)]
 fn validate_catalog() -> Result<(), &'static str> {
     let mut ids = HashSet::new();
     let mut purposes = HashSet::new();

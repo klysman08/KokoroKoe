@@ -20,6 +20,8 @@ const READ_CURSOR_PREFIX: &str = "r1:";
 const MAX_READ_CURSOR_OFFSET: usize = 100_000;
 const MANUAL_QUESTION_NEIGHBORS_PER_SIDE: usize = 4;
 const RECENT_INSIGHT_SEGMENTS: usize = 12;
+const SUMMARY_SAMPLE_SEGMENTS: usize = 64;
+const SUMMARY_CLOSING_SEGMENTS: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManualQuestionContext {
@@ -34,6 +36,18 @@ pub(crate) struct RecentInsightContext {
     pub(crate) project: Project,
     pub(crate) session: Session,
     pub(crate) recent_segments: Vec<TranscriptSegmentView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionSummaryContext {
+    pub(crate) project: Project,
+    pub(crate) session: Session,
+    pub(crate) locator: SessionLocator,
+    /// An evenly spaced sample across the whole Session, always including its
+    /// first and last finalized segment.
+    pub(crate) sampled_segments: Vec<TranscriptSegmentView>,
+    pub(crate) closing_segments: Vec<TranscriptSegmentView>,
+    pub(crate) total_segments: usize,
 }
 
 #[derive(Clone)]
@@ -237,6 +251,69 @@ impl TranscriptService {
         })
     }
 
+    /// Reads a bounded whole-Session view for the final summary.
+    ///
+    /// The transcript can be far larger than any model context, so this returns
+    /// an evenly spaced sample across the whole Session plus its closing
+    /// segments, and reports the total so coverage can be stated honestly.
+    pub(crate) fn get_session_summary_context(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+    ) -> Result<SessionSummaryContext, AppError> {
+        if project_id.as_uuid().is_nil() || session_id.as_uuid().is_nil() {
+            return Err(AppError::summary_error("summary_invalid"));
+        }
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(project_id, session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let snapshot = TranscriptStore::open(workspace)
+                .and_then(|store| store.read_transcript(&locator))
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            if snapshot.segments.is_empty() {
+                return Err(AppError::summary_error("summary_transcript_empty"));
+            }
+            let view =
+                |segment: &crate::persistence::FinalizedTranscriptSegment| TranscriptSegmentView {
+                    id: segment.id,
+                    project_id,
+                    session_id,
+                    source: segment.source,
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    text: segment.text.clone(),
+                    status: TranscriptSegmentStatus::Final,
+                    language: segment.language.clone(),
+                };
+            let total_segments = snapshot.segments.len();
+            let sampled_segments = evenly_spaced_indexes(total_segments, SUMMARY_SAMPLE_SEGMENTS)
+                .into_iter()
+                .map(|index| view(&snapshot.segments[index]))
+                .collect::<Vec<_>>();
+            let closing_start = total_segments.saturating_sub(SUMMARY_CLOSING_SEGMENTS);
+            let closing_segments = snapshot.segments[closing_start..]
+                .iter()
+                .map(view)
+                .collect::<Vec<_>>();
+            Ok(SessionSummaryContext {
+                project,
+                session,
+                locator,
+                sampled_segments,
+                closing_segments,
+                total_segments,
+            })
+        })
+    }
+
     pub(crate) fn search_transcript(
         &self,
         request: TranscriptSearchQuery,
@@ -338,6 +415,28 @@ impl ReadCursor {
             offset,
         })
     }
+}
+
+/// Picks at most `limit` evenly spaced indexes over `total`, always including
+/// the first and last so a sample still spans the whole Session.
+fn evenly_spaced_indexes(total: usize, limit: usize) -> Vec<usize> {
+    if total == 0 || limit == 0 {
+        return Vec::new();
+    }
+    if total <= limit {
+        return (0..total).collect();
+    }
+    if limit == 1 {
+        return vec![0];
+    }
+    let mut indexes = Vec::with_capacity(limit);
+    for step in 0..limit {
+        let index = step * (total - 1) / (limit - 1);
+        if indexes.last() != Some(&index) {
+            indexes.push(index);
+        }
+    }
+    indexes
 }
 
 fn id_text(id: impl Serialize) -> String {

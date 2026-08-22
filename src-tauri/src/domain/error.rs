@@ -100,6 +100,139 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn summary_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "summary_invalid" => (
+                "Open a saved Session before generating its summary.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_session_not_finished" => (
+                "Stop the Session before generating its final summary.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_transcript_empty" => (
+                "This Session has no finalized transcript to summarize.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "summary_model_required" => (
+                "Choose a summaries model for this Session before generating its summary.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_catalog_required" => (
+                "Refresh the privacy-filtered OpenRouter model list before generating a summary.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "summary_credential_required" => (
+                "Add an OpenRouter API key before generating a summary.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_authentication_failed" => (
+                "OpenRouter did not accept the configured API key.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_payment_required" => (
+                "The OpenRouter account does not have enough credit for this summary.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_budget_exceeded" => (
+                "This summary would exceed the Session spending limit.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_context_too_large" => (
+                "This Session's transcript does not fit its model limit. Choose a model with a larger context.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_cancelled" => (
+                "Summary generation was cancelled.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "summary_rate_limited" => (
+                "OpenRouter is rate limiting requests. Try again later.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "summary_provider_requirements_unavailable" => (
+                "The selected model has no available private provider that supports this structured request. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "summary_request_rejected" => (
+                "OpenRouter rejected this summary request. Refresh the model list or choose another model.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "summary_timeout" => (
+                "OpenRouter took too long to return a summary. Try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "summary_network_unavailable" => (
+                "KokoroKoe could not reach OpenRouter. Check the network and try again.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "summary_provider_temporarily_unavailable" => (
+                "The selected OpenRouter provider is temporarily unavailable. Try again or choose another model.",
+                ErrorSeverity::Info,
+                true,
+            ),
+            "summary_content_filtered" => (
+                "The selected model could not return a summary for this transcript.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_response_invalid" => (
+                "The selected model returned an unsupported summary.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "summary_document_invalid" | "summary_document_identity_mismatch" => (
+                "The saved summary document could not be read. Generate the summary again to replace it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_document_too_large" => (
+                "The saved summary document is too large to read.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_document_publish_failed"
+            | "summary_document_verify_failed"
+            | "summary_document_read_failed" => (
+                "KokoroKoe could not save the summary document.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "summary_session_missing" | "summary_session_unavailable" => (
+                "That Session is no longer available in the workspace.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "summary_worker_failed" => (
+                "Summary generation stopped unexpectedly.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not generate the summary.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn insight_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "insight_invalid" => (

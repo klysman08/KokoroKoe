@@ -99,6 +99,9 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 - OpenRouter unavailability never stops local capture, transcription, persistence, or recovery. A summary may remain deferred and be retried later.
 - Recent-insight generation is an explicit per-request user action. It sends only the last twelve finalized transcript segments of the selected Session, together with the frozen project/session/preset context, and never sends audio, paths, devices, credentials, or the full transcript. Nothing is generated in the background or on a timer.
 - Generated insights are transient. They are shown once in the Session card and are never written to Markdown, SQLite, logs, or events, so they are not recoverable after the panel closes; the finalized transcript they were derived from remains saved locally.
+- The final session summary is an explicit per-request user action on a finished Session. It sends a bounded selection of the transcript — an evenly spaced sample spanning the Session plus its closing segments — and never audio, paths, devices, or credentials. It is never generated automatically when a Session stops, and OpenRouter being unavailable never prevents stopping a Session.
+- Unlike insights, the summary is persisted: it is written to `summary.md` beside the session transcript, and regenerating replaces that document while retaining one `.bak` copy. The saved summary is model-generated text stored on the user's own machine; deleting the file removes it.
+- A summary states how many transcript segments it covered. When the transcript is larger than the selected model's context, the summary is built from a sample rather than the complete transcript, so it can omit material discussed between sampled points.
 
 ## Desktop-window limitations
 

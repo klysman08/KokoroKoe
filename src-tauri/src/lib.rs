@@ -5,9 +5,6 @@ mod llm;
 mod logging;
 mod models;
 mod persistence;
-#[allow(dead_code)]
-// The insight and manual-question prompts are wired; the summary specification
-// and its catalog helpers stay unused until the P5-017 summary vertical slice.
 mod prompts;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
@@ -18,7 +15,7 @@ use std::io;
 use tauri::Manager;
 
 use audio::AudioDeviceTestService;
-use llm::{InsightService, ManualQuestionService, OpenRouterService};
+use llm::{InsightService, ManualQuestionService, OpenRouterService, SummaryService};
 use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
@@ -74,12 +71,15 @@ pub fn run() {
             let manual_questions =
                 ManualQuestionService::new(transcripts.clone(), openrouter.clone());
             let insights = InsightService::new(transcripts.clone(), openrouter.clone());
+            let summaries =
+                SummaryService::new(settings.clone(), transcripts.clone(), openrouter.clone());
 
             app.manage(settings);
             app.manage(credentials);
             app.manage(openrouter);
             app.manage(manual_questions);
             app.manage(insights);
+            app.manage(summaries);
             app.manage(models);
             app.manage(projects);
             app.manage(sessions);
@@ -134,6 +134,8 @@ pub fn run() {
             commands::openrouter::list_openrouter_models,
             commands::manual_question::ask_manual_question,
             commands::insights::generate_recent_insights,
+            commands::summaries::get_session_summary,
+            commands::summaries::generate_session_summary,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

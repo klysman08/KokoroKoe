@@ -28,11 +28,15 @@ to OpenRouter, and only when you ask for it.
 - **Questions and insights.** Ask a question about a saved transcript segment, or generate insights
   over the recent transcript of a running Session. Both are explicit, per-request user actions that
   return transient, validated, typed results with their token and cost accounting.
+- **Final session summary.** Once a Session is finished, generate an executive summary with main
+  topics, decisions, action items (with owners and deadlines), risks, open questions, and next
+  steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
+  of the transcript it covered, and can be regenerated.
 
 ## Not implemented yet
 
-- The final session summary (decisions, action items, and open questions written into the session
-  Markdown when a Session ends).
+- The rolling in-session summary that accumulates while a Session runs; only the final summary
+  exists today.
 - The Phase 6 desktop experience: separate transcription and insights windows, per-window opacity,
   always-on-top, compact mode, keyboard shortcuts, and persisted window geometry.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs

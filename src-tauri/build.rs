@@ -16,6 +16,8 @@ fn main() {
             "set_default_transcription_model",
             "ask_manual_question",
             "generate_recent_insights",
+            "get_session_summary",
+            "generate_session_summary",
         ]));
 
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

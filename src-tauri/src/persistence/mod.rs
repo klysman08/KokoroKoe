@@ -10,6 +10,7 @@ mod session_store;
 #[allow(dead_code)] // P4-014 is a Rust-only coordinator until lifecycle commands are wired.
 mod session_writer;
 mod settings_store;
+mod summary_store;
 mod transcript_index;
 mod transcript_service;
 mod transcript_store;
@@ -40,6 +41,8 @@ pub(crate) use session_writer::{
     PersistedSessionWriter, SessionWriterError, SessionWriterProjection, SessionWriterReceipt,
 };
 pub(crate) use settings_store::SettingsService;
+#[allow(unused_imports)]
+pub(crate) use summary_store::{SummaryPublication, SummaryStore, SummaryStoreError};
 #[allow(unused_imports)]
 pub(crate) use transcript_index::{
     TranscriptSearchCatalog, TranscriptSearchPage, TranscriptSearchRequest, TranscriptSearchResult,

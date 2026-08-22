@@ -1,0 +1,50 @@
+{
+  "generateRequest": {
+    "requestId": "77777777-7777-4777-8777-777777777777",
+    "projectId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "33333333-3333-4333-8333-333333333333"
+  },
+  "generateResponse": {
+    "schemaVersion": 1,
+    "requestId": "77777777-7777-4777-8777-777777777777",
+    "document": {
+      "schemaVersion": 1,
+      "projectId": "22222222-2222-4222-8222-222222222222",
+      "sessionId": "33333333-3333-4333-8333-333333333333",
+      "generatedAt": "2026-08-22T18:30:00Z",
+      "modelId": "example/text-model",
+      "markdown": "# Session summary\n\n## Executive summary\n\nThe team agreed to keep the authoritative transcript local and deferred the retention decision.\n\n## Main topics\n\n- Transcript storage\n- Retention window\n\n## Decisions\n\n- Keep the authoritative transcript as local Markdown.\n\n## Action items\n\n- Confirm the retention window. (Owner: Product lead; Due: 2026-08-29T17:00:00Z)\n\n## Risks\n\n- An undecided retention window blocks the privacy review.\n\n## Open questions\n\n- How long may retained audio be kept?\n\n## Next steps\n\n- Bring the retention proposal to the next review.\n",
+      "segmentsConsidered": 42,
+      "segmentsIncluded": 40
+    },
+    "primaryAttempts": 1,
+    "repaired": false,
+    "primaryUsage": {
+      "inputTokens": 1024,
+      "outputTokens": 256,
+      "actualCostUsd": "0.001536000000"
+    },
+    "sessionActualCostUsd": "0.001536000000",
+    "availableBudgetUsd": "0.998464000000"
+  },
+  "status": {
+    "schemaVersion": 1,
+    "projectId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "33333333-3333-4333-8333-333333333333",
+    "document": {
+      "schemaVersion": 1,
+      "projectId": "22222222-2222-4222-8222-222222222222",
+      "sessionId": "33333333-3333-4333-8333-333333333333",
+      "generatedAt": "2026-08-22T18:30:00Z",
+      "modelId": "example/text-model",
+      "markdown": "# Session summary\n\n## Executive summary\n\nThe team agreed to keep the authoritative transcript local and deferred the retention decision.\n",
+      "segmentsConsidered": 42,
+      "segmentsIncluded": 40
+    }
+  },
+  "absentStatus": {
+    "schemaVersion": 1,
+    "projectId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "33333333-3333-4333-8333-333333333333"
+  }
+}

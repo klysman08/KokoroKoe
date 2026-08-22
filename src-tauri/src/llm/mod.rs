@@ -9,7 +9,9 @@ mod openrouter;
 mod results;
 #[allow(dead_code)]
 mod retry;
+mod summaries;
 
 pub(crate) use insights::InsightService;
 pub(crate) use manual_question::ManualQuestionService;
 pub(crate) use openrouter::OpenRouterService;
+pub(crate) use summaries::SummaryService;

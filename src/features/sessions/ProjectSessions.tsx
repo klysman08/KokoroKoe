@@ -38,6 +38,7 @@ import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { SessionForm } from "@/features/sessions/SessionForm"
 import { SessionInsightsPanel } from "@/features/sessions/SessionInsightsPanel"
+import { SessionSummaryPanel } from "@/features/sessions/SessionSummaryPanel"
 import {
   useCreateSessionMutation,
   useSessionLifecycleMutation,
@@ -412,6 +413,13 @@ export function ProjectSessions({
                           session={session}
                         />
                       </>
+                    )}
+                    {(session.state === "completed" ||
+                      session.state === "failed") && (
+                      <SessionSummaryPanel
+                        project={project}
+                        session={session}
+                      />
                     )}
                   </div>
                 </div>

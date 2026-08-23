@@ -36,6 +36,8 @@ Rust application coordinator and session state machine
 
 React is a presentation client. It has no direct credential, arbitrary filesystem, arbitrary HTTP, shell, process, audio, or model access. Separate Tauri capabilities and Rust-side authorization constrain the main, transcript, and insights windows.
 
+ADR 0008 fixes how that constraint is applied. Every window has its own capability file scoped to exactly that window and receives only what its job requires. The `main` capability holds the product command surface; the `transcript` capability holds event subscription only, because a display-only window needs no command. Every command keeps the exact-`main` authorization rule, so the capability layer and the Rust authorization layer reject a secondary window independently and neither is load-bearing alone. Rust owns secondary window creation: label, URL, title, and initial size are module constants, the opening command takes no argument, and no window holds `core:webview:allow-create-webview-window`. Only the main window is declared in the configuration and created at startup; opening an existing secondary window focuses it instead of creating a duplicate, and closing an absent one succeeds.
+
 ## Backend modules
 
 - `audio`: enumeration, WASAPI capture, QPC clock mapping, processing, levels, VAD, retention, and device recovery.

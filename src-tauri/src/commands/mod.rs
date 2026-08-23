@@ -11,3 +11,4 @@ pub(crate) mod summaries;
 #[cfg(windows)]
 pub(crate) mod transcription;
 pub(crate) mod transcripts;
+pub(crate) mod windows;

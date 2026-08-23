@@ -57,7 +57,10 @@ pub(crate) struct OpenRouterService {
 
 #[derive(Clone)]
 struct CachedCatalog {
-    stored_at: Instant,
+    /// Stored as an expiry rather than a store time: subtracting a TTL from
+    /// `Instant::now()` underflows and panics on a host whose uptime is shorter
+    /// than the TTL, which fresh CI runners routinely are.
+    expires_at: Instant,
     models: Vec<OpenRouterModel>,
 }
 
@@ -166,7 +169,7 @@ impl OpenRouterService {
                 .lock()
                 .map_err(|_| AppError::openrouter_error("openrouter_catalog_unavailable"))?;
             if let Some(cached) = cache.as_ref()
-                && cached.stored_at.elapsed() < CATALOG_CACHE_TTL
+                && Instant::now() < cached.expires_at
             {
                 return Ok(cached.models.clone());
             }
@@ -204,7 +207,7 @@ impl OpenRouterService {
             .lock()
             .map_err(|_| AppError::openrouter_error("openrouter_catalog_unavailable"))?;
         *cache = Some(CachedCatalog {
-            stored_at: Instant::now(),
+            expires_at: Instant::now() + CATALOG_CACHE_TTL,
             models: models.clone(),
         });
         Ok(models)
@@ -224,7 +227,7 @@ impl OpenRouterService {
             .map_err(|_| AppError::openrouter_error("openrouter_catalog_unavailable"))?;
         let catalog = cache
             .as_ref()
-            .filter(|cached| cached.stored_at.elapsed() < CATALOG_CACHE_TTL)
+            .filter(|cached| Instant::now() < cached.expires_at)
             .ok_or_else(|| AppError::openrouter_error("openrouter_catalog_required"))?;
         if selected
             .iter()
@@ -246,7 +249,7 @@ impl OpenRouterService {
             .map_err(|_| "usage_catalog_unavailable")?;
         let catalog = cache
             .as_ref()
-            .filter(|cached| cached.stored_at.elapsed() < CATALOG_CACHE_TTL)
+            .filter(|cached| Instant::now() < cached.expires_at)
             .ok_or("usage_catalog_required")?;
         catalog
             .models
@@ -259,7 +262,7 @@ impl OpenRouterService {
     #[cfg(test)]
     pub(super) fn seed_catalog_for_test(&self, models: Vec<OpenRouterModel>) {
         *self.catalog.lock().unwrap() = Some(CachedCatalog {
-            stored_at: Instant::now(),
+            expires_at: Instant::now() + CATALOG_CACHE_TTL,
             models,
         });
     }
@@ -810,8 +813,7 @@ mod tests {
             assert!(request.starts_with("GET /api/v1/models?limit=500&input_modalities=text&output_modalities=text&zdr=true HTTP/1.1\r\n"));
             assert!(!request.contains("audio"));
         }
-        service.catalog.lock().unwrap().as_mut().unwrap().stored_at =
-            Instant::now() - CATALOG_CACHE_TTL;
+        service.catalog.lock().unwrap().as_mut().unwrap().expires_at = Instant::now();
         assert_eq!(
             service.cached_model_for_pricing("alpha/first").unwrap_err(),
             "usage_catalog_required"

@@ -100,6 +100,32 @@ fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool
 }
 
 impl AppError {
+    pub(crate) fn window_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "window_open_failed" => (
+                "KokoroKoe could not open the transcript window.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "window_focus_failed" => (
+                "KokoroKoe could not bring the transcript window to the front.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            "window_close_failed" => (
+                "KokoroKoe could not close the transcript window.",
+                ErrorSeverity::Warning,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not complete the window operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn summary_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "summary_invalid" => (

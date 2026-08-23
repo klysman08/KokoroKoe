@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-transcript-window"
+description = "Enables the close_transcript_window command without any pre-configured scope."
+commands.allow = ["close_transcript_window"]
+
+[[permission]]
+identifier = "deny-close-transcript-window"
+description = "Denies the close_transcript_window command without any pre-configured scope."
+commands.deny = ["close_transcript_window"]

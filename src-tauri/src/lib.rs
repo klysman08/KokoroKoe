@@ -9,6 +9,7 @@ mod prompts;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
 mod transcription;
+mod windows;
 
 use std::io;
 
@@ -136,6 +137,8 @@ pub fn run() {
             commands::insights::generate_recent_insights,
             commands::summaries::get_session_summary,
             commands::summaries::generate_session_summary,
+            commands::windows::open_transcript_window,
+            commands::windows::close_transcript_window,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

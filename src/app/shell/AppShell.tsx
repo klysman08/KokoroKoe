@@ -5,19 +5,25 @@ import {
   Home,
   MessageSquareText,
   Moon,
+  PanelRightOpen,
   Pause,
   Settings,
   Square,
   Sun,
 } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import {
+  toApplicationError,
+  type ApplicationError,
+} from "@/contracts/app-error"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
 import { useSessionLifecycleMutation } from "@/features/sessions/use-sessions"
 import { cn } from "@/lib/utils"
+import { openTranscriptWindow } from "@/lib/tauri/windows"
 import {
   type ActiveSession,
   useActiveSessionStore,
@@ -216,12 +222,53 @@ function ActiveSessionControls({
           <Square data-icon="inline-start" /> Stop
         </Button>
       </div>
+      <TranscriptWindowControl />
       {lifecycle.error && (
         <p className="text-destructive mt-2 text-xs" role="alert">
           {lifecycle.error.details.userMessage}
         </p>
       )}
     </section>
+  )
+}
+
+/**
+ * Pops the live transcript into its own window. Rust owns the window itself;
+ * this control sends no label, path, or dimension.
+ */
+function TranscriptWindowControl() {
+  const [error, setError] = useState<ApplicationError>()
+  const [pending, setPending] = useState(false)
+
+  async function popOut() {
+    setError(undefined)
+    setPending(true)
+    try {
+      await openTranscriptWindow()
+    } catch (caught: unknown) {
+      setError(toApplicationError(caught))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <>
+      <Button
+        className="mt-2 w-full"
+        disabled={pending}
+        onClick={() => void popOut()}
+        size="sm"
+        variant="ghost"
+      >
+        <PanelRightOpen data-icon="inline-start" /> Pop out transcript
+      </Button>
+      {error && (
+        <p className="text-destructive mt-2 text-xs" role="alert">
+          {error.details.userMessage}
+        </p>
+      )}
+    </>
   )
 }
 

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "transcript",
+  "description": "Event-subscription-only capability for the detached KokoroKoe transcript window. It grants no command, filesystem, HTTP, shell, process, or window-management permission.",
+  "windows": ["transcript"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

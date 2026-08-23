@@ -33,6 +33,8 @@
     "allow-generate-recent-insights",
     "allow-get-session-summary",
     "allow-generate-session-summary",
+    "allow-open-transcript-window",
+    "allow-close-transcript-window",
     "allow-list-audio-devices",
     "allow-start-audio-device-test",
     "allow-stop-audio-device-test",

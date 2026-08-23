@@ -103,6 +103,13 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 - Unlike insights, the summary is persisted: it is written to `summary.md` beside the session transcript, and regenerating replaces that document while retaining one `.bak` copy. The saved summary is model-generated text stored on the user's own machine; deleting the file removes it.
 - A summary states how many transcript segments it covered. When the transcript is larger than the selected model's context, the summary is built from a sample rather than the complete transcript, so it can omit material discussed between sampled points.
 
+## Window limitations
+
+- The detached transcript window holds an event-subscription-only capability: it can invoke no command, read no file, reach no network, and manage no window. It receives the same locally emitted transcript events the main window does and displays them; nothing leaves the machine because a second window is open.
+- A detached window shows only transcript records emitted while it is open. Opening it partway through a Session does not replay earlier speech; the saved transcript remains the record of the whole Session.
+- The detached window displays transcript text on screen in its own frame. It has no opacity, always-on-top, compact mode, or quick-hide control yet, so consider who can see the display before opening it in a shared or screen-shared environment.
+- Window position and size are not remembered between openings.
+
 ## Desktop-window limitations
 
 Readable opacity requires transparent native windows with alpha applied to CSS background layers, not whole-window opacity that fades text. Click-through is optional and ships only if a global emergency shortcut can reliably disable it. Multi-monitor positions must be clamped when a display disappears or its scale changes.

@@ -87,9 +87,10 @@ pub fn run() {
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(AudioDeviceTestService::default());
-            app.manage(TranscriptWindowService::new(
-                app.state::<SettingsService>().inner().clone(),
-            ));
+            let transcript_windows =
+                TranscriptWindowService::new(app.state::<SettingsService>().inner().clone());
+            transcript_windows.install_shortcut(app.handle());
+            app.manage(transcript_windows);
             #[cfg(windows)]
             {
                 let worker_executable_path = std::env::current_exe()
@@ -145,6 +146,8 @@ pub fn run() {
             commands::windows::close_transcript_window,
             commands::windows::get_transcript_window_appearance,
             commands::windows::set_transcript_window_appearance,
+            commands::windows::get_transcript_window_shortcut,
+            commands::windows::set_transcript_window_shortcut,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

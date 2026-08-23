@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { PanelRightOpen, PanelRightClose, Pin, Rows3 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   toApplicationError,
   type ApplicationError,
@@ -10,13 +11,16 @@ import {
   MAXIMUM_BACKGROUND_OPACITY,
   MINIMUM_BACKGROUND_OPACITY,
   type TranscriptWindowAppearance,
+  type TranscriptWindowShortcutStatus,
 } from "@/contracts/windows"
 import { cn } from "@/lib/utils"
 import {
   closeTranscriptWindow,
   getTranscriptWindowAppearance,
+  getTranscriptWindowShortcut,
   openTranscriptWindow,
   setTranscriptWindowAppearance,
+  setTranscriptWindowShortcut,
 } from "@/lib/tauri/windows"
 
 const OPACITY_STEP = 0.05
@@ -34,6 +38,8 @@ export function TranscriptWindowControls({
   collapsed: boolean
 }) {
   const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
+  const [shortcut, setShortcut] = useState<TranscriptWindowShortcutStatus>()
+  const [binding, setBinding] = useState("")
   const [error, setError] = useState<ApplicationError>()
   const [pending, setPending] = useState(false)
 
@@ -43,6 +49,15 @@ export function TranscriptWindowControls({
     void getTranscriptWindowAppearance()
       .then((current) => {
         if (!disposed) setAppearance(current)
+      })
+      .catch((caught: unknown) => {
+        if (!disposed) setError(toApplicationError(caught))
+      })
+    void getTranscriptWindowShortcut()
+      .then((current) => {
+        if (disposed) return
+        setShortcut(current)
+        setBinding(current.binding)
       })
       .catch((caught: unknown) => {
         if (!disposed) setError(toApplicationError(caught))
@@ -73,6 +88,19 @@ export function TranscriptWindowControls({
       compact: changes.compact ?? appearance.compact,
     })
     setAppearance(next)
+  }
+
+  async function updateShortcut(changes: {
+    binding?: string
+    enabled?: boolean
+  }) {
+    if (!shortcut) return
+    const next = await setTranscriptWindowShortcut({
+      binding: (changes.binding ?? shortcut.binding).trim(),
+      enabled: changes.enabled ?? shortcut.enabled,
+    })
+    setShortcut(next)
+    setBinding(next.binding)
   }
 
   if (collapsed) return null
@@ -156,6 +184,52 @@ export function TranscriptWindowControls({
       />
       <p className="text-muted-foreground mt-1 text-xs">
         Dims the window background only. Transcript text stays fully opaque.
+      </p>
+
+      <label
+        className="mt-3 block text-xs"
+        htmlFor="transcript-window-shortcut"
+      >
+        Show/hide shortcut
+      </label>
+      <div className="mt-1 flex gap-2">
+        <Input
+          className="h-8 text-xs"
+          disabled={pending || !shortcut}
+          id="transcript-window-shortcut"
+          onChange={(event) => setBinding(event.target.value)}
+          placeholder="Ctrl+Shift+T"
+          value={binding}
+        />
+        <Button
+          disabled={pending || !shortcut || binding.trim().length === 0}
+          onClick={() => void run(() => updateShortcut({ binding }))}
+          size="sm"
+          variant="outline"
+        >
+          Apply
+        </Button>
+      </div>
+      <label className="mt-2 flex items-start gap-2 text-xs">
+        <input
+          checked={shortcut?.enabled ?? false}
+          disabled={pending || !shortcut}
+          onChange={(event) =>
+            void run(() => updateShortcut({ enabled: event.target.checked }))
+          }
+          type="checkbox"
+        />
+        <span>Use this shortcut system-wide</span>
+      </label>
+      {shortcut?.enabled && !shortcut.registered && (
+        <p className="text-xs text-amber-700" role="status">
+          Windows did not accept {shortcut.binding}. Another application is
+          probably using it — try a different combination.
+        </p>
+      )}
+      <p className="text-muted-foreground mt-1 text-xs">
+        Needs Ctrl, Alt, or Win. The same shortcut hides and shows the window,
+        and <strong>Pop out</strong> always brings it back.
       </p>
 
       {error && (

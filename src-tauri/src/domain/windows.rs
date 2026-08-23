@@ -196,14 +196,255 @@ const MAXIMUM_WINDOW_ORIGIN: i32 = 60_000;
 const MINIMUM_VISIBLE_WIDTH: i32 = 120;
 const MINIMUM_VISIBLE_HEIGHT: i32 = 60;
 
+/// A configurable system-wide show/hide binding for the transcript window.
+///
+/// The binding is stored canonically so the same combination always compares
+/// and displays identically regardless of how the user typed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptWindowShortcut {
+    pub(crate) schema_version: u8,
+    pub(crate) binding: String,
+    pub(crate) enabled: bool,
+}
+
+impl Default for TranscriptWindowShortcut {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            binding: DEFAULT_SHORTCUT_BINDING.to_owned(),
+            enabled: true,
+        }
+    }
+}
+
+pub(crate) const DEFAULT_SHORTCUT_BINDING: &str = "Ctrl+Shift+T";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawTranscriptWindowShortcut {
+    schema_version: u8,
+    binding: String,
+    enabled: bool,
+}
+
+impl<'de> Deserialize<'de> for TranscriptWindowShortcut {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawTranscriptWindowShortcut::deserialize(deserializer)?;
+        let shortcut = Self {
+            schema_version: raw.schema_version,
+            binding: raw.binding,
+            enabled: raw.enabled,
+        };
+        shortcut.validate().map_err(D::Error::custom)?;
+        Ok(shortcut)
+    }
+}
+
+impl TranscriptWindowShortcut {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.schema_version != 1 {
+            return Err("window_shortcut_invalid");
+        }
+        let parsed = ParsedShortcut::parse(&self.binding)?;
+        if parsed.canonical() != self.binding {
+            return Err("window_shortcut_invalid");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn parsed(&self) -> Result<ParsedShortcut, &'static str> {
+        ParsedShortcut::parse(&self.binding)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SetTranscriptWindowShortcutRequest {
+    pub(crate) binding: String,
+    pub(crate) enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawSetTranscriptWindowShortcutRequest {
+    binding: String,
+    enabled: bool,
+}
+
+impl<'de> Deserialize<'de> for SetTranscriptWindowShortcutRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSetTranscriptWindowShortcutRequest::deserialize(deserializer)?;
+        let request = Self {
+            binding: raw.binding,
+            enabled: raw.enabled,
+        };
+        request.validate().map_err(D::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl SetTranscriptWindowShortcutRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        ParsedShortcut::parse(&self.binding).map(|_| ())
+    }
+
+    /// Accepts any spelling the user typed and stores the canonical form.
+    pub(crate) fn into_shortcut(self) -> Result<TranscriptWindowShortcut, &'static str> {
+        let parsed = ParsedShortcut::parse(&self.binding)?;
+        Ok(TranscriptWindowShortcut {
+            schema_version: 1,
+            binding: parsed.canonical(),
+            enabled: self.enabled,
+        })
+    }
+}
+
+/// What the user needs to know about a binding: what it is, whether it is meant
+/// to be active, and whether the system actually accepted it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptWindowShortcutStatus {
+    pub(crate) schema_version: u8,
+    pub(crate) binding: String,
+    pub(crate) enabled: bool,
+    /// False when another application already owns the combination.
+    pub(crate) registered: bool,
+}
+
+/// A validated binding decomposed into the values the platform needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParsedShortcut {
+    pub(crate) control: bool,
+    pub(crate) alt: bool,
+    pub(crate) shift: bool,
+    pub(crate) meta: bool,
+    pub(crate) virtual_key: u16,
+    key: KeyName,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyName {
+    Character(char),
+    Function(u8),
+}
+
+impl ParsedShortcut {
+    /// Parses a binding, rejecting anything that would hijack ordinary typing.
+    ///
+    /// A system-wide hotkey with no `Ctrl`, `Alt`, or `Win` would capture a
+    /// plain keystroke from every application on the machine, so at least one
+    /// of those is required.
+    pub(crate) fn parse(binding: &str) -> Result<Self, &'static str> {
+        if binding.is_empty() || binding.len() > 64 {
+            return Err("window_shortcut_invalid");
+        }
+        let mut control = false;
+        let mut alt = false;
+        let mut shift = false;
+        let mut meta = false;
+        let mut key: Option<KeyName> = None;
+        for part in binding.split('+') {
+            let token = part.trim();
+            if token.is_empty() {
+                return Err("window_shortcut_invalid");
+            }
+            let lowered = token.to_ascii_lowercase();
+            let duplicate = match lowered.as_str() {
+                "ctrl" | "control" => std::mem::replace(&mut control, true),
+                "alt" => std::mem::replace(&mut alt, true),
+                "shift" => std::mem::replace(&mut shift, true),
+                "win" | "super" | "meta" => std::mem::replace(&mut meta, true),
+                _ => {
+                    if key.is_some() {
+                        return Err("window_shortcut_invalid");
+                    }
+                    key = Some(parse_key(&lowered)?);
+                    false
+                }
+            };
+            if duplicate {
+                return Err("window_shortcut_invalid");
+            }
+        }
+        let key = key.ok_or("window_shortcut_invalid")?;
+        if !(control || alt || meta) {
+            return Err("window_shortcut_requires_modifier");
+        }
+        Ok(Self {
+            control,
+            alt,
+            shift,
+            meta,
+            virtual_key: virtual_key(key),
+            key,
+        })
+    }
+
+    pub(crate) fn canonical(&self) -> String {
+        let mut parts = Vec::new();
+        if self.control {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.alt {
+            parts.push("Alt".to_owned());
+        }
+        if self.shift {
+            parts.push("Shift".to_owned());
+        }
+        if self.meta {
+            parts.push("Win".to_owned());
+        }
+        parts.push(match self.key {
+            KeyName::Character(value) => value.to_ascii_uppercase().to_string(),
+            KeyName::Function(number) => format!("F{number}"),
+        });
+        parts.join("+")
+    }
+}
+
+fn parse_key(lowered: &str) -> Result<KeyName, &'static str> {
+    if let Some(number) = lowered.strip_prefix('f')
+        && lowered.len() > 1
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let number: u8 = number.parse().map_err(|_| "window_shortcut_invalid")?;
+        if (1..=24).contains(&number) {
+            return Ok(KeyName::Function(number));
+        }
+        return Err("window_shortcut_invalid");
+    }
+    let mut characters = lowered.chars();
+    match (characters.next(), characters.next()) {
+        (Some(value), None) if value.is_ascii_alphanumeric() => Ok(KeyName::Character(value)),
+        _ => Err("window_shortcut_invalid"),
+    }
+}
+
+fn virtual_key(key: KeyName) -> u16 {
+    match key {
+        // Letter and digit virtual-key codes equal their uppercase ASCII value.
+        KeyName::Character(value) => value.to_ascii_uppercase() as u16,
+        // VK_F1 is 0x70 and the function keys are contiguous from there.
+        KeyName::Function(number) => 0x6F + u16::from(number),
+    }
+}
+
 /// Everything remembered about the transcript window between runs.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TranscriptWindowState {
     pub(crate) schema_version: u8,
     pub(crate) appearance: TranscriptWindowAppearance,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) geometry: Option<TranscriptWindowGeometry>,
+    pub(crate) shortcut: TranscriptWindowShortcut,
 }
 
 #[derive(Deserialize)]
@@ -213,6 +454,8 @@ struct RawTranscriptWindowState {
     appearance: TranscriptWindowAppearance,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     geometry: Option<TranscriptWindowGeometry>,
+    #[serde(default)]
+    shortcut: TranscriptWindowShortcut,
 }
 
 impl<'de> Deserialize<'de> for TranscriptWindowState {
@@ -225,6 +468,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowState {
             schema_version: raw.schema_version,
             appearance: raw.appearance,
             geometry: raw.geometry,
+            shortcut: raw.shortcut,
         };
         state.validate().map_err(D::Error::custom)?;
         Ok(state)
@@ -240,6 +484,7 @@ impl TranscriptWindowState {
         if let Some(geometry) = self.geometry {
             geometry.validate()?;
         }
+        self.shortcut.validate()?;
         Ok(())
     }
 }
@@ -250,6 +495,7 @@ impl Default for TranscriptWindowState {
             schema_version: 1,
             appearance: TranscriptWindowAppearance::default(),
             geometry: None,
+            shortcut: TranscriptWindowShortcut::default(),
         }
     }
 }
@@ -403,6 +649,105 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<TranscriptWindowState>(unreadable).is_err());
+    }
+
+    #[test]
+    fn a_binding_without_ctrl_alt_or_win_is_refused() {
+        // A system-wide hotkey on a bare or shift-only key would capture that
+        // keystroke from every application on the machine.
+        for binding in ["T", "Shift+T", "F5", "Shift+F5"] {
+            assert_eq!(
+                ParsedShortcut::parse(binding).unwrap_err(),
+                "window_shortcut_requires_modifier",
+                "{binding} must be refused"
+            );
+        }
+        assert!(ParsedShortcut::parse("Ctrl+Shift+T").is_ok());
+        assert!(ParsedShortcut::parse("Alt+F5").is_ok());
+        assert!(ParsedShortcut::parse("Win+K").is_ok());
+    }
+
+    #[test]
+    fn malformed_bindings_are_refused() {
+        for binding in [
+            "", "Ctrl+", "+T", "Ctrl++T", "Ctrl+Ctrl+T", "Ctrl+T+K", "Ctrl+F0", "Ctrl+F25",
+            "Ctrl+Tab", "Ctrl+é",
+        ] {
+            assert!(
+                ParsedShortcut::parse(binding).is_err(),
+                "{binding} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn bindings_canonicalize_regardless_of_spelling() {
+        for (typed, canonical) in [
+            ("ctrl+shift+t", "Ctrl+Shift+T"),
+            ("SHIFT + CONTROL + t", "Ctrl+Shift+T"),
+            ("alt+f9", "Alt+F9"),
+            ("super+k", "Win+K"),
+            ("control+alt+shift+win+9", "Ctrl+Alt+Shift+Win+9"),
+        ] {
+            assert_eq!(ParsedShortcut::parse(typed).unwrap().canonical(), canonical);
+        }
+    }
+
+    #[test]
+    fn virtual_keys_match_the_platform_numbering() {
+        assert_eq!(ParsedShortcut::parse("Ctrl+A").unwrap().virtual_key, 0x41);
+        assert_eq!(ParsedShortcut::parse("Ctrl+0").unwrap().virtual_key, 0x30);
+        assert_eq!(ParsedShortcut::parse("Ctrl+F1").unwrap().virtual_key, 0x70);
+        assert_eq!(ParsedShortcut::parse("Ctrl+F24").unwrap().virtual_key, 0x87);
+    }
+
+    #[test]
+    fn a_shortcut_request_stores_the_canonical_binding() {
+        let request: SetTranscriptWindowShortcutRequest = serde_json::from_value(json!({
+            "binding": "shift+ctrl+t",
+            "enabled": true
+        }))
+        .unwrap();
+
+        let shortcut = request.into_shortcut().unwrap();
+
+        assert_eq!(shortcut.binding, "Ctrl+Shift+T");
+        assert!(shortcut.enabled);
+        shortcut.validate().unwrap();
+    }
+
+    #[test]
+    fn a_stored_shortcut_must_already_be_canonical() {
+        let non_canonical = json!({
+            "schemaVersion": 1,
+            "binding": "shift+ctrl+t",
+            "enabled": true
+        });
+        assert!(serde_json::from_value::<TranscriptWindowShortcut>(non_canonical).is_err());
+
+        let modifierless = json!({
+            "schemaVersion": 1,
+            "binding": "T",
+            "enabled": true
+        });
+        assert!(serde_json::from_value::<TranscriptWindowShortcut>(modifierless).is_err());
+    }
+
+    #[test]
+    fn state_stored_before_shortcuts_existed_still_reads() {
+        let legacy: TranscriptWindowState = serde_json::from_value(json!({
+            "schemaVersion": 1,
+            "appearance": {
+                "schemaVersion": 1,
+                "backgroundOpacity": 0.8,
+                "alwaysOnTop": false,
+                "compact": false
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(legacy.shortcut.binding, DEFAULT_SHORTCUT_BINDING);
+        assert!(legacy.shortcut.enabled);
     }
 
     #[test]

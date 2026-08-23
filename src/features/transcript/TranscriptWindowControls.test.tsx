@@ -3,7 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { setTranscriptWindowAppearanceRequestSchema } from "@/contracts/windows"
+import {
+  setTranscriptWindowAppearanceRequestSchema,
+  setTranscriptWindowShortcutRequestSchema,
+} from "@/contracts/windows"
 import { TranscriptWindowControls } from "./TranscriptWindowControls"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
@@ -17,14 +20,30 @@ const defaultAppearance = {
   compact: false,
 }
 
-function respondWithStoredAppearance() {
+const defaultShortcut = {
+  schemaVersion: 1,
+  binding: "Ctrl+Shift+T",
+  enabled: true,
+  registered: true,
+}
+
+function respondWithStoredAppearance(
+  shortcut: Record<string, unknown> = defaultShortcut,
+) {
   invokeMock.mockImplementation(async (command, args) => {
     if (command === "get_transcript_window_appearance") return defaultAppearance
+    if (command === "get_transcript_window_shortcut") return shortcut
     if (command === "set_transcript_window_appearance") {
       const request = setTranscriptWindowAppearanceRequestSchema.parse(
         (args as { request: unknown }).request,
       )
       return { schemaVersion: 1, ...request }
+    }
+    if (command === "set_transcript_window_shortcut") {
+      const request = setTranscriptWindowShortcutRequestSchema.parse(
+        (args as { request: unknown }).request,
+      )
+      return { schemaVersion: 1, ...request, registered: request.enabled }
     }
     return undefined
   })
@@ -97,6 +116,68 @@ describe("TranscriptWindowControls", () => {
 
     expect(slider).toHaveAttribute("min", "0.3")
     expect(slider).toHaveAttribute("max", "1")
+  })
+
+  it("applies a rebinding and shows the canonical result", async () => {
+    respondWithStoredAppearance()
+    render(<TranscriptWindowControls collapsed={false} />)
+    await waitFor(() =>
+      expect(screen.getByLabelText(/show\/hide shortcut/i)).toHaveValue(
+        "Ctrl+Shift+T",
+      ),
+    )
+
+    const field = screen.getByLabelText(/show\/hide shortcut/i)
+    await userEvent.clear(field)
+    await userEvent.type(field, "Alt+F9")
+    await userEvent.click(screen.getByRole("button", { name: /apply/i }))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "set_transcript_window_shortcut",
+        { request: { binding: "Alt+F9", enabled: true } },
+      ),
+    )
+  })
+
+  it("warns when the system refused the binding", async () => {
+    respondWithStoredAppearance({
+      schemaVersion: 1,
+      binding: "Ctrl+Shift+T",
+      enabled: true,
+      registered: false,
+    })
+
+    render(<TranscriptWindowControls collapsed={false} />)
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /another application is probably using it/i,
+      ),
+    )
+  })
+
+  it("keeps the window reachable when the shortcut is turned off", async () => {
+    respondWithStoredAppearance()
+    render(<TranscriptWindowControls collapsed={false} />)
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText(/use this shortcut system-wide/i),
+      ).toBeChecked(),
+    )
+
+    await userEvent.click(
+      screen.getByLabelText(/use this shortcut system-wide/i),
+    )
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "set_transcript_window_shortcut",
+        { request: { binding: "Ctrl+Shift+T", enabled: false } },
+      ),
+    )
+    // The visible recovery path must survive a disabled shortcut.
+    expect(screen.getByRole("button", { name: /pop out/i })).toBeEnabled()
   })
 
   it("surfaces a sanitized failure without changing the shown state", async () => {

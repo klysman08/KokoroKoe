@@ -8,9 +8,13 @@ import {
 } from "@/contracts/app-error"
 import {
   setTranscriptWindowAppearanceRequestSchema,
+  setTranscriptWindowShortcutRequestSchema,
   transcriptWindowAppearanceSchema,
+  transcriptWindowShortcutStatusSchema,
   type SetTranscriptWindowAppearanceRequest,
+  type SetTranscriptWindowShortcutRequest,
   type TranscriptWindowAppearance,
+  type TranscriptWindowShortcutStatus,
 } from "@/contracts/windows"
 
 export const TRANSCRIPT_WINDOW_APPEARANCE_EVENT = "transcript-window-appearance"
@@ -65,6 +69,36 @@ export async function setTranscriptWindowAppearance(
   const appearance = transcriptWindowAppearanceSchema.safeParse(raw)
   if (!appearance.success) throw createContractApplicationError()
   return appearance.data
+}
+
+export async function getTranscriptWindowShortcut(): Promise<TranscriptWindowShortcutStatus> {
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("get_transcript_window_shortcut")
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const status = transcriptWindowShortcutStatusSchema.safeParse(raw)
+  if (!status.success) throw createContractApplicationError()
+  return status.data
+}
+
+export async function setTranscriptWindowShortcut(
+  value: SetTranscriptWindowShortcutRequest,
+): Promise<TranscriptWindowShortcutStatus> {
+  const request = setTranscriptWindowShortcutRequestSchema.safeParse(value)
+  if (!request.success) throw createRequestContractApplicationError()
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("set_transcript_window_shortcut", {
+      request: request.data,
+    })
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const status = transcriptWindowShortcutStatusSchema.safeParse(raw)
+  if (!status.success) throw createContractApplicationError()
+  return status.data
 }
 
 /**

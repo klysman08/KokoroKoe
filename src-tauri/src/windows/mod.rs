@@ -8,13 +8,18 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
+mod hotkey;
+
 use crate::{
     domain::{
-        AppError, SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance,
-        TranscriptWindowGeometry, TranscriptWindowState, now_rfc3339,
+        AppError, SetTranscriptWindowAppearanceRequest, SetTranscriptWindowShortcutRequest,
+        TranscriptWindowAppearance, TranscriptWindowGeometry, TranscriptWindowShortcutStatus,
+        TranscriptWindowState, now_rfc3339,
     },
     persistence::SettingsService,
 };
+
+use hotkey::HotkeyController;
 
 /// The detached live-transcript window.
 ///
@@ -42,6 +47,9 @@ struct WindowRuntime {
     state: TranscriptWindowState,
     loaded: bool,
     last_write: Option<Instant>,
+    /// False when the system refused the binding, usually because another
+    /// application already owns the combination.
+    shortcut_registered: bool,
 }
 
 /// Rust-owned appearance and geometry for the transcript window.
@@ -53,6 +61,7 @@ struct WindowRuntime {
 pub(crate) struct TranscriptWindowService {
     settings: SettingsService,
     runtime: Arc<Mutex<WindowRuntime>>,
+    hotkey: Arc<Mutex<Option<Arc<HotkeyController>>>>,
 }
 
 impl TranscriptWindowService {
@@ -60,6 +69,105 @@ impl TranscriptWindowService {
         Self {
             settings,
             runtime: Arc::new(Mutex::new(WindowRuntime::default())),
+            hotkey: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Starts the system-wide show/hide hotkey and binds the stored shortcut.
+    ///
+    /// A refused registration is recorded and reported rather than retried: the
+    /// window always remains reachable through the main window's control, so a
+    /// taken combination degrades the shortcut and nothing else.
+    pub(crate) fn install_shortcut<R: Runtime>(&self, app: &AppHandle<R>) {
+        let service = self.clone();
+        let target = app.clone();
+        let controller = HotkeyController::start(Arc::new(move || {
+            service.toggle(&target);
+        }));
+        let Some(controller) = controller else {
+            tracing::warn!("the show/hide shortcut could not be started");
+            return;
+        };
+        if let Ok(mut slot) = self.hotkey.lock() {
+            *slot = Some(controller);
+        }
+        let _ = self.rebind_shortcut();
+    }
+
+    /// Applies the stored shortcut to the platform, returning whether it was
+    /// accepted. A disabled shortcut clears the registration.
+    fn rebind_shortcut(&self) -> Result<bool, AppError> {
+        let state = self.hydrated()?;
+        let controller = self
+            .hotkey
+            .lock()
+            .map_err(|_| AppError::window_error("window_shortcut_unavailable"))?
+            .clone();
+        let Some(controller) = controller else {
+            return Ok(false);
+        };
+        let binding = if state.shortcut.enabled {
+            Some(state.shortcut.parsed().map_err(AppError::window_error)?)
+        } else {
+            None
+        };
+        let registered = controller.bind(binding) && state.shortcut.enabled;
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.shortcut_registered = registered;
+        }
+        Ok(registered)
+    }
+
+    pub(crate) fn shortcut_status(&self) -> Result<TranscriptWindowShortcutStatus, AppError> {
+        let state = self.hydrated()?;
+        let registered = self
+            .runtime
+            .lock()
+            .map(|runtime| runtime.shortcut_registered)
+            .unwrap_or(false);
+        Ok(TranscriptWindowShortcutStatus {
+            schema_version: 1,
+            binding: state.shortcut.binding,
+            enabled: state.shortcut.enabled,
+            registered,
+        })
+    }
+
+    pub(crate) fn set_shortcut(
+        &self,
+        request: SetTranscriptWindowShortcutRequest,
+    ) -> Result<TranscriptWindowShortcutStatus, AppError> {
+        let shortcut = request.into_shortcut().map_err(AppError::window_error)?;
+        self.hydrated()?;
+        let state = {
+            let mut runtime = self.locked()?;
+            runtime.state.shortcut = shortcut;
+            runtime.state.clone()
+        };
+        self.persist(state)?;
+        self.rebind_shortcut()?;
+        self.shortcut_status()
+    }
+
+    /// Show/hide toggle used by the shortcut.
+    ///
+    /// An absent window is created, so the same combination always brings the
+    /// transcript back: a quick-hide the user cannot undo would be the same
+    /// trap as a window hidden off-screen.
+    fn toggle<R: Runtime>(&self, app: &AppHandle<R>) {
+        match app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
+            Some(window) => {
+                if window.is_visible().unwrap_or(true) {
+                    let _ = window.hide();
+                } else {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            None => {
+                let _ = self.open(app);
+            }
         }
     }
 
@@ -76,7 +184,7 @@ impl TranscriptWindowService {
         {
             let runtime = self.locked()?;
             if runtime.loaded {
-                return Ok(runtime.state);
+                return Ok(runtime.state.clone());
             }
         }
         let stored = self
@@ -90,7 +198,7 @@ impl TranscriptWindowService {
             }
             runtime.loaded = true;
         }
-        Ok(runtime.state)
+        Ok(runtime.state.clone())
     }
 
     pub(crate) fn appearance(&self) -> Result<TranscriptWindowAppearance, AppError> {
@@ -116,16 +224,17 @@ impl TranscriptWindowService {
         let state = {
             let mut runtime = self.locked()?;
             runtime.state.appearance = request.into_appearance();
-            runtime.state
+            runtime.state.clone()
         };
         if let Some(window) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
             window
                 .set_always_on_top(state.appearance.always_on_top)
                 .map_err(|_| AppError::window_error("window_always_on_top_failed"))?;
         }
-        self.publish(app, state.appearance)?;
+        let appearance = state.appearance;
+        self.publish(app, appearance)?;
         self.persist(state)?;
-        Ok(state.appearance)
+        Ok(appearance)
     }
 
     fn publish<R: Runtime>(
@@ -158,7 +267,7 @@ impl TranscriptWindowService {
             return;
         }
         runtime.last_write = Some(Instant::now());
-        let state = runtime.state;
+        let state = runtime.state.clone();
         drop(runtime);
         let _ = self.persist(state);
     }
@@ -340,7 +449,7 @@ mod tests {
             runtime.loaded = true;
         }
         service.record_geometry(geometry, true);
-        let stored = service.persist(service.locked().unwrap().state);
+        let stored = service.persist(service.locked().unwrap().state.clone());
         stored.unwrap();
 
         // A new process reads the same database.

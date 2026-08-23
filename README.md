@@ -36,15 +36,16 @@ to OpenRouter, and only when you ask for it.
   background opacity, always-on-top, and compact mode. Opacity dims the background only, so text
   stays fully readable, and it cannot be lowered past a readable floor. Position, size, and
   appearance are remembered between runs, and a window left on a display that is later disconnected
-  returns to a centered default instead of reopening off-screen. The window is created by Rust and
-  holds an event-subscription-only capability: it can invoke no command and read no file.
+  returns to a centered default instead of reopening off-screen. A configurable system-wide shortcut
+  hides and shows it for quick-hide during a meeting. The window is created by Rust and holds an
+  event-subscription-only capability: it can invoke no command and read no file.
 
 ## Not implemented yet
 
 - The rolling in-session summary that accumulates while a Session runs; only the final summary
   exists today.
-- Quick-hide, configurable keyboard shortcuts, and an explicit monitor picker. Position, size, and
-  appearance are already remembered between runs.
+- An explicit monitor picker. Position, size, appearance, and the show/hide shortcut are already
+  remembered between runs.
 - The separate insights window, and the per-segment transcript actions from the Manifest.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.

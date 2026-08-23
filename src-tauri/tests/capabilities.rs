@@ -41,6 +41,8 @@ fn main_capability_grants_only_expected_product_commands() {
             "allow-close-transcript-window",
             "allow-get-transcript-window-appearance",
             "allow-set-transcript-window-appearance",
+            "allow-get-transcript-window-shortcut",
+            "allow-set-transcript-window-shortcut",
             "allow-list-audio-devices",
             "allow-start-audio-device-test",
             "allow-stop-audio-device-test",

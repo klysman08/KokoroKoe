@@ -24,6 +24,8 @@ fn main() {
             "set_transcript_window_appearance",
             "get_transcript_window_shortcut",
             "set_transcript_window_shortcut",
+            "get_transcript_window_interaction",
+            "set_transcript_window_interaction",
         ]));
 
     tauri_build::try_build(attributes).expect("failed to build Tauri application metadata");

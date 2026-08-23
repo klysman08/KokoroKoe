@@ -29,14 +29,14 @@ describe("DetachedTranscriptWindow", () => {
   it("subscribes to session events without invoking any command", async () => {
     render(<DetachedTranscriptWindow />)
 
-    await waitFor(() => expect(listeners.size).toBe(4))
+    await waitFor(() => expect(listeners.size).toBe(5))
     expect(invoke).not.toHaveBeenCalled()
     expect(screen.getByText(/waiting for a session/i)).toBeInTheDocument()
   })
 
   it("renders a scoped final segment that arrives while it is open", async () => {
     render(<DetachedTranscriptWindow />)
-    await waitFor(() => expect(listeners.size).toBe(4))
+    await waitFor(() => expect(listeners.size).toBe(5))
 
     const handler = listeners.get("session-transcription-final")
     expect(handler).toBeDefined()
@@ -57,7 +57,7 @@ describe("DetachedTranscriptWindow", () => {
   /// it through the Rust-owned event.
   it("applies the appearance it receives without invoking a command", async () => {
     render(<DetachedTranscriptWindow />)
-    await waitFor(() => expect(listeners.size).toBe(4))
+    await waitFor(() => expect(listeners.size).toBe(5))
 
     listeners.get("transcript-window-appearance")?.({
       payload: {
@@ -78,7 +78,7 @@ describe("DetachedTranscriptWindow", () => {
 
   it("ignores an appearance payload outside the readable range", async () => {
     render(<DetachedTranscriptWindow />)
-    await waitFor(() => expect(listeners.size).toBe(4))
+    await waitFor(() => expect(listeners.size).toBe(5))
 
     listeners.get("transcript-window-appearance")?.({
       payload: {
@@ -91,5 +91,28 @@ describe("DetachedTranscriptWindow", () => {
 
     const surface = await screen.findByTestId("detached-transcript-window")
     expect(surface).toHaveStyle({ "--transcript-window-opacity": "1" })
+  })
+
+  /// A click-through window looks exactly like a frozen one, so the badge is
+  /// the only cue the user gets that the mouse is being passed through.
+  it("shows a click-through indicator driven by the Rust-owned event", async () => {
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+    expect(screen.queryByText(/clicks pass through/i)).not.toBeInTheDocument()
+
+    listeners.get("transcript-window-interaction")?.({
+      payload: { schemaVersion: 1, clickThrough: true },
+    })
+    expect(await screen.findByText(/clicks pass through/i)).toBeInTheDocument()
+
+    listeners.get("transcript-window-interaction")?.({
+      payload: { schemaVersion: 1, clickThrough: false },
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/clicks pass through/i),
+      ).not.toBeInTheDocument(),
+    )
+    expect(invoke).not.toHaveBeenCalled()
   })
 })

@@ -39,6 +39,8 @@
     "allow-set-transcript-window-appearance",
     "allow-get-transcript-window-shortcut",
     "allow-set-transcript-window-shortcut",
+    "allow-get-transcript-window-interaction",
+    "allow-set-transcript-window-interaction",
     "allow-list-audio-devices",
     "allow-start-audio-device-test",
     "allow-stop-audio-device-test",

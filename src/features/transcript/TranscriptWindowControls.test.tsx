@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   setTranscriptWindowAppearanceRequestSchema,
+  setTranscriptWindowInteractionRequestSchema,
   setTranscriptWindowShortcutRequestSchema,
 } from "@/contracts/windows"
 import { TranscriptWindowControls } from "./TranscriptWindowControls"
@@ -27,12 +28,22 @@ const defaultShortcut = {
   registered: true,
 }
 
+const defaultInteraction = { schemaVersion: 1, clickThrough: false }
+
 function respondWithStoredAppearance(
   shortcut: Record<string, unknown> = defaultShortcut,
 ) {
   invokeMock.mockImplementation(async (command, args) => {
     if (command === "get_transcript_window_appearance") return defaultAppearance
     if (command === "get_transcript_window_shortcut") return shortcut
+    if (command === "get_transcript_window_interaction")
+      return defaultInteraction
+    if (command === "set_transcript_window_interaction") {
+      const request = setTranscriptWindowInteractionRequestSchema.parse(
+        (args as { request: unknown }).request,
+      )
+      return { schemaVersion: 1, ...request }
+    }
     if (command === "set_transcript_window_appearance") {
       const request = setTranscriptWindowAppearanceRequestSchema.parse(
         (args as { request: unknown }).request,
@@ -178,6 +189,44 @@ describe("TranscriptWindowControls", () => {
     )
     // The visible recovery path must survive a disabled shortcut.
     expect(screen.getByRole("button", { name: /pop out/i })).toBeEnabled()
+  })
+
+  it("sends a validated click-through request and reflects the result", async () => {
+    respondWithStoredAppearance()
+    render(<TranscriptWindowControls collapsed={false} />)
+    const toggle = await screen.findByLabelText(/let clicks pass through/i)
+    await waitFor(() => expect(toggle).toBeEnabled())
+
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "set_transcript_window_interaction",
+        { request: { clickThrough: true } },
+      ),
+    )
+    await waitFor(() => expect(toggle).toBeChecked())
+  })
+
+  /// The off switch lives in this window, which never becomes click-through, so
+  /// the user can always take pointer input back.
+  it("keeps the click-through switch usable while click-through is on", async () => {
+    respondWithStoredAppearance()
+    render(<TranscriptWindowControls collapsed={false} />)
+    const toggle = await screen.findByLabelText(/let clicks pass through/i)
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await userEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "set_transcript_window_interaction",
+        { request: { clickThrough: false } },
+      ),
+    )
+    await waitFor(() => expect(toggle).not.toBeChecked())
   })
 
   it("surfaces a sanitized failure without changing the shown state", async () => {

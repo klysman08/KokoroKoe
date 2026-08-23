@@ -48,6 +48,25 @@ export const setTranscriptWindowShortcutRequestSchema = z.strictObject({
   enabled: z.boolean(),
 })
 
+/**
+ * Whether the window passes mouse input through. Never persisted: pointer input
+ * is always restored when the application starts.
+ */
+export const transcriptWindowInteractionSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  clickThrough: z.boolean(),
+})
+
+export const setTranscriptWindowInteractionRequestSchema = z.strictObject({
+  clickThrough: z.boolean(),
+})
+
+export type TranscriptWindowInteraction = z.infer<
+  typeof transcriptWindowInteractionSchema
+>
+export type SetTranscriptWindowInteractionRequest = z.infer<
+  typeof setTranscriptWindowInteractionRequestSchema
+>
 export type TranscriptWindowShortcutStatus = z.infer<
   typeof transcriptWindowShortcutStatusSchema
 >

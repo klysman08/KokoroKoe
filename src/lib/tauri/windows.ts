@@ -8,16 +8,22 @@ import {
 } from "@/contracts/app-error"
 import {
   setTranscriptWindowAppearanceRequestSchema,
+  setTranscriptWindowInteractionRequestSchema,
   setTranscriptWindowShortcutRequestSchema,
   transcriptWindowAppearanceSchema,
+  transcriptWindowInteractionSchema,
   transcriptWindowShortcutStatusSchema,
   type SetTranscriptWindowAppearanceRequest,
+  type SetTranscriptWindowInteractionRequest,
   type SetTranscriptWindowShortcutRequest,
   type TranscriptWindowAppearance,
+  type TranscriptWindowInteraction,
   type TranscriptWindowShortcutStatus,
 } from "@/contracts/windows"
 
 export const TRANSCRIPT_WINDOW_APPEARANCE_EVENT = "transcript-window-appearance"
+export const TRANSCRIPT_WINDOW_INTERACTION_EVENT =
+  "transcript-window-interaction"
 
 /**
  * Opens the detached transcript window.
@@ -99,6 +105,51 @@ export async function setTranscriptWindowShortcut(
   const status = transcriptWindowShortcutStatusSchema.safeParse(raw)
   if (!status.success) throw createContractApplicationError()
   return status.data
+}
+
+export async function getTranscriptWindowInteraction(): Promise<TranscriptWindowInteraction> {
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("get_transcript_window_interaction")
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const interaction = transcriptWindowInteractionSchema.safeParse(raw)
+  if (!interaction.success) throw createContractApplicationError()
+  return interaction.data
+}
+
+export async function setTranscriptWindowInteraction(
+  value: SetTranscriptWindowInteractionRequest,
+): Promise<TranscriptWindowInteraction> {
+  const request = setTranscriptWindowInteractionRequestSchema.safeParse(value)
+  if (!request.success) throw createRequestContractApplicationError()
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("set_transcript_window_interaction", {
+      request: request.data,
+    })
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const interaction = transcriptWindowInteractionSchema.safeParse(raw)
+  if (!interaction.success) throw createContractApplicationError()
+  return interaction.data
+}
+
+/**
+ * Subscribes the transcript window to its pointer-interaction state so a
+ * click-through window can show that it is not accepting input.
+ */
+export function listenToTranscriptWindowInteraction(
+  onEvent: (interaction: TranscriptWindowInteraction) => void,
+): Promise<UnlistenFn> {
+  return listen<unknown>(TRANSCRIPT_WINDOW_INTERACTION_EVENT, (event) => {
+    const interaction = transcriptWindowInteractionSchema.safeParse(
+      event.payload,
+    )
+    if (interaction.success) onEvent(interaction.data)
+  })
 }
 
 /**

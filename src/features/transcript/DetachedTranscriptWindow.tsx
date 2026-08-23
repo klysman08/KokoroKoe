@@ -30,7 +30,10 @@ import {
   listenToSessionTranscriptionGaps,
   listenToSessionTranscriptionPartials,
 } from "@/lib/tauri/sessions"
-import { listenToTranscriptWindowAppearance } from "@/lib/tauri/windows"
+import {
+  listenToTranscriptWindowAppearance,
+  listenToTranscriptWindowInteraction,
+} from "@/lib/tauri/windows"
 import { cn } from "@/lib/utils"
 
 type ScopedTranscriptEvent =
@@ -51,10 +54,22 @@ export function DetachedTranscriptWindow() {
   const [scope, setScope] = useState<{ sessionId: string }>()
   const [error, setError] = useState<ApplicationError>()
   const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
+  const [clickThrough, setClickThrough] = useState(false)
 
   useEffect(() => {
     let disposed = false
     let dispose: UnlistenFn | undefined
+    let interactionDispose: UnlistenFn | undefined
+    void listenToTranscriptWindowInteraction((next) => {
+      setClickThrough(next.clickThrough)
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten()
+        else interactionDispose = unlisten
+      })
+      .catch((caught: unknown) => {
+        if (!disposed) setError(toApplicationError(caught))
+      })
     void listenToTranscriptWindowAppearance((next) => {
       setAppearance(next)
     })
@@ -68,6 +83,7 @@ export function DetachedTranscriptWindow() {
     return () => {
       disposed = true
       dispose?.()
+      interactionDispose?.()
     }
   }, [])
 
@@ -131,9 +147,16 @@ export function DetachedTranscriptWindow() {
           <p className={cn("font-medium", compact ? "text-xs" : "text-sm")}>
             Live transcript
           </p>
-          <Badge variant={scope ? "secondary" : "outline"}>
-            {scope ? "Receiving" : "Waiting for a Session"}
-          </Badge>
+          <div className="flex items-center gap-1">
+            {clickThrough && (
+              // Without this a click-through window looks identical to a frozen
+              // one, and the user has no cue why the mouse does nothing.
+              <Badge variant="outline">Clicks pass through</Badge>
+            )}
+            <Badge variant={scope ? "secondary" : "outline"}>
+              {scope ? "Receiving" : "Waiting for a Session"}
+            </Badge>
+          </div>
         </header>
         {error && <SanitizedErrorPanel error={error} />}
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border">

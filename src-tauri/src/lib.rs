@@ -49,6 +49,22 @@ pub fn run() {
     logging::init();
 
     tauri::Builder::default()
+        // A click-through transcript window cannot be clicked, so it must never
+        // outlive the main window that is able to turn click-through back off.
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                let app = window.app_handle();
+                if let Some(windows) = app.try_state::<TranscriptWindowService>() {
+                    windows.restore_interaction_without_main_window(app);
+                }
+            }
+        })
         .setup(|app| {
             let app_data_directory = app
                 .path()
@@ -148,6 +164,8 @@ pub fn run() {
             commands::windows::set_transcript_window_appearance,
             commands::windows::get_transcript_window_shortcut,
             commands::windows::set_transcript_window_shortcut,
+            commands::windows::get_transcript_window_interaction,
+            commands::windows::set_transcript_window_interaction,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

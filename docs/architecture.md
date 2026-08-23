@@ -48,6 +48,10 @@ Bindings are parsed and canonicalized in Rust, and a binding without `Ctrl`, `Al
 
 Quick-hide is deliberately recoverable. The same combination hides and shows, an absent window is created rather than ignored, and the main window keeps a visible **Pop out** control that works whether or not the shortcut is registered or even enabled. A window the user can hide but cannot bring back would be the same trap as an invisible or off-screen one.
 
+P6-005 adds click-through, and it ships only because recovery is guaranteed by construction rather than by care. Pass-through is the one window property that can make a surface impossible to operate, so three rails hold at once. It is never persisted: the state lives in process memory only, so a crash or a restart always returns pointer input. It cannot be switched on while the main window is absent, because the main window is the surface that switches it off. And it is cleared automatically when the main window is closed or destroyed, so the transcript window can never become the only remaining surface and be uncontrollable. Together these settle the click-through half of R-010, whose rule was to omit the feature unless emergency recovery is reliable.
+
+The window also has to say that it is passing clicks through. A click-through window is visually identical to a frozen one, so Rust publishes the interaction state on the same event rail as the appearance — once on page load and again on every change — and the window shows an explicit indicator. Without it the user has no cue why the mouse does nothing.
+
 Opacity is deliberately a background property, not a window property. The window is created transparent and the page paints its own translucent backdrop behind fully opaque text, so dimming never costs readability, as Manifest section 10 requires. Rust clamps opacity to a readable floor and quantizes it to whole percentage points, so a window can never be made invisible and therefore unrecoverable.
 
 ADR 0008 fixes how that constraint is applied. Every window has its own capability file scoped to exactly that window and receives only what its job requires. The `main` capability holds the product command surface; the `transcript` capability holds event subscription only, because a display-only window needs no command. Every command keeps the exact-`main` authorization rule, so the capability layer and the Rust authorization layer reject a secondary window independently and neither is load-bearing alone. Rust owns secondary window creation: label, URL, title, and initial size are module constants, the opening command takes no argument, and no window holds `core:webview:allow-create-webview-window`. Only the main window is declared in the configuration and created at startup; opening an existing secondary window focuses it instead of creating a duplicate, and closing an absent one succeeds.
@@ -63,7 +67,7 @@ ADR 0008 fixes how that constraint is applied. Every window has its own capabili
 - `prompts`: versioned specifications, context budgets, untrusted transcript delimiters, and output schemas.
 - `insights`: generation policy, deduplication, confirmation, accumulated and final summaries.
 - `security`: Credential Manager, redaction, path validation, and destructive-action confirmation.
-- `windows`: native windows, shortcuts, opacity, position, size, monitor preference, and quick-hide.
+- `windows`: native windows, shortcuts, opacity, position, size, monitor preference, quick-hide, and click-through.
 - `commands` and `events`: transport adapters without business logic.
 - `metrics`: local operational, model, cost, disk, and sanitized error aggregates.
 

@@ -12,9 +12,10 @@ mod hotkey;
 
 use crate::{
     domain::{
-        AppError, SetTranscriptWindowAppearanceRequest, SetTranscriptWindowShortcutRequest,
-        TranscriptWindowAppearance, TranscriptWindowGeometry, TranscriptWindowShortcutStatus,
-        TranscriptWindowState, now_rfc3339,
+        AppError, SetTranscriptWindowAppearanceRequest, SetTranscriptWindowInteractionRequest,
+        SetTranscriptWindowShortcutRequest, TranscriptWindowAppearance, TranscriptWindowGeometry,
+        TranscriptWindowInteraction, TranscriptWindowShortcutStatus, TranscriptWindowState,
+        now_rfc3339,
     },
     persistence::SettingsService,
 };
@@ -42,6 +43,13 @@ const GEOMETRY_WRITE_INTERVAL: Duration = Duration::from_secs(2);
 /// permissions and therefore cannot request it.
 pub(crate) const TRANSCRIPT_WINDOW_APPEARANCE_EVENT: &str = "transcript-window-appearance";
 
+/// Carries the pointer-interaction state to the transcript window so a
+/// click-through window can show that it is not accepting input.
+pub(crate) const TRANSCRIPT_WINDOW_INTERACTION_EVENT: &str = "transcript-window-interaction";
+
+/// The window that owns every transcript-window control.
+const MAIN_WINDOW_LABEL: &str = "main";
+
 #[derive(Default)]
 struct WindowRuntime {
     state: TranscriptWindowState,
@@ -50,6 +58,8 @@ struct WindowRuntime {
     /// False when the system refused the binding, usually because another
     /// application already owns the combination.
     shortcut_registered: bool,
+    /// Never persisted: see `TranscriptWindowInteraction`.
+    click_through: bool,
 }
 
 /// Rust-owned appearance and geometry for the transcript window.
@@ -147,6 +157,66 @@ impl TranscriptWindowService {
         self.persist(state)?;
         self.rebind_shortcut()?;
         self.shortcut_status()
+    }
+
+    pub(crate) fn interaction(&self) -> Result<TranscriptWindowInteraction, AppError> {
+        Ok(TranscriptWindowInteraction {
+            schema_version: 1,
+            click_through: self.locked()?.click_through,
+        })
+    }
+
+    /// Turns mouse pass-through on or off for the transcript window.
+    ///
+    /// Enabling requires the main window to exist, because the main window is
+    /// the surface that can turn it back off. A click-through window cannot be
+    /// clicked, dragged, or closed, so it must never become the only remaining
+    /// interactive surface.
+    pub(crate) fn set_click_through<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        request: SetTranscriptWindowInteractionRequest,
+    ) -> Result<TranscriptWindowInteraction, AppError> {
+        if !click_through_is_recoverable(
+            request.click_through,
+            app.get_webview_window(MAIN_WINDOW_LABEL).is_some(),
+        ) {
+            return Err(AppError::window_error("window_click_through_unrecoverable"));
+        }
+        self.apply_click_through(app, request.click_through)?;
+        self.interaction()
+    }
+
+    fn apply_click_through<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        click_through: bool,
+    ) -> Result<(), AppError> {
+        if let Some(window) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
+            window
+                .set_ignore_cursor_events(click_through)
+                .map_err(|_| AppError::window_error("window_click_through_failed"))?;
+        }
+        self.locked()?.click_through = click_through;
+        let interaction = TranscriptWindowInteraction {
+            schema_version: 1,
+            click_through,
+        };
+        app.emit(TRANSCRIPT_WINDOW_INTERACTION_EVENT, interaction)
+            .map_err(|_| AppError::window_error("window_interaction_publish_failed"))
+    }
+
+    /// Restores pointer input when the main window goes away.
+    ///
+    /// Without this the transcript window could be left click-through with no
+    /// surface able to turn it off, which is the failure the R-010 rule guards
+    /// against.
+    pub(crate) fn restore_interaction_without_main_window<R: Runtime>(&self, app: &AppHandle<R>) {
+        let engaged = self.runtime.lock().map(|runtime| runtime.click_through);
+        if engaged.unwrap_or(false) {
+            let _ = self.apply_click_through(app, false);
+            tracing::warn!("click-through cleared because the main window closed");
+        }
     }
 
     /// Show/hide toggle used by the shortcut.
@@ -307,11 +377,15 @@ impl TranscriptWindowService {
         // background while text stays fully opaque.
         .transparent(true)
         .always_on_top(state.appearance.always_on_top)
-        // The window cannot ask for its appearance, so publish it once the page
-        // is ready to receive the event.
+        // The window cannot ask for its own state, so publish it once the page
+        // is ready to receive the events. Interaction is included because a
+        // window reopened during click-through must say so from the first paint.
         .on_page_load(move |_window, _payload| {
             if let Ok(current) = publisher.appearance() {
                 let _ = publisher.publish(&published, current);
+            }
+            if let Ok(current) = publisher.interaction() {
+                let _ = published.emit(TRANSCRIPT_WINDOW_INTERACTION_EVENT, current);
             }
         })
         .build()
@@ -326,6 +400,11 @@ impl TranscriptWindowService {
                 TRANSCRIPT_WINDOW_HEIGHT,
             ));
             let _ = window.center();
+        }
+        // A window reopened during a click-through session must match the state
+        // the user last chose, which the freshly built window does not inherit.
+        if self.locked()?.click_through {
+            let _ = window.set_ignore_cursor_events(true);
         }
         window
             .show()
@@ -358,6 +437,14 @@ impl TranscriptWindowService {
             None => Ok(()),
         }
     }
+}
+
+/// The R-010 recovery rule, stated once so it can be checked directly.
+///
+/// Turning click-through on is allowed only while a surface that can turn it
+/// off is present; turning it off is always allowed.
+const fn click_through_is_recoverable(requested: bool, main_window_present: bool) -> bool {
+    !requested || main_window_present
 }
 
 fn current_geometry<R: Runtime>(
@@ -522,6 +609,61 @@ mod tests {
         );
 
         assert!(service.locked().unwrap().state.geometry.is_none());
+    }
+
+    /// The R-010 rule allows click-through only while pointer control is
+    /// always recoverable. Persisting it would survive a restart or a crash and
+    /// leave a window that cannot be clicked, dragged, or closed.
+    #[test]
+    fn click_through_is_never_written_to_persisted_state() {
+        let (root, service) = service();
+        let app_data = root.path().join("app-data");
+        let documents = root.path().join("documents");
+        service.hydrated().unwrap();
+
+        service.locked().unwrap().click_through = true;
+        let state = service.locked().unwrap().state.clone();
+        service.persist(state).unwrap();
+
+        let stored = service
+            .settings
+            .load_window_state(TRANSCRIPT_WINDOW_LABEL)
+            .unwrap()
+            .unwrap();
+        let serialized = serde_json::to_string(&stored).unwrap();
+        assert!(
+            !serialized.contains("clickThrough"),
+            "persisted state must not carry click-through"
+        );
+
+        let restarted =
+            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
+        restarted.hydrated().unwrap();
+        assert!(
+            !restarted.interaction().unwrap().click_through,
+            "a restart must always restore pointer input"
+        );
+    }
+
+    /// The main window is the only surface able to turn click-through off, so
+    /// engaging it without one would produce exactly the trap R-010 forbids.
+    /// Turning it off must never be blocked by the same rule.
+    #[test]
+    fn click_through_is_only_recoverable_with_a_main_window() {
+        assert!(!click_through_is_recoverable(true, false));
+        assert!(click_through_is_recoverable(true, true));
+        assert!(click_through_is_recoverable(false, false));
+        assert!(click_through_is_recoverable(false, true));
+    }
+
+    #[test]
+    fn a_new_service_accepts_pointer_input() {
+        let (_root, service) = service();
+
+        let interaction = service.interaction().unwrap();
+
+        assert_eq!(interaction.schema_version, 1);
+        assert!(!interaction.click_through);
     }
 
     #[test]

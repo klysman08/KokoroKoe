@@ -196,6 +196,83 @@ const MAXIMUM_WINDOW_ORIGIN: i32 = 60_000;
 const MINIMUM_VISIBLE_WIDTH: i32 = 120;
 const MINIMUM_VISIBLE_HEIGHT: i32 = 60;
 
+/// Whether the transcript window currently passes mouse input through.
+///
+/// This is deliberately **not** part of the persisted window state. A
+/// click-through window cannot be clicked, dragged, or closed, so a stored
+/// value that survived a restart or a crash would be a trap; interactivity is
+/// always restored when the application starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptWindowInteraction {
+    pub(crate) schema_version: u8,
+    pub(crate) click_through: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawTranscriptWindowInteraction {
+    schema_version: u8,
+    click_through: bool,
+}
+
+impl<'de> Deserialize<'de> for TranscriptWindowInteraction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawTranscriptWindowInteraction::deserialize(deserializer)?;
+        let interaction = Self {
+            schema_version: raw.schema_version,
+            click_through: raw.click_through,
+        };
+        interaction.validate().map_err(D::Error::custom)?;
+        Ok(interaction)
+    }
+}
+
+impl TranscriptWindowInteraction {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.schema_version != 1 {
+            return Err("window_interaction_invalid");
+        }
+        Ok(())
+    }
+}
+
+impl Default for TranscriptWindowInteraction {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            click_through: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SetTranscriptWindowInteractionRequest {
+    pub(crate) click_through: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawSetTranscriptWindowInteractionRequest {
+    click_through: bool,
+}
+
+impl<'de> Deserialize<'de> for SetTranscriptWindowInteractionRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSetTranscriptWindowInteractionRequest::deserialize(deserializer)?;
+        Ok(Self {
+            click_through: raw.click_through,
+        })
+    }
+}
+
 /// A configurable system-wide show/hide binding for the transcript window.
 ///
 /// The binding is stored canonically so the same combination always compares
@@ -670,8 +747,16 @@ mod tests {
     #[test]
     fn malformed_bindings_are_refused() {
         for binding in [
-            "", "Ctrl+", "+T", "Ctrl++T", "Ctrl+Ctrl+T", "Ctrl+T+K", "Ctrl+F0", "Ctrl+F25",
-            "Ctrl+Tab", "Ctrl+é",
+            "",
+            "Ctrl+",
+            "+T",
+            "Ctrl++T",
+            "Ctrl+Ctrl+T",
+            "Ctrl+T+K",
+            "Ctrl+F0",
+            "Ctrl+F25",
+            "Ctrl+Tab",
+            "Ctrl+é",
         ] {
             assert!(
                 ParsedShortcut::parse(binding).is_err(),

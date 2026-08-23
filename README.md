@@ -37,8 +37,11 @@ to OpenRouter, and only when you ask for it.
   stays fully readable, and it cannot be lowered past a readable floor. Position, size, and
   appearance are remembered between runs, and a window left on a display that is later disconnected
   returns to a centered default instead of reopening off-screen. A configurable system-wide shortcut
-  hides and shows it for quick-hide during a meeting. The window is created by Rust and holds an
-  event-subscription-only capability: it can invoke no command and read no file.
+  hides and shows it for quick-hide during a meeting, and clicks can be made to pass straight
+  through it so it sits over another application without getting in the way. Click-through never
+  survives a restart, cannot be switched on without the main window, and switches off when the main
+  window closes, so pointer control is always recoverable. The window is created by Rust and holds
+  an event-subscription-only capability: it can invoke no command and read no file.
 
 ## Not implemented yet
 

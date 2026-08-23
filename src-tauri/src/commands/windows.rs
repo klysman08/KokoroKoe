@@ -3,8 +3,8 @@ use tauri::{AppHandle, State, WebviewWindow};
 use crate::{
     domain::{
         AppError, CommandError, SetTranscriptWindowAppearanceRequest,
-        SetTranscriptWindowShortcutRequest, TranscriptWindowAppearance,
-        TranscriptWindowShortcutStatus,
+        SetTranscriptWindowInteractionRequest, SetTranscriptWindowShortcutRequest,
+        TranscriptWindowAppearance, TranscriptWindowInteraction, TranscriptWindowShortcutStatus,
     },
     logging,
     security::authorize_main_window,
@@ -66,6 +66,27 @@ pub(crate) async fn set_transcript_window_shortcut<R: tauri::Runtime>(
 ) -> Result<TranscriptWindowShortcutStatus, CommandError> {
     authorized(webview_window.label(), || {
         state.inner().set_shortcut(request)
+    })
+    .map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn get_transcript_window_interaction<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, TranscriptWindowService>,
+) -> Result<TranscriptWindowInteraction, CommandError> {
+    authorized(webview_window.label(), || state.inner().interaction()).map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn set_transcript_window_interaction<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    app: AppHandle<R>,
+    state: State<'_, TranscriptWindowService>,
+    request: SetTranscriptWindowInteractionRequest,
+) -> Result<TranscriptWindowInteraction, CommandError> {
+    authorized(webview_window.label(), || {
+        state.inner().set_click_through(&app, request)
     })
     .map_err(record_error)
 }

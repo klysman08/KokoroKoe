@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-transcript-window-interaction"
+description = "Enables the get_transcript_window_interaction command without any pre-configured scope."
+commands.allow = ["get_transcript_window_interaction"]
+
+[[permission]]
+identifier = "deny-get-transcript-window-interaction"
+description = "Denies the get_transcript_window_interaction command without any pre-configured scope."
+commands.deny = ["get_transcript_window_interaction"]

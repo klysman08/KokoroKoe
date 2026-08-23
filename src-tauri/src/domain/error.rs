@@ -117,6 +117,13 @@ impl AppError {
                 ErrorSeverity::Warning,
                 true,
             ),
+            // The user can act on this one: the main window is where
+            // click-through is turned back off.
+            "window_click_through_unrecoverable" => (
+                "Keep the main KokoroKoe window open to let clicks pass through the transcript window. It is the only place to turn that back off.",
+                ErrorSeverity::Warning,
+                false,
+            ),
             _ => (
                 "KokoroKoe could not complete the window operation.",
                 ErrorSeverity::Error,

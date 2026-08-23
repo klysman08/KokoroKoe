@@ -11,15 +11,18 @@ import {
   MAXIMUM_BACKGROUND_OPACITY,
   MINIMUM_BACKGROUND_OPACITY,
   type TranscriptWindowAppearance,
+  type TranscriptWindowInteraction,
   type TranscriptWindowShortcutStatus,
 } from "@/contracts/windows"
 import { cn } from "@/lib/utils"
 import {
   closeTranscriptWindow,
   getTranscriptWindowAppearance,
+  getTranscriptWindowInteraction,
   getTranscriptWindowShortcut,
   openTranscriptWindow,
   setTranscriptWindowAppearance,
+  setTranscriptWindowInteraction,
   setTranscriptWindowShortcut,
 } from "@/lib/tauri/windows"
 
@@ -39,6 +42,7 @@ export function TranscriptWindowControls({
 }) {
   const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
   const [shortcut, setShortcut] = useState<TranscriptWindowShortcutStatus>()
+  const [interaction, setInteraction] = useState<TranscriptWindowInteraction>()
   const [binding, setBinding] = useState("")
   const [error, setError] = useState<ApplicationError>()
   const [pending, setPending] = useState(false)
@@ -58,6 +62,13 @@ export function TranscriptWindowControls({
         if (disposed) return
         setShortcut(current)
         setBinding(current.binding)
+      })
+      .catch((caught: unknown) => {
+        if (!disposed) setError(toApplicationError(caught))
+      })
+    void getTranscriptWindowInteraction()
+      .then((current) => {
+        if (!disposed) setInteraction(current)
       })
       .catch((caught: unknown) => {
         if (!disposed) setError(toApplicationError(caught))
@@ -101,6 +112,10 @@ export function TranscriptWindowControls({
     })
     setShortcut(next)
     setBinding(next.binding)
+  }
+
+  async function updateInteraction(changes: { clickThrough: boolean }) {
+    setInteraction(await setTranscriptWindowInteraction(changes))
   }
 
   if (collapsed) return null
@@ -230,6 +245,25 @@ export function TranscriptWindowControls({
       <p className="text-muted-foreground mt-1 text-xs">
         Needs Ctrl, Alt, or Win. The same shortcut hides and shows the window,
         and <strong>Pop out</strong> always brings it back.
+      </p>
+
+      <label className="mt-3 flex items-start gap-2 text-xs">
+        <input
+          checked={interaction?.clickThrough ?? false}
+          disabled={pending || !interaction}
+          onChange={(event) =>
+            void run(() =>
+              updateInteraction({ clickThrough: event.target.checked }),
+            )
+          }
+          type="checkbox"
+        />
+        <span>Let clicks pass through the transcript window</span>
+      </label>
+      <p className="text-muted-foreground mt-1 text-xs">
+        The window stops accepting the mouse entirely — you cannot move, resize,
+        or close it while this is on. Turn it off here; it also switches off if
+        this window closes, and never survives a restart.
       </p>
 
       {error && (

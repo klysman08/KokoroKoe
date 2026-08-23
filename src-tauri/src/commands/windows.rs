@@ -1,30 +1,49 @@
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
-    domain::{AppError, CommandError},
+    domain::{
+        AppError, CommandError, SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance,
+    },
     logging,
     security::authorize_main_window,
-    windows,
+    windows::TranscriptWindowService,
 };
 
 #[tauri::command]
 pub(crate) async fn open_transcript_window<R: tauri::Runtime>(
     webview_window: WebviewWindow<R>,
     app: AppHandle<R>,
+    state: State<'_, TranscriptWindowService>,
 ) -> Result<(), CommandError> {
-    authorized(webview_window.label(), || {
-        windows::open_transcript_window(&app)
-    })
-    .map_err(record_error)
+    authorized(webview_window.label(), || state.inner().clone().open(&app)).map_err(record_error)
 }
 
 #[tauri::command]
 pub(crate) async fn close_transcript_window<R: tauri::Runtime>(
     webview_window: WebviewWindow<R>,
     app: AppHandle<R>,
+    state: State<'_, TranscriptWindowService>,
 ) -> Result<(), CommandError> {
+    authorized(webview_window.label(), || state.inner().clone().close(&app)).map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn get_transcript_window_appearance<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, TranscriptWindowService>,
+) -> Result<TranscriptWindowAppearance, CommandError> {
+    authorized(webview_window.label(), || state.inner().appearance()).map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn set_transcript_window_appearance<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    app: AppHandle<R>,
+    state: State<'_, TranscriptWindowService>,
+    request: SetTranscriptWindowAppearanceRequest,
+) -> Result<TranscriptWindowAppearance, CommandError> {
     authorized(webview_window.label(), || {
-        windows::close_transcript_window(&app)
+        state.inner().clone().apply(&app, request)
     })
     .map_err(record_error)
 }
@@ -48,8 +67,9 @@ mod tests {
 
     use crate::domain::AppError;
 
-    /// The transcript window must never be able to open or close windows
-    /// itself, so its own label is rejected alongside every other non-main one.
+    /// The transcript window must never be able to open, close, or restyle a
+    /// window itself, so its own label is rejected alongside every other
+    /// non-main one.
     #[test]
     fn window_commands_authorize_before_touching_any_window() {
         let operations = AtomicUsize::new(0);

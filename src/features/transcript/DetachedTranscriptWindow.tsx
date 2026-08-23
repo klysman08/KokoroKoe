@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import type { UnlistenFn } from "@tauri-apps/api/event"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -23,11 +24,14 @@ import {
   reduceLiveRecords,
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
+import type { TranscriptWindowAppearance } from "@/contracts/windows"
 import {
   listenToSessionTranscriptionFinals,
   listenToSessionTranscriptionGaps,
   listenToSessionTranscriptionPartials,
 } from "@/lib/tauri/sessions"
+import { listenToTranscriptWindowAppearance } from "@/lib/tauri/windows"
+import { cn } from "@/lib/utils"
 
 type ScopedTranscriptEvent =
   | SessionTranscriptionPartial
@@ -46,6 +50,26 @@ export function DetachedTranscriptWindow() {
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const [scope, setScope] = useState<{ sessionId: string }>()
   const [error, setError] = useState<ApplicationError>()
+  const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
+
+  useEffect(() => {
+    let disposed = false
+    let dispose: UnlistenFn | undefined
+    void listenToTranscriptWindowAppearance((next) => {
+      setAppearance(next)
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten()
+        else dispose = unlisten
+      })
+      .catch((caught: unknown) => {
+        if (!disposed) setError(toApplicationError(caught))
+      })
+    return () => {
+      disposed = true
+      dispose?.()
+    }
+  }, [])
 
   useEffect(() => {
     let disposed = false
@@ -78,61 +102,95 @@ export function DetachedTranscriptWindow() {
     }
   }, [])
 
+  const compact = appearance?.compact ?? false
+  // Only the background carries the alpha. Text and borders stay fully opaque
+  // so lowering opacity never costs readability.
+  const backgroundStyle = {
+    "--transcript-window-opacity": String(appearance?.backgroundOpacity ?? 1),
+  } as React.CSSProperties
+
   return (
-    <div className="bg-background text-foreground flex h-svh flex-col gap-2 p-3">
-      <header className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">Live transcript</p>
-        <Badge variant={scope ? "secondary" : "outline"}>
-          {scope ? "Receiving" : "Waiting for a Session"}
-        </Badge>
-      </header>
-      {error && <SanitizedErrorPanel error={error} />}
-      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border">
-        {records.length === 0 ? (
-          <div className="grid size-full place-items-center p-4 text-center">
-            <p className="text-muted-foreground text-xs">
-              Speech transcribed while this window is open appears here.
-            </p>
-          </div>
-        ) : (
-          <MessageScrollerProvider autoScroll>
-            <MessageScroller>
-              <MessageScrollerViewport>
-                <MessageScrollerContent className="gap-3 p-3">
-                  {records.map((record) => (
-                    <MessageScrollerItem
-                      key={
-                        record.kind === "segment"
-                          ? record.segment.id
-                          : record.id
-                      }
-                      messageId={
-                        record.kind === "segment"
-                          ? record.segment.id
-                          : record.id
-                      }
-                    >
-                      <DetachedRecord record={record} />
-                    </MessageScrollerItem>
-                  ))}
-                </MessageScrollerContent>
-              </MessageScrollerViewport>
-              <MessageScrollerButton />
-            </MessageScroller>
-          </MessageScrollerProvider>
+    <div
+      className="text-foreground relative flex h-svh flex-col"
+      data-compact={compact ? "true" : undefined}
+      data-testid="detached-transcript-window"
+      style={backgroundStyle}
+    >
+      <div
+        aria-hidden="true"
+        className="bg-background absolute inset-0 -z-10"
+        style={{ opacity: "var(--transcript-window-opacity)" }}
+      />
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col gap-2",
+          compact ? "p-1.5" : "p-3",
         )}
+      >
+        <header className="flex items-center justify-between gap-2">
+          <p className={cn("font-medium", compact ? "text-xs" : "text-sm")}>
+            Live transcript
+          </p>
+          <Badge variant={scope ? "secondary" : "outline"}>
+            {scope ? "Receiving" : "Waiting for a Session"}
+          </Badge>
+        </header>
+        {error && <SanitizedErrorPanel error={error} />}
+        <div className="min-h-0 flex-1 overflow-hidden rounded-lg border">
+          {records.length === 0 ? (
+            <div className="grid size-full place-items-center p-4 text-center">
+              <p className="text-muted-foreground text-xs">
+                Speech transcribed while this window is open appears here.
+              </p>
+            </div>
+          ) : (
+            <MessageScrollerProvider autoScroll>
+              <MessageScroller>
+                <MessageScrollerViewport>
+                  <MessageScrollerContent
+                    className={cn(compact ? "gap-1.5 p-1.5" : "gap-3 p-3")}
+                  >
+                    {records.map((record) => (
+                      <MessageScrollerItem
+                        key={
+                          record.kind === "segment"
+                            ? record.segment.id
+                            : record.id
+                        }
+                        messageId={
+                          record.kind === "segment"
+                            ? record.segment.id
+                            : record.id
+                        }
+                      >
+                        <DetachedRecord compact={compact} record={record} />
+                      </MessageScrollerItem>
+                    ))}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+              </MessageScroller>
+            </MessageScrollerProvider>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-function DetachedRecord({ record }: { record: TranscriptRecord }) {
+function DetachedRecord({
+  compact,
+  record,
+}: {
+  compact: boolean
+  record: TranscriptRecord
+}) {
   const source =
     record.kind === "segment" ? record.segment.source : record.source
   const startMs =
     record.kind === "segment" ? record.segment.startMs : record.startMs
   return (
-    <article className="space-y-1">
+    <article className={cn(compact ? "space-y-0.5" : "space-y-1")}>
       <div className="text-muted-foreground flex items-center gap-2 text-xs">
         <span className="text-foreground font-medium">
           {source === "microphone" ? "You" : "System"}
@@ -143,7 +201,12 @@ function DetachedRecord({ record }: { record: TranscriptRecord }) {
         )}
       </div>
       {record.kind === "segment" ? (
-        <p className="text-sm leading-6 break-words whitespace-pre-wrap">
+        <p
+          className={cn(
+            "break-words whitespace-pre-wrap",
+            compact ? "text-xs leading-5" : "text-sm leading-6",
+          )}
+        >
           {record.segment.text}
         </p>
       ) : (

@@ -29,14 +29,14 @@ describe("DetachedTranscriptWindow", () => {
   it("subscribes to session events without invoking any command", async () => {
     render(<DetachedTranscriptWindow />)
 
-    await waitFor(() => expect(listeners.size).toBe(3))
+    await waitFor(() => expect(listeners.size).toBe(4))
     expect(invoke).not.toHaveBeenCalled()
     expect(screen.getByText(/waiting for a session/i)).toBeInTheDocument()
   })
 
   it("renders a scoped final segment that arrives while it is open", async () => {
     render(<DetachedTranscriptWindow />)
-    await waitFor(() => expect(listeners.size).toBe(3))
+    await waitFor(() => expect(listeners.size).toBe(4))
 
     const handler = listeners.get("session-transcription-final")
     expect(handler).toBeDefined()
@@ -51,5 +51,45 @@ describe("DetachedTranscriptWindow", () => {
     )
     expect(screen.getByText(/receiving/i)).toBeInTheDocument()
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  /// The window holds no command permission, so its appearance can only reach
+  /// it through the Rust-owned event.
+  it("applies the appearance it receives without invoking a command", async () => {
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(4))
+
+    listeners.get("transcript-window-appearance")?.({
+      payload: {
+        schemaVersion: 1,
+        backgroundOpacity: 0.45,
+        alwaysOnTop: true,
+        compact: true,
+      },
+    })
+
+    const surface = await screen.findByTestId("detached-transcript-window")
+    await waitFor(() =>
+      expect(surface).toHaveStyle({ "--transcript-window-opacity": "0.45" }),
+    )
+    expect(surface).toHaveAttribute("data-compact", "true")
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("ignores an appearance payload outside the readable range", async () => {
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(4))
+
+    listeners.get("transcript-window-appearance")?.({
+      payload: {
+        schemaVersion: 1,
+        backgroundOpacity: 0,
+        alwaysOnTop: false,
+        compact: false,
+      },
+    })
+
+    const surface = await screen.findByTestId("detached-transcript-window")
+    expect(surface).toHaveStyle({ "--transcript-window-opacity": "1" })
   })
 })

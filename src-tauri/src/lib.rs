@@ -24,6 +24,7 @@ use persistence::{ProjectService, SessionService, SettingsService, TranscriptSer
 use security::CredentialService;
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
+use windows::TranscriptWindowService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
 
@@ -86,6 +87,7 @@ pub fn run() {
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(AudioDeviceTestService::default());
+            app.manage(TranscriptWindowService::default());
             #[cfg(windows)]
             {
                 let worker_executable_path = std::env::current_exe()
@@ -139,6 +141,8 @@ pub fn run() {
             commands::summaries::generate_session_summary,
             commands::windows::open_transcript_window,
             commands::windows::close_transcript_window,
+            commands::windows::get_transcript_window_appearance,
+            commands::windows::set_transcript_window_appearance,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

@@ -35,6 +35,8 @@
     "allow-generate-session-summary",
     "allow-open-transcript-window",
     "allow-close-transcript-window",
+    "allow-get-transcript-window-appearance",
+    "allow-set-transcript-window-appearance",
     "allow-list-audio-devices",
     "allow-start-audio-device-test",
     "allow-stop-audio-device-test",

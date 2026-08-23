@@ -9,6 +9,7 @@ mod settings;
 mod summaries;
 mod transcription;
 mod transcripts;
+mod windows;
 
 pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
 pub(crate) use error::{AppError, CommandError};
@@ -48,3 +49,4 @@ pub(crate) use transcripts::{
     TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
     TranscriptSearchQuery, TranscriptSegmentStatus, TranscriptSegmentView,
 };
+pub(crate) use windows::{SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance};

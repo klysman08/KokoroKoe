@@ -107,8 +107,9 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 
 - The detached transcript window holds an event-subscription-only capability: it can invoke no command, read no file, reach no network, and manage no window. It receives the same locally emitted transcript events the main window does and displays them; nothing leaves the machine because a second window is open.
 - A detached window shows only transcript records emitted while it is open. Opening it partway through a Session does not replay earlier speech; the saved transcript remains the record of the whole Session.
-- The detached window displays transcript text on screen in its own frame. It has no opacity, always-on-top, compact mode, or quick-hide control yet, so consider who can see the display before opening it in a shared or screen-shared environment.
-- Window position and size are not remembered between openings.
+- The detached window displays transcript text on screen in its own frame. Background opacity, always-on-top, and compact mode are available, but there is no quick-hide control yet, so consider who can see the display before opening it in a shared or screen-shared environment.
+- Lowering opacity dims the window background only; transcript text stays fully opaque and readable. Opacity cannot be reduced below a readable floor, so the window can never be made invisible and unrecoverable. A translucent window still shows transcript text over whatever is behind it, which can make that text visible in a screen recording of another application.
+- Window appearance is remembered only while the application is running, and window position and size are not remembered at all.
 
 ## Desktop-window limitations
 

@@ -32,18 +32,19 @@ to OpenRouter, and only when you ask for it.
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
   of the transcript it covered, and can be regenerated.
-
 - **Detached transcript window.** Pop the live transcript into its own window during a Session, with
   background opacity, always-on-top, and compact mode. Opacity dims the background only, so text
-  stays fully readable, and it cannot be lowered past a readable floor. The window is created by
-  Rust and holds an event-subscription-only capability: it can invoke no command and read no file.
+  stays fully readable, and it cannot be lowered past a readable floor. Position, size, and
+  appearance are remembered between runs, and a window left on a display that is later disconnected
+  returns to a centered default instead of reopening off-screen. The window is created by Rust and
+  holds an event-subscription-only capability: it can invoke no command and read no file.
 
 ## Not implemented yet
 
 - The rolling in-session summary that accumulates while a Session runs; only the final summary
   exists today.
-- Quick-hide, configurable keyboard shortcuts, monitor preference, and persisted window position,
-  size, and appearance. Window appearance currently resets when the application restarts.
+- Quick-hide, configurable keyboard shortcuts, and an explicit monitor picker. Position, size, and
+  appearance are already remembered between runs.
 - The separate insights window, and the per-segment transcript actions from the Manifest.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.

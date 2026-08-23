@@ -109,7 +109,8 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 - A detached window shows only transcript records emitted while it is open. Opening it partway through a Session does not replay earlier speech; the saved transcript remains the record of the whole Session.
 - The detached window displays transcript text on screen in its own frame. Background opacity, always-on-top, and compact mode are available, but there is no quick-hide control yet, so consider who can see the display before opening it in a shared or screen-shared environment.
 - Lowering opacity dims the window background only; transcript text stays fully opaque and readable. Opacity cannot be reduced below a readable floor, so the window can never be made invisible and unrecoverable. A translucent window still shows transcript text over whatever is behind it, which can make that text visible in a screen recording of another application.
-- Window appearance is remembered only while the application is running, and window position and size are not remembered at all.
+- The transcript window's appearance, position, and size are remembered between runs in the local non-secret settings database. This records only window geometry and appearance: no transcript text, session identity, or project content is stored with it. Deleting the local settings database resets it.
+- A remembered position is restored only when a currently attached monitor still shows a grabbable portion of the window, so disconnecting a display cannot leave the window stranded off-screen.
 
 ## Desktop-window limitations
 

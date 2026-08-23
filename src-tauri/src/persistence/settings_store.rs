@@ -11,14 +11,18 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    domain::{AppError, AppSettings, AppSettingsUpdate, ModelDownloadJob, WorkspaceStatus},
+    domain::{
+        AppError, AppSettings, AppSettingsUpdate, ModelDownloadJob, TranscriptWindowState,
+        WorkspaceStatus,
+    },
     security::{prepare_foundation_workspace, probe_workspace, validate_workspace_path_syntax},
 };
 
 const FOUNDATION_MIGRATION: &str = include_str!("../../migrations/0001_foundation.sql");
 const MODEL_STATE_MIGRATION: &str = include_str!("../../migrations/0002_model_state.sql");
+const WINDOW_STATE_MIGRATION: &str = include_str!("../../migrations/0003_window_state.sql");
 const SETTINGS_DATABASE_NAME: &str = "kokorokoe.sqlite3";
-const SETTINGS_SCHEMA_VERSION: u32 = 2;
+const SETTINGS_SCHEMA_VERSION: u32 = 3;
 const MAX_MODEL_JOB_SNAPSHOTS: usize = 64;
 
 #[derive(Clone)]
@@ -162,6 +166,69 @@ impl SettingsService {
                 }
             }
             Ok(jobs)
+        })
+    }
+
+    /// Reads a window's remembered state.
+    ///
+    /// A missing or unreadable row yields `None` rather than an error: window
+    /// state is a convenience, and a corrupt row must never stop a window from
+    /// opening. Invalid rows are discarded so the next save starts clean.
+    pub(crate) fn load_window_state(
+        &self,
+        window_label: &str,
+    ) -> Result<Option<TranscriptWindowState>, AppError> {
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            let stored = connection
+                .query_row(
+                    "SELECT state_json FROM window_state WHERE window_label = ?1",
+                    params![window_label],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(map_model_sqlite_error)?;
+            let Some(json) = stored else {
+                return Ok(None);
+            };
+            match serde_json::from_str::<TranscriptWindowState>(&json) {
+                Ok(state) => Ok(Some(state)),
+                Err(_) => {
+                    connection
+                        .execute(
+                            "DELETE FROM window_state WHERE window_label = ?1",
+                            params![window_label],
+                        )
+                        .map_err(map_model_sqlite_error)?;
+                    tracing::warn!("invalid window state discarded");
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    pub(crate) fn save_window_state(
+        &self,
+        window_label: &str,
+        state: &TranscriptWindowState,
+        updated_at: &str,
+    ) -> Result<(), AppError> {
+        state.validate().map_err(AppError::window_error)?;
+        let json = serde_json::to_string(state)
+            .map_err(|_| AppError::window_error("window_state_invalid"))?;
+        let _operation = self.lock_operation()?;
+        self.with_database_recovery(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO window_state (window_label, state_json, updated_at)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(window_label) DO UPDATE SET
+                       state_json = excluded.state_json,
+                       updated_at = excluded.updated_at",
+                    params![window_label, json, updated_at],
+                )
+                .map_err(map_model_sqlite_error)?;
+            Ok(())
         })
     }
 
@@ -366,6 +433,7 @@ fn ensure_schema(connection: &mut Connection, initial_version: u32) -> Result<()
             transaction
                 .execute_batch(FOUNDATION_MIGRATION)
                 .and_then(|()| transaction.execute_batch(MODEL_STATE_MIGRATION))
+                .and_then(|()| transaction.execute_batch(WINDOW_STATE_MIGRATION))
                 .and_then(|()| {
                     transaction.pragma_update(None, "user_version", SETTINGS_SCHEMA_VERSION)
                 })
@@ -379,6 +447,7 @@ fn ensure_schema(connection: &mut Connection, initial_version: u32) -> Result<()
         1 => {
             transaction
                 .execute_batch(MODEL_STATE_MIGRATION)
+                .and_then(|()| transaction.execute_batch(WINDOW_STATE_MIGRATION))
                 .map_err(|error| {
                     map_sqlite_read_error(error, "The model-state migration did not complete.")
                 })?;
@@ -386,6 +455,18 @@ fn ensure_schema(connection: &mut Connection, initial_version: u32) -> Result<()
                 .pragma_update(None, "user_version", SETTINGS_SCHEMA_VERSION)
                 .map_err(|error| {
                     map_sqlite_read_error(error, "The model-state migration did not complete.")
+                })?;
+        }
+        2 => {
+            transaction
+                .execute_batch(WINDOW_STATE_MIGRATION)
+                .map_err(|error| {
+                    map_sqlite_read_error(error, "The window-state migration did not complete.")
+                })?;
+            transaction
+                .pragma_update(None, "user_version", SETTINGS_SCHEMA_VERSION)
+                .map_err(|error| {
+                    map_sqlite_read_error(error, "The window-state migration did not complete.")
                 })?;
         }
         SETTINGS_SCHEMA_VERSION => {}
@@ -657,8 +738,13 @@ mod tests {
         },
     };
 
-    use super::{SETTINGS_DATABASE_NAME, SettingsService, schema_version};
-    use crate::domain::{AppSettingsUpdate, ModelContractFixture, RequestId};
+    use super::{
+        FOUNDATION_MIGRATION, MODEL_STATE_MIGRATION, SETTINGS_DATABASE_NAME,
+        SETTINGS_SCHEMA_VERSION, SettingsService, schema_version,
+    };
+    use crate::domain::{
+        AppSettingsUpdate, ModelContractFixture, RequestId, TranscriptWindowState,
+    };
     use rusqlite::Connection;
 
     struct TestService {
@@ -856,6 +942,64 @@ mod tests {
         assert_eq!(validations.load(Ordering::SeqCst), 0);
     }
 
+    /// Existing installations carry a version-2 database. Opening one must add
+    /// the window-state table without disturbing the settings already stored.
+    #[test]
+    fn an_existing_database_upgrades_to_the_window_state_schema() {
+        let app_data = tempfile::tempdir().unwrap();
+        let documents = tempfile::tempdir().unwrap();
+        let database_path = app_data.path().join(SETTINGS_DATABASE_NAME);
+        {
+            let mut connection = Connection::open(&database_path).unwrap();
+            connection
+                .execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;")
+                .unwrap();
+            let transaction = connection.transaction().unwrap();
+            transaction.execute_batch(FOUNDATION_MIGRATION).unwrap();
+            transaction.execute_batch(MODEL_STATE_MIGRATION).unwrap();
+            transaction.pragma_update(None, "user_version", 2).unwrap();
+            transaction.commit().unwrap();
+        }
+        let seeded = SettingsService::open(
+            app_data.path().to_path_buf(),
+            documents.path().to_path_buf(),
+        )
+        .unwrap();
+        seeded.update_settings(0, update_fixture()).unwrap();
+        let before = seeded.get_settings().unwrap();
+
+        let upgraded = SettingsService::open(
+            app_data.path().to_path_buf(),
+            documents.path().to_path_buf(),
+        )
+        .unwrap();
+        upgraded
+            .save_window_state(
+                "transcript",
+                &TranscriptWindowState::default(),
+                "2026-08-23T10:00:00Z",
+            )
+            .unwrap();
+
+        assert_eq!(upgraded.get_settings().unwrap(), before);
+        assert!(
+            upgraded.load_window_state("transcript").unwrap().is_some(),
+            "the upgraded database must accept window state"
+        );
+        let connection = Connection::open(&database_path).unwrap();
+        assert_eq!(
+            schema_version(&connection).unwrap(),
+            SETTINGS_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn an_absent_window_state_row_reads_as_none() {
+        let service = service();
+
+        assert!(service.load_window_state("transcript").unwrap().is_none());
+    }
+
     #[test]
     fn concurrent_first_open_migrates_once() {
         let app_data = tempfile::tempdir().unwrap();
@@ -913,7 +1057,7 @@ mod tests {
         let documents = tempfile::tempdir().unwrap();
         let database_path = app_data.path().join(SETTINGS_DATABASE_NAME);
         let connection = Connection::open(&database_path).unwrap();
-        connection.pragma_update(None, "user_version", 3).unwrap();
+        connection.pragma_update(None, "user_version", 4).unwrap();
         let before_mode: String = connection
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
@@ -932,7 +1076,7 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
         assert_eq!(before_mode, after_mode);
-        assert_eq!(schema_version(&connection).unwrap(), 3);
+        assert_eq!(schema_version(&connection).unwrap(), 4);
     }
 
     #[test]

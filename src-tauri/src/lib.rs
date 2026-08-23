@@ -87,7 +87,9 @@ pub fn run() {
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(AudioDeviceTestService::default());
-            app.manage(TranscriptWindowService::default());
+            app.manage(TranscriptWindowService::new(
+                app.state::<SettingsService>().inner().clone(),
+            ));
             #[cfg(windows)]
             {
                 let worker_executable_path = std::env::current_exe()

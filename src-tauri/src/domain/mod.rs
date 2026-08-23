@@ -49,4 +49,7 @@ pub(crate) use transcripts::{
     TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
     TranscriptSearchQuery, TranscriptSegmentStatus, TranscriptSegmentView,
 };
-pub(crate) use windows::{SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance};
+pub(crate) use windows::{
+    SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance, TranscriptWindowGeometry,
+    TranscriptWindowState,
+};

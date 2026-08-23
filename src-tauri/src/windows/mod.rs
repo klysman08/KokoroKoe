@@ -1,8 +1,20 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
+    WebviewWindowBuilder, WindowEvent,
+};
 
-use crate::domain::{AppError, SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance};
+use crate::{
+    domain::{
+        AppError, SetTranscriptWindowAppearanceRequest, TranscriptWindowAppearance,
+        TranscriptWindowGeometry, TranscriptWindowState, now_rfc3339,
+    },
+    persistence::SettingsService,
+};
 
 /// The detached live-transcript window.
 ///
@@ -17,38 +29,78 @@ const TRANSCRIPT_WINDOW_HEIGHT: f64 = 720.0;
 const TRANSCRIPT_WINDOW_MIN_WIDTH: f64 = 360.0;
 const TRANSCRIPT_WINDOW_MIN_HEIGHT: f64 = 320.0;
 
+/// Dragging a window emits a continuous stream of move events. Geometry is kept
+/// in memory and written at most this often, plus once when the window closes.
+const GEOMETRY_WRITE_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Carries the appearance to the transcript window, which holds only event
 /// permissions and therefore cannot request it.
 pub(crate) const TRANSCRIPT_WINDOW_APPEARANCE_EVENT: &str = "transcript-window-appearance";
 
-/// Rust-owned appearance state for the transcript window.
+#[derive(Default)]
+struct WindowRuntime {
+    state: TranscriptWindowState,
+    loaded: bool,
+    last_write: Option<Instant>,
+}
+
+/// Rust-owned appearance and geometry for the transcript window.
 ///
 /// The transcript window never invokes a command, so every value it renders
 /// arrives through the appearance event: on page load for the initial state,
 /// and on each accepted change afterwards.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct TranscriptWindowService {
-    appearance: Arc<Mutex<TranscriptWindowAppearance>>,
+    settings: SettingsService,
+    runtime: Arc<Mutex<WindowRuntime>>,
 }
 
 impl TranscriptWindowService {
-    pub(crate) fn appearance(&self) -> Result<TranscriptWindowAppearance, AppError> {
-        self.appearance
+    pub(crate) fn new(settings: SettingsService) -> Self {
+        Self {
+            settings,
+            runtime: Arc::new(Mutex::new(WindowRuntime::default())),
+        }
+    }
+
+    fn locked(&self) -> Result<std::sync::MutexGuard<'_, WindowRuntime>, AppError> {
+        self.runtime
             .lock()
-            .map(|appearance| *appearance)
             .map_err(|_| AppError::window_error("window_appearance_unavailable"))
     }
 
-    fn store(
-        &self,
-        appearance: TranscriptWindowAppearance,
-    ) -> Result<TranscriptWindowAppearance, AppError> {
-        let mut current = self
-            .appearance
-            .lock()
-            .map_err(|_| AppError::window_error("window_appearance_unavailable"))?;
-        *current = appearance;
-        Ok(appearance)
+    /// Loads persisted state once per process. A failed or absent read leaves
+    /// the defaults in place: remembered state is a convenience and must never
+    /// prevent the window from opening.
+    fn hydrated(&self) -> Result<TranscriptWindowState, AppError> {
+        {
+            let runtime = self.locked()?;
+            if runtime.loaded {
+                return Ok(runtime.state);
+            }
+        }
+        let stored = self
+            .settings
+            .load_window_state(TRANSCRIPT_WINDOW_LABEL)
+            .unwrap_or(None);
+        let mut runtime = self.locked()?;
+        if !runtime.loaded {
+            if let Some(state) = stored {
+                runtime.state = state;
+            }
+            runtime.loaded = true;
+        }
+        Ok(runtime.state)
+    }
+
+    pub(crate) fn appearance(&self) -> Result<TranscriptWindowAppearance, AppError> {
+        Ok(self.hydrated()?.appearance)
+    }
+
+    fn persist(&self, state: TranscriptWindowState) -> Result<(), AppError> {
+        let updated_at = now_rfc3339()?;
+        self.settings
+            .save_window_state(TRANSCRIPT_WINDOW_LABEL, &state, &updated_at)
     }
 
     /// Applies an accepted appearance: the native always-on-top flag directly,
@@ -60,14 +112,20 @@ impl TranscriptWindowService {
         request: SetTranscriptWindowAppearanceRequest,
     ) -> Result<TranscriptWindowAppearance, AppError> {
         request.validate().map_err(AppError::window_error)?;
-        let appearance = self.store(request.into_appearance())?;
+        self.hydrated()?;
+        let state = {
+            let mut runtime = self.locked()?;
+            runtime.state.appearance = request.into_appearance();
+            runtime.state
+        };
         if let Some(window) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
             window
-                .set_always_on_top(appearance.always_on_top)
+                .set_always_on_top(state.appearance.always_on_top)
                 .map_err(|_| AppError::window_error("window_always_on_top_failed"))?;
         }
-        self.publish(app, appearance)?;
-        Ok(appearance)
+        self.publish(app, state.appearance)?;
+        self.persist(state)?;
+        Ok(state.appearance)
     }
 
     fn publish<R: Runtime>(
@@ -77,6 +135,32 @@ impl TranscriptWindowService {
     ) -> Result<(), AppError> {
         app.emit(TRANSCRIPT_WINDOW_APPEARANCE_EVENT, appearance)
             .map_err(|_| AppError::window_error("window_appearance_publish_failed"))
+    }
+
+    /// Records observed geometry, writing through at most once per interval so
+    /// a drag does not become a stream of database writes.
+    fn record_geometry(&self, geometry: TranscriptWindowGeometry, force: bool) {
+        if geometry.validate().is_err() {
+            return;
+        }
+        let Ok(mut runtime) = self.runtime.lock() else {
+            return;
+        };
+        if runtime.state.geometry == Some(geometry) && !force {
+            return;
+        }
+        runtime.state.geometry = Some(geometry);
+        let due = force
+            || runtime
+                .last_write
+                .is_none_or(|last| last.elapsed() >= GEOMETRY_WRITE_INTERVAL);
+        if !due {
+            return;
+        }
+        runtime.last_write = Some(Instant::now());
+        let state = runtime.state;
+        drop(runtime);
+        let _ = self.persist(state);
     }
 
     /// Opens the transcript window, or focuses it when it already exists.
@@ -92,10 +176,15 @@ impl TranscriptWindowService {
                 .map_err(|_| AppError::window_error("window_focus_failed"))?;
             return Ok(());
         }
-        let appearance = self.appearance()?;
-        let service = self.clone();
+        let state = self.hydrated()?;
+        let restored = state.geometry.filter(|geometry| reachable(app, *geometry));
+        let publisher = self.clone();
         let published = app.clone();
-        WebviewWindowBuilder::new(
+        let observer = self.clone();
+
+        // Built hidden so a restored position is applied before the window is
+        // ever painted, avoiding a visible jump from the default placement.
+        let window = WebviewWindowBuilder::new(
             app,
             TRANSCRIPT_WINDOW_LABEL,
             WebviewUrl::App(TRANSCRIPT_WINDOW_URL.into()),
@@ -104,19 +193,49 @@ impl TranscriptWindowService {
         .inner_size(TRANSCRIPT_WINDOW_WIDTH, TRANSCRIPT_WINDOW_HEIGHT)
         .min_inner_size(TRANSCRIPT_WINDOW_MIN_WIDTH, TRANSCRIPT_WINDOW_MIN_HEIGHT)
         .resizable(true)
+        .visible(false)
         // Required for background opacity: the page paints its own translucent
         // background while text stays fully opaque.
         .transparent(true)
-        .always_on_top(appearance.always_on_top)
+        .always_on_top(state.appearance.always_on_top)
         // The window cannot ask for its appearance, so publish it once the page
         // is ready to receive the event.
         .on_page_load(move |_window, _payload| {
-            if let Ok(current) = service.appearance() {
-                let _ = service.publish(&published, current);
+            if let Ok(current) = publisher.appearance() {
+                let _ = publisher.publish(&published, current);
             }
         })
         .build()
         .map_err(|_| AppError::window_error("window_open_failed"))?;
+
+        if let Some(geometry) = restored {
+            let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
+            let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
+        } else {
+            let _ = window.set_size(LogicalSize::new(
+                TRANSCRIPT_WINDOW_WIDTH,
+                TRANSCRIPT_WINDOW_HEIGHT,
+            ));
+            let _ = window.center();
+        }
+        window
+            .show()
+            .map_err(|_| AppError::window_error("window_open_failed"))?;
+
+        let tracked = window.clone();
+        window.on_window_event(move |event| match event {
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                if let Some(geometry) = current_geometry(&tracked) {
+                    observer.record_geometry(geometry, false);
+                }
+            }
+            WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+                if let Some(geometry) = current_geometry(&tracked) {
+                    observer.record_geometry(geometry, true);
+                }
+            }
+            _ => {}
+        });
         Ok(())
     }
 
@@ -132,9 +251,56 @@ impl TranscriptWindowService {
     }
 }
 
+fn current_geometry<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Option<TranscriptWindowGeometry> {
+    let position = window.outer_position().ok()?;
+    let size = window.inner_size().ok()?;
+    Some(TranscriptWindowGeometry {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// A remembered position is only restored when a currently attached monitor
+/// still shows enough of the window to grab it. Otherwise the window would
+/// reopen on a display that is no longer there.
+fn reachable<R: Runtime>(app: &AppHandle<R>, geometry: TranscriptWindowGeometry) -> bool {
+    let Ok(monitors) = app.available_monitors() else {
+        return false;
+    };
+    monitors.iter().any(|monitor| {
+        let position = monitor.position();
+        let size = monitor.size();
+        geometry.is_reachable_on(position.x, position.y, size.width, size.height)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
     use super::*;
+
+    fn service() -> (tempfile::TempDir, TranscriptWindowService) {
+        let root = tempdir().unwrap();
+        let app_data = root.path().join("app-data");
+        let documents = root.path().join("documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        let settings = SettingsService::open(app_data, documents).unwrap();
+        (root, TranscriptWindowService::new(settings))
+    }
+
+    fn request(opacity: f64, always_on_top: bool) -> SetTranscriptWindowAppearanceRequest {
+        serde_json::from_value(serde_json::json!({
+            "backgroundOpacity": opacity,
+            "alwaysOnTop": always_on_top,
+            "compact": true
+        }))
+        .unwrap()
+    }
 
     #[test]
     fn the_transcript_window_target_is_fixed_and_local() {
@@ -146,8 +312,8 @@ mod tests {
     }
 
     #[test]
-    fn a_new_service_starts_fully_opaque_and_unpinned() {
-        let service = TranscriptWindowService::default();
+    fn a_service_without_stored_state_starts_fully_opaque_and_unpinned() {
+        let (_root, service) = service();
 
         let appearance = service.appearance().unwrap();
 
@@ -157,17 +323,118 @@ mod tests {
     }
 
     #[test]
-    fn stored_appearance_survives_for_the_next_window_that_opens() {
-        let service = TranscriptWindowService::default();
-        let request: SetTranscriptWindowAppearanceRequest = serde_json::from_value(
-            serde_json::json!({"backgroundOpacity": 0.5, "alwaysOnTop": true, "compact": true}),
-        )
-        .unwrap();
+    fn geometry_and_appearance_survive_a_restart() {
+        let (root, service) = service();
+        let app_data = root.path().join("app-data");
+        let documents = root.path().join("documents");
+        let geometry = TranscriptWindowGeometry {
+            x: -1_400,
+            y: 120,
+            width: 640,
+            height: 900,
+        };
 
-        let stored = service.store(request.into_appearance()).unwrap();
+        {
+            let mut runtime = service.locked().unwrap();
+            runtime.state.appearance = request(0.55, true).into_appearance();
+            runtime.loaded = true;
+        }
+        service.record_geometry(geometry, true);
+        let stored = service.persist(service.locked().unwrap().state);
+        stored.unwrap();
 
-        assert_eq!(stored, service.appearance().unwrap());
-        assert_eq!(service.appearance().unwrap().background_opacity, 0.5);
-        assert!(service.appearance().unwrap().always_on_top);
+        // A new process reads the same database.
+        let restarted =
+            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
+        let state = restarted.hydrated().unwrap();
+
+        assert_eq!(state.appearance.background_opacity, 0.55);
+        assert!(state.appearance.always_on_top);
+        assert!(state.appearance.compact);
+        assert_eq!(state.geometry, Some(geometry));
+    }
+
+    #[test]
+    fn repeated_moves_are_throttled_but_a_close_always_writes() {
+        let (_root, service) = service();
+        service.hydrated().unwrap();
+
+        for offset in 0..5 {
+            service.record_geometry(
+                TranscriptWindowGeometry {
+                    x: offset,
+                    y: 0,
+                    width: 520,
+                    height: 720,
+                },
+                false,
+            );
+        }
+        let after_moves = service.locked().unwrap().last_write;
+        assert!(after_moves.is_some(), "the first move writes immediately");
+
+        let final_geometry = TranscriptWindowGeometry {
+            x: 900,
+            y: 40,
+            width: 520,
+            height: 720,
+        };
+        service.record_geometry(final_geometry, true);
+
+        assert_eq!(
+            service.locked().unwrap().state.geometry,
+            Some(final_geometry)
+        );
+        assert_eq!(
+            service
+                .settings
+                .load_window_state(TRANSCRIPT_WINDOW_LABEL)
+                .unwrap()
+                .unwrap()
+                .geometry,
+            Some(final_geometry),
+            "closing must persist the last position even mid-throttle"
+        );
+    }
+
+    #[test]
+    fn absurd_geometry_is_never_recorded() {
+        let (_root, service) = service();
+        service.hydrated().unwrap();
+
+        service.record_geometry(
+            TranscriptWindowGeometry {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            true,
+        );
+
+        assert!(service.locked().unwrap().state.geometry.is_none());
+    }
+
+    #[test]
+    fn unreadable_stored_state_falls_back_to_defaults() {
+        let (root, service) = service();
+        let app_data = root.path().join("app-data");
+        let documents = root.path().join("documents");
+        service.hydrated().unwrap();
+        service
+            .settings
+            .save_window_state(
+                TRANSCRIPT_WINDOW_LABEL,
+                &TranscriptWindowState::default(),
+                "2026-08-23T10:00:00Z",
+            )
+            .unwrap();
+
+        let restarted =
+            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
+
+        let state = restarted.hydrated().unwrap();
+        assert_eq!(state.appearance.background_opacity, 1.0);
+        assert!(state.geometry.is_none());
     }
 }

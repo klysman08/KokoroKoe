@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "capabilities": ["main", "transcript"],
+      "capabilities": ["main", "transcript", "insights"],
       "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },

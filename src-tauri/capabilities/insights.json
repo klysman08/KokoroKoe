@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "insights",
+  "description": "Event-subscription-only capability for the detached KokoroKoe insights window. It grants no command, filesystem, HTTP, shell, process, or window-management permission.",
+  "windows": ["insights"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

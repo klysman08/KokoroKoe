@@ -42,14 +42,22 @@ to OpenRouter, and only when you ask for it.
   survives a restart, cannot be switched on without the main window, and switches off when the main
   window closes, so pointer control is always recoverable. The window is created by Rust and holds
   an event-subscription-only capability: it can invoke no command and read no file.
+- **Detached insights window.** Pop generated insights into their own window and read them one card
+  at a time with previous/next navigation, showing the type, confidence, and rationale. Generation
+  still happens only from an explicit click in the main window; the detached window holds the same
+  event-subscription-only capability, so it can neither request a generation nor retrieve an earlier
+  one.
 
 ## Not implemented yet
 
 - The rolling in-session summary that accumulates while a Session runs; only the final summary
   exists today.
-- An explicit monitor picker. Position, size, appearance, and the show/hide shortcut are already
-  remembered between runs.
-- The separate insights window, and the per-segment transcript actions from the Manifest.
+- An explicit monitor picker. The transcript window's position, size, appearance, and show/hide
+  shortcut are already remembered between runs.
+- Window controls for the insights window. Opacity, always-on-top, compact mode, persisted geometry,
+  the show/hide shortcut, and click-through currently exist only for the transcript window.
+- Pinning, dismissing, copying, and regenerating an individual insight, and the per-segment
+  transcript actions from the Manifest.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 

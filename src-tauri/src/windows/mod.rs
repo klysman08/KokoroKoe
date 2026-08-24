@@ -9,6 +9,7 @@ use tauri::{
 };
 
 mod hotkey;
+mod insights;
 
 use crate::{
     domain::{
@@ -21,6 +22,7 @@ use crate::{
 };
 
 use hotkey::HotkeyController;
+pub(crate) use insights::InsightsWindowService;
 
 /// The detached live-transcript window.
 ///

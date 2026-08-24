@@ -112,6 +112,36 @@ impl RecentInsight {
     }
 }
 
+/// The insight batch as the detached insights window receives it.
+///
+/// It carries the insights and the scope they belong to and nothing else. Cost,
+/// budget, attempt counts, and repair accounting stay in the reply to the main
+/// window, which is the surface that asked for the work and the only one that
+/// can act on those numbers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionInsightsPublication {
+    pub(crate) schema_version: u8,
+    pub(crate) request_id: RequestId,
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) insights: Vec<RecentInsight>,
+}
+
+impl SessionInsightsPublication {
+    /// Built only from an already validated response, so the window can never
+    /// receive a batch the command itself would have rejected.
+    pub(crate) fn from_response(response: &RecentInsightsResponse) -> Self {
+        Self {
+            schema_version: 1,
+            request_id: response.request_id,
+            project_id: response.project_id,
+            session_id: response.session_id,
+            insights: response.insights.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RecentInsightsResponse {
@@ -246,6 +276,46 @@ mod tests {
             "../../../fixtures/contracts/recent-insights-v1.json"
         ))
         .unwrap()
+    }
+
+    /// The detached insights window is a display surface. It gets the insights
+    /// and their scope; cost, budget, and retry accounting stay with the main
+    /// window, which is the only surface that asked and the only one that can
+    /// act on them.
+    #[test]
+    fn the_published_batch_carries_no_cost_or_retry_accounting() {
+        let fixture = fixture();
+        let response: RecentInsightsResponse =
+            serde_json::from_value(fixture["response"].clone()).unwrap();
+        response.validate().unwrap();
+
+        let publication = SessionInsightsPublication::from_response(&response);
+
+        assert_eq!(publication.schema_version, 1);
+        assert_eq!(publication.insights, response.insights);
+        let serialized = serde_json::to_value(&publication).unwrap();
+        let mut keys = serialized
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "insights",
+                "projectId",
+                "requestId",
+                "schemaVersion",
+                "sessionId"
+            ]
+        );
+        let text = serialized.to_string();
+        assert!(!text.contains(&response.session_actual_cost_usd));
+        assert!(!text.contains(&response.available_budget_usd));
+        assert!(!text.contains("Usage"));
+        assert!(!text.contains("Attempts"));
     }
 
     #[test]

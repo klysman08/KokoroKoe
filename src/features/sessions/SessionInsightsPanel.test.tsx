@@ -101,4 +101,47 @@ describe("SessionInsightsPanel", () => {
       ),
     )
   })
+
+  /// The window is Rust-owned: the control sends nothing that could name or
+  /// redirect a webview.
+  it("pops the insights window out without sending any argument", async () => {
+    invokeMock.mockResolvedValue(undefined)
+    renderPanel()
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pop out insights/i }),
+    )
+    await userEvent.click(
+      screen.getByRole("button", { name: /close insights window/i }),
+    )
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["open_insights_window"],
+      ["close_insights_window"],
+    ])
+  })
+
+  it("shows a sanitized failure when the window cannot open", async () => {
+    invokeMock.mockRejectedValue({
+      error: {
+        code: "window_open_failed",
+        userMessage: "KokoroKoe could not open the transcript window.",
+        technicalDetail: "window_open_failed",
+        severity: "error",
+        retryable: true,
+        correlationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      },
+    })
+    renderPanel()
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pop out insights/i }),
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /could not open the transcript window/i,
+      ),
+    )
+  })
 })

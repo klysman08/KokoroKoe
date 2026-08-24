@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Lightbulb } from "lucide-react"
+import { Lightbulb, PanelRightClose, PanelRightOpen } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,25 +9,16 @@ import {
 } from "@/contracts/app-error"
 import {
   generateRecentInsightsRequestSchema,
-  type InsightType,
   type RecentInsightsResponse,
 } from "@/contracts/insights"
 import type { Project, Session } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
-import { generateRecentInsights } from "@/lib/tauri/insights"
-
-const INSIGHT_LABELS: Record<InsightType, string> = {
-  suggested_response: "Suggested response",
-  follow_up_question: "Follow-up question",
-  clarification: "Clarification",
-  fact_or_number: "Fact or number",
-  risk: "Risk",
-  objection: "Objection",
-  decision: "Decision",
-  action_item: "Action item",
-  contradiction: "Contradiction",
-  unaddressed_topic: "Unaddressed topic",
-}
+import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
+import {
+  closeInsightsWindow,
+  generateRecentInsights,
+  openInsightsWindow,
+} from "@/lib/tauri/insights"
 
 /**
  * Transient recent-transcript insights for one active Session.
@@ -71,20 +62,50 @@ export function SessionInsightsPanel({
     <section aria-label={`Recent insights for ${session.title}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-xs font-medium">Recent insights</p>
-        <Button
-          disabled={pending}
-          onClick={() => void generate()}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Lightbulb aria-hidden="true" />
-          {pending ? "Generating…" : "Generate insights"}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            disabled={pending}
+            onClick={() => void generate()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Lightbulb aria-hidden="true" />
+            {pending ? "Generating…" : "Generate insights"}
+          </Button>
+          <Button
+            aria-label="Pop out insights"
+            onClick={() =>
+              void openInsightsWindow().catch((caught: unknown) =>
+                setError(toApplicationError(caught)),
+              )
+            }
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <PanelRightOpen />
+          </Button>
+          <Button
+            aria-label="Close insights window"
+            onClick={() =>
+              void closeInsightsWindow().catch((caught: unknown) =>
+                setError(toApplicationError(caught)),
+              )
+            }
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <PanelRightClose />
+          </Button>
+        </div>
       </div>
       <p className="text-muted-foreground mb-2 text-xs">
         Sends only the most recent finalized transcript text to the Session's
-        insights model. Results are shown once and are never saved.
+        insights model. Results are shown once and are never saved. Popping the
+        insights out shows each generated batch in its own window, one insight
+        at a time.
       </p>
       {error && <SanitizedErrorPanel error={error} />}
       {response && (

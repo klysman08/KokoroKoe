@@ -8,7 +8,7 @@ use crate::{
     },
     logging,
     security::authorize_main_window,
-    windows::TranscriptWindowService,
+    windows::{InsightsWindowService, TranscriptWindowService},
 };
 
 #[tauri::command]
@@ -91,6 +91,24 @@ pub(crate) async fn set_transcript_window_interaction<R: tauri::Runtime>(
     .map_err(record_error)
 }
 
+#[tauri::command]
+pub(crate) async fn open_insights_window<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    app: AppHandle<R>,
+    state: State<'_, InsightsWindowService>,
+) -> Result<(), CommandError> {
+    authorized(webview_window.label(), || state.inner().open(&app)).map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn close_insights_window<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    app: AppHandle<R>,
+    state: State<'_, InsightsWindowService>,
+) -> Result<(), CommandError> {
+    authorized(webview_window.label(), || state.inner().close(&app)).map_err(record_error)
+}
+
 fn authorized<T>(
     label: &str,
     operation: impl FnOnce() -> Result<T, AppError>,
@@ -110,9 +128,8 @@ mod tests {
 
     use crate::domain::AppError;
 
-    /// The transcript window must never be able to open, close, or restyle a
-    /// window itself, so its own label is rejected alongside every other
-    /// non-main one.
+    /// Neither display-only window may open, close, or restyle a window itself,
+    /// so both labels are rejected alongside every other non-main one.
     #[test]
     fn window_commands_authorize_before_touching_any_window() {
         let operations = AtomicUsize::new(0);

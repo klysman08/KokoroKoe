@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-insights-window"
+description = "Enables the open_insights_window command without any pre-configured scope."
+commands.allow = ["open_insights_window"]
+
+[[permission]]
+identifier = "deny-open-insights-window"
+description = "Denies the open_insights_window command without any pre-configured scope."
+commands.deny = ["open_insights_window"]

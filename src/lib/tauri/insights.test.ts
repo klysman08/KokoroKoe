@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import fixture from "../../../fixtures/contracts/recent-insights-v1.json"
 import { recentInsightsFixtureSchema } from "@/contracts/insights"
-import { generateRecentInsights } from "./insights"
+import {
+  closeInsightsWindow,
+  generateRecentInsights,
+  openInsightsWindow,
+} from "./insights"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
 
@@ -64,6 +68,41 @@ describe("recent insights Tauri adapter", () => {
       }),
     ).rejects.toMatchObject({
       details: { code: "invalid_request_contract" },
+    })
+  })
+})
+
+describe("insights window Tauri adapter", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset()
+  })
+
+  it("sends no label, url, path, or dimension to Rust", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    await openInsightsWindow()
+    await closeInsightsWindow()
+
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["open_insights_window"],
+      ["close_insights_window"],
+    ])
+  })
+
+  it("surfaces sanitized backend failures", async () => {
+    vi.mocked(invoke).mockRejectedValue({
+      error: {
+        code: "window_open_failed",
+        userMessage: "KokoroKoe could not open the transcript window.",
+        technicalDetail: "window_open_failed",
+        severity: "error",
+        retryable: true,
+        correlationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      },
+    })
+
+    await expect(openInsightsWindow()).rejects.toMatchObject({
+      details: { code: "window_open_failed" },
     })
   })
 })

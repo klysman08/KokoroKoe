@@ -34,8 +34,9 @@ to OpenRouter, and only when you ask for it.
   of the transcript it covered, and can be regenerated.
 - **Detached transcript and insights windows.** Pop the live transcript out during a Session, and
   pop generated insights into a second window that shows one card at a time with previous/next
-  navigation, its type, confidence, and rationale. Generation still happens only from an explicit
-  click in the main window.
+  navigation, its type, confidence, and rationale. Pin an insight to keep it past the next batch,
+  dismiss one so a later batch repeating it stays out of the way, or copy its text. Generation still
+  happens only from an explicit click in the main window.
 - **Independent window controls.** Each detached window has its own background opacity,
   always-on-top, compact mode, position, size, system-wide show/hide shortcut, and click-through,
   all remembered separately between runs. Opacity dims the background only, so text stays fully
@@ -51,8 +52,9 @@ to OpenRouter, and only when you ask for it.
   exists today.
 - An explicit monitor picker. Each window returns to where it was left, which is remembered between
   runs, but a preferred display cannot be named.
-- Pinning, dismissing, copying, and regenerating an individual insight, and the per-segment
-  transcript actions from the Manifest.
+- Generating an alternative version of an insight, and the per-segment transcript actions from the
+  Manifest. Insights also show how many transcript segments they came from but cannot yet show
+  which.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 

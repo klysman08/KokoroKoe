@@ -4,9 +4,15 @@
 //! that registered it, so the binding is owned by a dedicated thread with its
 //! own message loop rather than by Tauri's event loop.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::{
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
+};
 
 use crate::domain::ParsedShortcut;
+
+/// How long a bind waits for the message-loop thread to answer.
+const BIND_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 enum Request {
     Bind(i32, Option<ParsedShortcut>, mpsc::Sender<bool>),
@@ -57,7 +63,10 @@ impl HotkeyController {
             return false;
         }
         wake(self.thread_id);
-        reply.recv().unwrap_or(false)
+        // Bounded on purpose. Binding runs during application startup, so a
+        // wake that never arrives must degrade to an unregistered shortcut the
+        // user can see and retry, never to a frozen launch.
+        reply.recv_timeout(BIND_REPLY_TIMEOUT).unwrap_or(false)
     }
 }
 
@@ -81,7 +90,7 @@ mod platform {
         UnregisterHotKey,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetMessageW, MSG, PostThreadMessageW, WM_APP, WM_HOTKEY,
+        GetMessageW, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, WM_APP, WM_HOTKEY, WM_USER,
     };
 
     use crate::domain::ParsedShortcut;
@@ -112,6 +121,17 @@ mod platform {
         }
     }
 
+    const fn empty_message() -> MSG {
+        MSG {
+            hwnd: std::ptr::null_mut(),
+            message: 0,
+            wParam: 0,
+            lParam: 0,
+            time: 0,
+            pt: windows_sys::Win32::Foundation::POINT { x: 0, y: 0 },
+        }
+    }
+
     pub(super) fn run_message_loop(
         incoming: &std::sync::mpsc::Receiver<Request>,
         ready: &std::sync::mpsc::Sender<u32>,
@@ -119,18 +139,28 @@ mod platform {
     ) {
         // Safety: reading this thread's own identifier.
         let thread_id = unsafe { GetCurrentThreadId() };
+        // A thread has no message queue until it asks for one, and
+        // `PostThreadMessageW` fails against a thread that has none. Announcing
+        // readiness before the queue exists lets the very first `bind` post
+        // into nothing and then block forever on its reply, so the queue is
+        // forced into existence first. `PeekMessageW` is the documented way to
+        // do that.
+        let mut probe = empty_message();
+        // Safety: peeking this thread's own queue with a valid buffer.
+        unsafe {
+            PeekMessageW(
+                &mut probe,
+                std::ptr::null_mut(),
+                WM_USER,
+                WM_USER,
+                PM_NOREMOVE,
+            );
+        }
         if ready.send(thread_id).is_err() {
             return;
         }
         let mut bound: Vec<i32> = Vec::new();
-        let mut message = MSG {
-            hwnd: std::ptr::null_mut(),
-            message: 0,
-            wParam: 0,
-            lParam: 0,
-            time: 0,
-            pt: windows_sys::Win32::Foundation::POINT { x: 0, y: 0 },
-        };
+        let mut message = empty_message();
         loop {
             // Safety: a thread-message loop with a valid message buffer.
             let received = unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
@@ -248,6 +278,25 @@ mod tests {
         assert_eq!(presses.load(Ordering::SeqCst), 0);
 
         drop(controller);
+    }
+
+    /// A thread has no message queue until it asks for one, and posting to a
+    /// thread without one fails silently. Announcing readiness before the queue
+    /// existed let the first bind post into nothing and block forever, so this
+    /// binds immediately after start, repeatedly, to catch the race returning.
+    #[test]
+    fn the_first_bind_after_start_is_always_answered() {
+        for _ in 0..25 {
+            let controller =
+                HotkeyController::start(Arc::new(|_id| {})).expect("the thread should start");
+
+            assert!(
+                controller.bind(1, None),
+                "the first bind must be answered, not lost"
+            );
+
+            drop(controller);
+        }
     }
 
     #[cfg(windows)]

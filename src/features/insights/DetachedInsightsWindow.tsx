@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import type { UnlistenFn } from "@tauri-apps/api/event"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Copy, Pin, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -8,10 +8,20 @@ import {
   toApplicationError,
   type ApplicationError,
 } from "@/contracts/app-error"
-import type { RecentInsight } from "@/contracts/insights"
 import type { DetachedWindowAppearance } from "@/contracts/windows"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
+import {
+  dismissInsight,
+  EMPTY_INSIGHT_BOARD,
+  focusInsight,
+  insightAsText,
+  MAXIMUM_PINNED,
+  pinnedCount,
+  receiveInsightBatch,
+  toggleInsightPin,
+  type InsightCard,
+} from "@/features/insights/insight-board"
 import { listenToSessionInsights } from "@/lib/tauri/insights"
 import {
   listenToDetachedWindowAppearance,
@@ -19,21 +29,26 @@ import {
 } from "@/lib/tauri/windows"
 import { cn } from "@/lib/utils"
 
+type CopyStatus = "idle" | "copied" | "failed"
+
 /**
  * The detached insights window.
  *
  * Like the transcript window it runs in its own webview whose capability grants
  * event subscription only: it invokes no command, so it can neither ask for a
  * generation nor retrieve an earlier one, and its own opacity, compact layout,
- * and pointer state reach it only as Rust-owned events. It shows the batches
- * that arrive while it is open, one insight at a time, and keeps them in view
- * state only — insights are never saved, here or anywhere else.
+ * and pointer state reach it only as Rust-owned events.
+ *
+ * Pinning, dismissing, and copying are all view-local for the same reason —
+ * none of them needs a command, so none of them widens what this window may
+ * do. Nothing here is saved: closing the window discards every pin and every
+ * dismissal along with the insights themselves.
  */
 export function DetachedInsightsWindow() {
-  const [insights, setInsights] = useState<RecentInsight[]>([])
-  const [position, setPosition] = useState(0)
+  const [board, setBoard] = useState(EMPTY_INSIGHT_BOARD)
   const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
   const [clickThrough, setClickThrough] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle")
   const [error, setError] = useState<ApplicationError>()
 
   useEffect(() => {
@@ -51,10 +66,9 @@ export function DetachedInsightsWindow() {
 
     hold(
       listenToSessionInsights((publication) => {
-        // A new batch replaces the previous one rather than accumulating: these
-        // are observations about the last few minutes, not a growing record.
-        setInsights(publication.insights)
-        setPosition(0)
+        setBoard((current) =>
+          receiveInsightBatch(current, publication.insights),
+        )
       }),
     )
     hold(listenToDetachedWindowAppearance("insights", setAppearance))
@@ -70,7 +84,20 @@ export function DetachedInsightsWindow() {
     }
   }, [])
 
-  const current = insights[position]
+  const cards = board.cards
+  const shown = board.focus
+  const current = cards[shown]
+  const pinned = pinnedCount(board)
+
+  const copy = async (card: InsightCard) => {
+    try {
+      await navigator.clipboard.writeText(insightAsText(card.insight))
+      setCopyStatus("copied")
+    } catch {
+      setCopyStatus("failed")
+    }
+  }
+
   const compact = appearance?.compact ?? false
   // Only the background carries the alpha. Text and borders stay fully opaque
   // so lowering opacity never costs readability.
@@ -103,9 +130,10 @@ export function DetachedInsightsWindow() {
             // one, and the user has no cue why the mouse does nothing.
             <Badge variant="outline">Clicks pass through</Badge>
           )}
-          <Badge variant={insights.length > 0 ? "secondary" : "outline"}>
-            {insights.length > 0
-              ? `${position + 1} of ${insights.length}`
+          {pinned > 0 && <Badge variant="outline">{pinned} pinned</Badge>}
+          <Badge variant={cards.length > 0 ? "secondary" : "outline"}>
+            {cards.length > 0
+              ? `${shown + 1} of ${cards.length}`
               : "Waiting for insights"}
           </Badge>
         </div>
@@ -120,7 +148,7 @@ export function DetachedInsightsWindow() {
         )}
       >
         {current ? (
-          <InsightCard compact={compact} insight={current} />
+          <InsightCardView compact={compact} card={current} />
         ) : (
           <div className="grid size-full place-items-center text-center">
             <p className="text-muted-foreground text-xs">
@@ -131,12 +159,61 @@ export function DetachedInsightsWindow() {
         )}
       </div>
 
-      {insights.length > 1 && (
+      {current && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Button
+            aria-pressed={current.pinned}
+            className={cn(current.pinned && "border-primary")}
+            disabled={!current.pinned && pinned >= MAXIMUM_PINNED}
+            onClick={() =>
+              setBoard((state) => toggleInsightPin(state, current.key))
+            }
+            size="sm"
+            variant="outline"
+          >
+            <Pin data-icon="inline-start" />
+            {current.pinned ? "Pinned" : "Pin"}
+          </Button>
+          <Button
+            onClick={() => {
+              setCopyStatus("idle")
+              void copy(current)
+            }}
+            size="sm"
+            variant="outline"
+          >
+            <Copy data-icon="inline-start" /> Copy
+          </Button>
+          <Button
+            onClick={() =>
+              setBoard((state) => dismissInsight(state, current.key))
+            }
+            size="sm"
+            variant="ghost"
+          >
+            <X data-icon="inline-start" /> Dismiss
+          </Button>
+          {copyStatus !== "idle" && (
+            <span className="text-muted-foreground text-xs" role="status">
+              {copyStatus === "copied"
+                ? "Copied to the clipboard"
+                : "The clipboard is not available"}
+            </span>
+          )}
+          {!current.pinned && pinned >= MAXIMUM_PINNED && (
+            <span className="text-muted-foreground text-xs">
+              {MAXIMUM_PINNED} pinned is the limit — unpin one first.
+            </span>
+          )}
+        </div>
+      )}
+
+      {cards.length > 1 && (
         <nav aria-label="Insight navigation" className="flex gap-2">
           <Button
             className="flex-1"
-            disabled={position === 0}
-            onClick={() => setPosition((index) => index - 1)}
+            disabled={shown === 0}
+            onClick={() => setBoard((state) => focusInsight(state, shown - 1))}
             size="sm"
             variant="outline"
           >
@@ -144,8 +221,8 @@ export function DetachedInsightsWindow() {
           </Button>
           <Button
             className="flex-1"
-            disabled={position === insights.length - 1}
-            onClick={() => setPosition((index) => index + 1)}
+            disabled={shown === cards.length - 1}
+            onClick={() => setBoard((state) => focusInsight(state, shown + 1))}
             size="sm"
             variant="outline"
           >
@@ -157,17 +234,19 @@ export function DetachedInsightsWindow() {
   )
 }
 
-function InsightCard({
+function InsightCardView({
+  card,
   compact,
-  insight,
 }: {
+  card: InsightCard
   compact: boolean
-  insight: RecentInsight
 }) {
+  const { insight } = card
   return (
     <article className={cn(compact ? "space-y-1" : "space-y-2")}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary">{INSIGHT_LABELS[insight.type]}</Badge>
+        {card.pinned && <Badge variant="outline">Pinned</Badge>}
         {insight.confidence !== undefined && (
           <Badge variant="outline">
             {Math.round(insight.confidence * 100)}% confidence

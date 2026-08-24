@@ -155,6 +155,97 @@ describe("DetachedInsightsWindow", () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
+  /// Pinning, dismissing, and copying are view-local, so none of them may
+  /// invoke a command — the window holds no permission to run one.
+  it("pins an insight so it survives the next batch, without a command", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.has("session-insights")).toBe(true))
+    listeners.get("session-insights")?.({ payload: publication() })
+    await screen.findByText(insights[0]!.title)
+
+    await userEvent.click(screen.getByRole("button", { name: /^pin$/i }))
+    expect(
+      await screen.findByRole("button", { name: /pinned/i }),
+    ).toHaveAttribute("aria-pressed", "true")
+
+    listeners.get("session-insights")?.({
+      payload: publication([
+        { ...insights[0], title: "A later observation", content: "later" },
+      ]),
+    })
+
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument()
+    expect(screen.getByText("A later observation")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: /previous/i }))
+    expect(await screen.findByText(insights[0]!.title)).toBeInTheDocument()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  /// The model has no memory of what it already said, so dismissing has to
+  /// stick across batches or the control does nothing useful.
+  it("dismisses an insight and keeps it from returning", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.has("session-insights")).toBe(true))
+    listeners.get("session-insights")?.({ payload: publication() })
+    await screen.findByText(insights[0]!.title)
+
+    await userEvent.click(screen.getByRole("button", { name: /dismiss/i }))
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument()
+    expect(screen.queryByText(insights[0]!.title)).not.toBeInTheDocument()
+
+    listeners.get("session-insights")?.({ payload: publication() })
+
+    await waitFor(() => expect(screen.getByText("1 of 1")).toBeInTheDocument())
+    expect(screen.queryByText(insights[0]!.title)).not.toBeInTheDocument()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("dismissing the last insight leaves the empty state, not a blank card", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.has("session-insights")).toBe(true))
+    listeners.get("session-insights")?.({ payload: publication([insights[0]]) })
+    await screen.findByText(insights[0]!.title)
+
+    await userEvent.click(screen.getByRole("button", { name: /dismiss/i }))
+
+    expect(await screen.findByText(/waiting for insights/i)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull()
+  })
+
+  it("copies the insight text and reports a refused clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    })
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.has("session-insights")).toBe(true))
+    listeners.get("session-insights")?.({ payload: publication() })
+    await screen.findByText(insights[0]!.title)
+
+    await userEvent.click(screen.getByRole("button", { name: /copy/i }))
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/copied/i)
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(insights[0]!.title),
+    )
+
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockRejectedValue(new Error("denied")),
+      },
+    })
+    await userEvent.click(screen.getByRole("button", { name: /copy/i }))
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /clipboard is not available/i,
+      ),
+    )
+  })
+
   it("ignores a batch that does not match the contract", async () => {
     render(<DetachedInsightsWindow />)
     await waitFor(() => expect(listeners.has("session-insights")).toBe(true))

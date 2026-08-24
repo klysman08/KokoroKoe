@@ -32,30 +32,25 @@ to OpenRouter, and only when you ask for it.
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
   of the transcript it covered, and can be regenerated.
-- **Detached transcript window.** Pop the live transcript into its own window during a Session, with
-  background opacity, always-on-top, and compact mode. Opacity dims the background only, so text
-  stays fully readable, and it cannot be lowered past a readable floor. Position, size, and
-  appearance are remembered between runs, and a window left on a display that is later disconnected
-  returns to a centered default instead of reopening off-screen. A configurable system-wide shortcut
-  hides and shows it for quick-hide during a meeting, and clicks can be made to pass straight
-  through it so it sits over another application without getting in the way. Click-through never
+- **Detached transcript and insights windows.** Pop the live transcript out during a Session, and
+  pop generated insights into a second window that shows one card at a time with previous/next
+  navigation, its type, confidence, and rationale. Generation still happens only from an explicit
+  click in the main window.
+- **Independent window controls.** Each detached window has its own background opacity,
+  always-on-top, compact mode, position, size, system-wide show/hide shortcut, and click-through,
+  all remembered separately between runs. Opacity dims the background only, so text stays fully
+  readable and cannot be lowered past a readable floor; a window left on a display that is later
+  disconnected returns to a centered default instead of reopening off-screen. Click-through never
   survives a restart, cannot be switched on without the main window, and switches off when the main
-  window closes, so pointer control is always recoverable. The window is created by Rust and holds
-  an event-subscription-only capability: it can invoke no command and read no file.
-- **Detached insights window.** Pop generated insights into their own window and read them one card
-  at a time with previous/next navigation, showing the type, confidence, and rationale. Generation
-  still happens only from an explicit click in the main window; the detached window holds the same
-  event-subscription-only capability, so it can neither request a generation nor retrieve an earlier
-  one.
+  window closes, so pointer control is always recoverable. Both windows are created by Rust and hold
+  an event-subscription-only capability: neither can invoke a command or read a file.
 
 ## Not implemented yet
 
 - The rolling in-session summary that accumulates while a Session runs; only the final summary
   exists today.
-- An explicit monitor picker. The transcript window's position, size, appearance, and show/hide
-  shortcut are already remembered between runs.
-- Window controls for the insights window. Opacity, always-on-top, compact mode, persisted geometry,
-  the show/hide shortcut, and click-through currently exist only for the transcript window.
+- An explicit monitor picker. Each window returns to where it was left, which is remembered between
+  runs, but a preferred display cannot be named.
 - Pinning, dismissing, copying, and regenerating an individual insight, and the per-segment
   transcript actions from the Manifest.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs

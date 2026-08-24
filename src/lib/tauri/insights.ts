@@ -42,28 +42,6 @@ export async function generateRecentInsights(
 }
 
 /**
- * Opens the detached insights window.
- *
- * Rust owns the window's label, URL, title, and size: no argument is sent, so
- * the frontend cannot address or create any other webview.
- */
-export async function openInsightsWindow(): Promise<void> {
-  try {
-    await invoke<void>("open_insights_window")
-  } catch (error: unknown) {
-    throw toApplicationError(error)
-  }
-}
-
-export async function closeInsightsWindow(): Promise<void> {
-  try {
-    await invoke<void>("close_insights_window")
-  } catch (error: unknown) {
-    throw toApplicationError(error)
-  }
-}
-
-/**
  * Subscribes to generated insight batches.
  *
  * This is how the detached insights window learns anything at all: it holds no

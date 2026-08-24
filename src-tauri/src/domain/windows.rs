@@ -1,5 +1,68 @@
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
+/// The detached windows KokoroKoe owns.
+///
+/// This is a closed set, not a label. The frontend names a window by choosing
+/// one of these variants, so it can still never supply an arbitrary webview
+/// label, URL, or size: an unknown value fails to deserialize before any
+/// command body runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum DetachedWindow {
+    Transcript,
+    Insights,
+}
+
+impl DetachedWindow {
+    pub(crate) const ALL: [Self; 2] = [Self::Transcript, Self::Insights];
+
+    /// The webview label. It is also the key the persisted window state and the
+    /// per-window capability files use, so the three can never drift apart.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Transcript => "transcript",
+            Self::Insights => "insights",
+        }
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Transcript => 0,
+            Self::Insights => 1,
+        }
+    }
+
+    /// Distinct per window, because one combination cannot show and hide two
+    /// windows and the second registration of a shared binding always fails.
+    pub(crate) const fn default_shortcut_binding(self) -> &'static str {
+        match self {
+            Self::Transcript => "Ctrl+Shift+T",
+            Self::Insights => "Ctrl+Shift+I",
+        }
+    }
+}
+
+/// A window-scoped value as it crosses to the frontend.
+///
+/// Serialize-only, and flattened, so the frontend sees one object carrying the
+/// window alongside the value's own fields. The window is added here rather
+/// than inside the appearance and shortcut structs because those are also the
+/// persisted shapes: folding a window field into them would rewrite every
+/// stored row for no gain.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DetachedWindowView<T> {
+    pub(crate) window: DetachedWindow,
+    #[serde(flatten)]
+    pub(crate) value: T,
+}
+
+impl<T> DetachedWindowView<T> {
+    pub(crate) const fn new(window: DetachedWindow, value: T) -> Self {
+        Self { window, value }
+    }
+}
+
 /// The transcript window never becomes fully invisible: the Manifest requires
 /// opacity to dim the background without destroying readability, and a window
 /// the user cannot see is a window they cannot recover.
@@ -8,7 +71,7 @@ pub(crate) const MAXIMUM_BACKGROUND_OPACITY: f64 = 1.00;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowAppearance {
+pub(crate) struct DetachedWindowAppearance {
     pub(crate) schema_version: u8,
     /// Applied to the window background only. Text is always rendered fully
     /// opaque on top of it.
@@ -17,7 +80,7 @@ pub(crate) struct TranscriptWindowAppearance {
     pub(crate) compact: bool,
 }
 
-impl Default for TranscriptWindowAppearance {
+impl Default for DetachedWindowAppearance {
     fn default() -> Self {
         Self {
             schema_version: 1,
@@ -30,19 +93,19 @@ impl Default for TranscriptWindowAppearance {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawTranscriptWindowAppearance {
+struct RawDetachedWindowAppearance {
     schema_version: u8,
     background_opacity: f64,
     always_on_top: bool,
     compact: bool,
 }
 
-impl<'de> Deserialize<'de> for TranscriptWindowAppearance {
+impl<'de> Deserialize<'de> for DetachedWindowAppearance {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawTranscriptWindowAppearance::deserialize(deserializer)?;
+        let raw = RawDetachedWindowAppearance::deserialize(deserializer)?;
         let appearance = Self {
             schema_version: raw.schema_version,
             background_opacity: raw.background_opacity,
@@ -54,7 +117,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowAppearance {
     }
 }
 
-impl TranscriptWindowAppearance {
+impl DetachedWindowAppearance {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1 || !valid_opacity(self.background_opacity) {
             return Err("window_appearance_invalid");
@@ -65,7 +128,8 @@ impl TranscriptWindowAppearance {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SetTranscriptWindowAppearanceRequest {
+pub(crate) struct SetDetachedWindowAppearanceRequest {
+    pub(crate) window: DetachedWindow,
     pub(crate) background_opacity: f64,
     pub(crate) always_on_top: bool,
     pub(crate) compact: bool,
@@ -73,19 +137,21 @@ pub(crate) struct SetTranscriptWindowAppearanceRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawSetTranscriptWindowAppearanceRequest {
+struct RawSetDetachedWindowAppearanceRequest {
+    window: DetachedWindow,
     background_opacity: f64,
     always_on_top: bool,
     compact: bool,
 }
 
-impl<'de> Deserialize<'de> for SetTranscriptWindowAppearanceRequest {
+impl<'de> Deserialize<'de> for SetDetachedWindowAppearanceRequest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawSetTranscriptWindowAppearanceRequest::deserialize(deserializer)?;
+        let raw = RawSetDetachedWindowAppearanceRequest::deserialize(deserializer)?;
         let request = Self {
+            window: raw.window,
             background_opacity: raw.background_opacity,
             always_on_top: raw.always_on_top,
             compact: raw.compact,
@@ -95,7 +161,7 @@ impl<'de> Deserialize<'de> for SetTranscriptWindowAppearanceRequest {
     }
 }
 
-impl SetTranscriptWindowAppearanceRequest {
+impl SetDetachedWindowAppearanceRequest {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if !valid_opacity(self.background_opacity) {
             return Err("window_appearance_invalid");
@@ -105,8 +171,8 @@ impl SetTranscriptWindowAppearanceRequest {
 
     /// Quantizes to whole percentage points so stored and emitted values are
     /// canonical regardless of slider precision.
-    pub(crate) fn into_appearance(self) -> TranscriptWindowAppearance {
-        TranscriptWindowAppearance {
+    pub(crate) fn into_appearance(self) -> DetachedWindowAppearance {
+        DetachedWindowAppearance {
             schema_version: 1,
             background_opacity: (self.background_opacity * 100.0).round() / 100.0,
             always_on_top: self.always_on_top,
@@ -122,7 +188,7 @@ impl SetTranscriptWindowAppearanceRequest {
 /// scaled display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowGeometry {
+pub(crate) struct DetachedWindowGeometry {
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) width: u32,
@@ -131,19 +197,19 @@ pub(crate) struct TranscriptWindowGeometry {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawTranscriptWindowGeometry {
+struct RawDetachedWindowGeometry {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
 }
 
-impl<'de> Deserialize<'de> for TranscriptWindowGeometry {
+impl<'de> Deserialize<'de> for DetachedWindowGeometry {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawTranscriptWindowGeometry::deserialize(deserializer)?;
+        let raw = RawDetachedWindowGeometry::deserialize(deserializer)?;
         let geometry = Self {
             x: raw.x,
             y: raw.y,
@@ -155,7 +221,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowGeometry {
     }
 }
 
-impl TranscriptWindowGeometry {
+impl DetachedWindowGeometry {
     /// Guards against absurd stored values. Whether the rectangle is actually
     /// reachable on the current displays is a separate check, because monitors
     /// change between runs.
@@ -204,24 +270,24 @@ const MINIMUM_VISIBLE_HEIGHT: i32 = 60;
 /// always restored when the application starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowInteraction {
+pub(crate) struct DetachedWindowInteraction {
     pub(crate) schema_version: u8,
     pub(crate) click_through: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawTranscriptWindowInteraction {
+struct RawDetachedWindowInteraction {
     schema_version: u8,
     click_through: bool,
 }
 
-impl<'de> Deserialize<'de> for TranscriptWindowInteraction {
+impl<'de> Deserialize<'de> for DetachedWindowInteraction {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawTranscriptWindowInteraction::deserialize(deserializer)?;
+        let raw = RawDetachedWindowInteraction::deserialize(deserializer)?;
         let interaction = Self {
             schema_version: raw.schema_version,
             click_through: raw.click_through,
@@ -231,7 +297,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowInteraction {
     }
 }
 
-impl TranscriptWindowInteraction {
+impl DetachedWindowInteraction {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1 {
             return Err("window_interaction_invalid");
@@ -240,7 +306,7 @@ impl TranscriptWindowInteraction {
     }
 }
 
-impl Default for TranscriptWindowInteraction {
+impl Default for DetachedWindowInteraction {
     fn default() -> Self {
         Self {
             schema_version: 1,
@@ -251,23 +317,26 @@ impl Default for TranscriptWindowInteraction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SetTranscriptWindowInteractionRequest {
+pub(crate) struct SetDetachedWindowInteractionRequest {
+    pub(crate) window: DetachedWindow,
     pub(crate) click_through: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawSetTranscriptWindowInteractionRequest {
+struct RawSetDetachedWindowInteractionRequest {
+    window: DetachedWindow,
     click_through: bool,
 }
 
-impl<'de> Deserialize<'de> for SetTranscriptWindowInteractionRequest {
+impl<'de> Deserialize<'de> for SetDetachedWindowInteractionRequest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawSetTranscriptWindowInteractionRequest::deserialize(deserializer)?;
+        let raw = RawSetDetachedWindowInteractionRequest::deserialize(deserializer)?;
         Ok(Self {
+            window: raw.window,
             click_through: raw.click_through,
         })
     }
@@ -279,13 +348,13 @@ impl<'de> Deserialize<'de> for SetTranscriptWindowInteractionRequest {
 /// and displays identically regardless of how the user typed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowShortcut {
+pub(crate) struct DetachedWindowShortcut {
     pub(crate) schema_version: u8,
     pub(crate) binding: String,
     pub(crate) enabled: bool,
 }
 
-impl Default for TranscriptWindowShortcut {
+impl Default for DetachedWindowShortcut {
     fn default() -> Self {
         Self {
             schema_version: 1,
@@ -299,18 +368,18 @@ pub(crate) const DEFAULT_SHORTCUT_BINDING: &str = "Ctrl+Shift+T";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawTranscriptWindowShortcut {
+struct RawDetachedWindowShortcut {
     schema_version: u8,
     binding: String,
     enabled: bool,
 }
 
-impl<'de> Deserialize<'de> for TranscriptWindowShortcut {
+impl<'de> Deserialize<'de> for DetachedWindowShortcut {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawTranscriptWindowShortcut::deserialize(deserializer)?;
+        let raw = RawDetachedWindowShortcut::deserialize(deserializer)?;
         let shortcut = Self {
             schema_version: raw.schema_version,
             binding: raw.binding,
@@ -321,7 +390,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowShortcut {
     }
 }
 
-impl TranscriptWindowShortcut {
+impl DetachedWindowShortcut {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1 {
             return Err("window_shortcut_invalid");
@@ -340,25 +409,28 @@ impl TranscriptWindowShortcut {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SetTranscriptWindowShortcutRequest {
+pub(crate) struct SetDetachedWindowShortcutRequest {
+    pub(crate) window: DetachedWindow,
     pub(crate) binding: String,
     pub(crate) enabled: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawSetTranscriptWindowShortcutRequest {
+struct RawSetDetachedWindowShortcutRequest {
+    window: DetachedWindow,
     binding: String,
     enabled: bool,
 }
 
-impl<'de> Deserialize<'de> for SetTranscriptWindowShortcutRequest {
+impl<'de> Deserialize<'de> for SetDetachedWindowShortcutRequest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawSetTranscriptWindowShortcutRequest::deserialize(deserializer)?;
+        let raw = RawSetDetachedWindowShortcutRequest::deserialize(deserializer)?;
         let request = Self {
+            window: raw.window,
             binding: raw.binding,
             enabled: raw.enabled,
         };
@@ -367,15 +439,15 @@ impl<'de> Deserialize<'de> for SetTranscriptWindowShortcutRequest {
     }
 }
 
-impl SetTranscriptWindowShortcutRequest {
+impl SetDetachedWindowShortcutRequest {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         ParsedShortcut::parse(&self.binding).map(|_| ())
     }
 
     /// Accepts any spelling the user typed and stores the canonical form.
-    pub(crate) fn into_shortcut(self) -> Result<TranscriptWindowShortcut, &'static str> {
+    pub(crate) fn into_shortcut(self) -> Result<DetachedWindowShortcut, &'static str> {
         let parsed = ParsedShortcut::parse(&self.binding)?;
-        Ok(TranscriptWindowShortcut {
+        Ok(DetachedWindowShortcut {
             schema_version: 1,
             binding: parsed.canonical(),
             enabled: self.enabled,
@@ -387,7 +459,7 @@ impl SetTranscriptWindowShortcutRequest {
 /// to be active, and whether the system actually accepted it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowShortcutStatus {
+pub(crate) struct DetachedWindowShortcutStatus {
     pub(crate) schema_version: u8,
     pub(crate) binding: String,
     pub(crate) enabled: bool,
@@ -516,31 +588,31 @@ fn virtual_key(key: KeyName) -> u16 {
 /// Everything remembered about the transcript window between runs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct TranscriptWindowState {
+pub(crate) struct DetachedWindowState {
     pub(crate) schema_version: u8,
-    pub(crate) appearance: TranscriptWindowAppearance,
+    pub(crate) appearance: DetachedWindowAppearance,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) geometry: Option<TranscriptWindowGeometry>,
-    pub(crate) shortcut: TranscriptWindowShortcut,
+    pub(crate) geometry: Option<DetachedWindowGeometry>,
+    pub(crate) shortcut: DetachedWindowShortcut,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawTranscriptWindowState {
+struct RawDetachedWindowState {
     schema_version: u8,
-    appearance: TranscriptWindowAppearance,
+    appearance: DetachedWindowAppearance,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    geometry: Option<TranscriptWindowGeometry>,
+    geometry: Option<DetachedWindowGeometry>,
     #[serde(default)]
-    shortcut: TranscriptWindowShortcut,
+    shortcut: DetachedWindowShortcut,
 }
 
-impl<'de> Deserialize<'de> for TranscriptWindowState {
+impl<'de> Deserialize<'de> for DetachedWindowState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = RawTranscriptWindowState::deserialize(deserializer)?;
+        let raw = RawDetachedWindowState::deserialize(deserializer)?;
         let state = Self {
             schema_version: raw.schema_version,
             appearance: raw.appearance,
@@ -552,7 +624,7 @@ impl<'de> Deserialize<'de> for TranscriptWindowState {
     }
 }
 
-impl TranscriptWindowState {
+impl DetachedWindowState {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.schema_version != 1 {
             return Err("window_state_invalid");
@@ -566,13 +638,22 @@ impl TranscriptWindowState {
     }
 }
 
-impl Default for TranscriptWindowState {
-    fn default() -> Self {
+impl DetachedWindowState {
+    /// The starting state for a window that has nothing stored yet.
+    ///
+    /// Each window gets its own default binding: two windows sharing one
+    /// combination would mean the second registration is always refused, and
+    /// the user would see a taken-shortcut warning they did not cause.
+    pub(crate) fn default_for(window: DetachedWindow) -> Self {
         Self {
             schema_version: 1,
-            appearance: TranscriptWindowAppearance::default(),
+            appearance: DetachedWindowAppearance::default(),
             geometry: None,
-            shortcut: TranscriptWindowShortcut::default(),
+            shortcut: DetachedWindowShortcut {
+                schema_version: 1,
+                binding: window.default_shortcut_binding().to_owned(),
+                enabled: true,
+            },
         }
     }
 }
@@ -597,7 +678,7 @@ mod tests {
 
     #[test]
     fn the_default_appearance_is_fully_opaque_and_unpinned() {
-        let appearance = TranscriptWindowAppearance::default();
+        let appearance = DetachedWindowAppearance::default();
 
         appearance.validate().unwrap();
         assert_eq!(appearance.background_opacity, MAXIMUM_BACKGROUND_OPACITY);
@@ -614,7 +695,7 @@ mod tests {
                 "compact": false
             });
             assert!(
-                serde_json::from_value::<SetTranscriptWindowAppearanceRequest>(request).is_err(),
+                serde_json::from_value::<SetDetachedWindowAppearanceRequest>(request).is_err(),
                 "opacity {opacity} must be rejected"
             );
         }
@@ -622,7 +703,8 @@ mod tests {
 
     #[test]
     fn accepted_requests_quantize_to_whole_percentage_points() {
-        let request: SetTranscriptWindowAppearanceRequest = serde_json::from_value(json!({
+        let request: SetDetachedWindowAppearanceRequest = serde_json::from_value(json!({
+            "window": "transcript",
             "backgroundOpacity": 0.6789,
             "alwaysOnTop": true,
             "compact": true
@@ -639,7 +721,7 @@ mod tests {
 
     #[test]
     fn absurd_geometry_is_rejected_but_plausible_geometry_survives() {
-        let valid: TranscriptWindowGeometry =
+        let valid: DetachedWindowGeometry =
             serde_json::from_value(json!({"x": -1_920, "y": 40, "width": 520, "height": 720}))
                 .unwrap();
         valid.validate().unwrap();
@@ -649,13 +731,13 @@ mod tests {
             json!({"x": 0, "y": 0, "width": 520, "height": 99_999}),
             json!({"x": 999_999, "y": 0, "width": 520, "height": 720}),
         ] {
-            assert!(serde_json::from_value::<TranscriptWindowGeometry>(geometry).is_err());
+            assert!(serde_json::from_value::<DetachedWindowGeometry>(geometry).is_err());
         }
     }
 
     #[test]
     fn a_window_is_reachable_only_when_enough_of_it_overlaps_a_monitor() {
-        let geometry = TranscriptWindowGeometry {
+        let geometry = DetachedWindowGeometry {
             x: 100,
             y: 100,
             width: 520,
@@ -666,7 +748,7 @@ mod tests {
         // Fully off to the right of the only remaining monitor.
         assert!(!geometry.is_reachable_on(2_000, 0, 1_920, 1_080));
         // A monitor that was unplugged leaves the window on a negative origin.
-        let detached = TranscriptWindowGeometry {
+        let detached = DetachedWindowGeometry {
             x: -1_900,
             y: 100,
             width: 520,
@@ -675,7 +757,7 @@ mod tests {
         assert!(!detached.is_reachable_on(0, 0, 1_920, 1_080));
         assert!(detached.is_reachable_on(-1_920, 0, 1_920, 1_080));
         // Only a sliver visible is treated as unreachable.
-        let sliver = TranscriptWindowGeometry {
+        let sliver = DetachedWindowGeometry {
             x: 1_900,
             y: 100,
             width: 520,
@@ -686,7 +768,7 @@ mod tests {
 
     #[test]
     fn persisted_state_round_trips_and_rejects_invalid_members() {
-        let state: TranscriptWindowState = serde_json::from_value(json!({
+        let state: DetachedWindowState = serde_json::from_value(json!({
             "schemaVersion": 1,
             "appearance": {
                 "schemaVersion": 1,
@@ -700,11 +782,11 @@ mod tests {
         state.validate().unwrap();
         assert_eq!(state.appearance.background_opacity, 0.7);
 
-        let restored: TranscriptWindowState =
+        let restored: DetachedWindowState =
             serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
         assert_eq!(restored, state);
 
-        let without_geometry: TranscriptWindowState = serde_json::from_value(json!({
+        let without_geometry: DetachedWindowState = serde_json::from_value(json!({
             "schemaVersion": 1,
             "appearance": {
                 "schemaVersion": 1,
@@ -725,7 +807,7 @@ mod tests {
                 "compact": false
             }
         });
-        assert!(serde_json::from_value::<TranscriptWindowState>(unreadable).is_err());
+        assert!(serde_json::from_value::<DetachedWindowState>(unreadable).is_err());
     }
 
     #[test]
@@ -788,7 +870,8 @@ mod tests {
 
     #[test]
     fn a_shortcut_request_stores_the_canonical_binding() {
-        let request: SetTranscriptWindowShortcutRequest = serde_json::from_value(json!({
+        let request: SetDetachedWindowShortcutRequest = serde_json::from_value(json!({
+            "window": "insights",
             "binding": "shift+ctrl+t",
             "enabled": true
         }))
@@ -808,19 +891,19 @@ mod tests {
             "binding": "shift+ctrl+t",
             "enabled": true
         });
-        assert!(serde_json::from_value::<TranscriptWindowShortcut>(non_canonical).is_err());
+        assert!(serde_json::from_value::<DetachedWindowShortcut>(non_canonical).is_err());
 
         let modifierless = json!({
             "schemaVersion": 1,
             "binding": "T",
             "enabled": true
         });
-        assert!(serde_json::from_value::<TranscriptWindowShortcut>(modifierless).is_err());
+        assert!(serde_json::from_value::<DetachedWindowShortcut>(modifierless).is_err());
     }
 
     #[test]
     fn state_stored_before_shortcuts_existed_still_reads() {
-        let legacy: TranscriptWindowState = serde_json::from_value(json!({
+        let legacy: DetachedWindowState = serde_json::from_value(json!({
             "schemaVersion": 1,
             "appearance": {
                 "schemaVersion": 1,
@@ -843,6 +926,6 @@ mod tests {
             "compact": false,
             "clickThrough": true
         });
-        assert!(serde_json::from_value::<SetTranscriptWindowAppearanceRequest>(request).is_err());
+        assert!(serde_json::from_value::<SetDetachedWindowAppearanceRequest>(request).is_err());
     }
 }

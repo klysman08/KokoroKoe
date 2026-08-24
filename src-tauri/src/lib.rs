@@ -24,7 +24,7 @@ use persistence::{ProjectService, SessionService, SettingsService, TranscriptSer
 use security::CredentialService;
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
-use windows::{InsightsWindowService, TranscriptWindowService};
+use windows::DetachedWindowService;
 
 pub const PRODUCT_NAME: &str = "KokoroKoe";
 
@@ -60,7 +60,7 @@ pub fn run() {
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
             ) {
                 let app = window.app_handle();
-                if let Some(windows) = app.try_state::<TranscriptWindowService>() {
+                if let Some(windows) = app.try_state::<DetachedWindowService>() {
                     windows.restore_interaction_without_main_window(app);
                 }
             }
@@ -103,11 +103,10 @@ pub fn run() {
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(AudioDeviceTestService::default());
-            let transcript_windows =
-                TranscriptWindowService::new(app.state::<SettingsService>().inner().clone());
-            transcript_windows.install_shortcut(app.handle());
-            app.manage(transcript_windows);
-            app.manage(InsightsWindowService::new());
+            let detached_windows =
+                DetachedWindowService::new(app.state::<SettingsService>().inner().clone());
+            detached_windows.install_shortcuts(app.handle());
+            app.manage(detached_windows);
             #[cfg(windows)]
             {
                 let worker_executable_path = std::env::current_exe()
@@ -159,16 +158,14 @@ pub fn run() {
             commands::insights::generate_recent_insights,
             commands::summaries::get_session_summary,
             commands::summaries::generate_session_summary,
-            commands::windows::open_transcript_window,
-            commands::windows::close_transcript_window,
-            commands::windows::get_transcript_window_appearance,
-            commands::windows::set_transcript_window_appearance,
-            commands::windows::get_transcript_window_shortcut,
-            commands::windows::set_transcript_window_shortcut,
-            commands::windows::get_transcript_window_interaction,
-            commands::windows::set_transcript_window_interaction,
-            commands::windows::open_insights_window,
-            commands::windows::close_insights_window,
+            commands::windows::open_detached_window,
+            commands::windows::close_detached_window,
+            commands::windows::get_detached_window_appearance,
+            commands::windows::set_detached_window_appearance,
+            commands::windows::get_detached_window_shortcut,
+            commands::windows::set_detached_window_shortcut,
+            commands::windows::get_detached_window_interaction,
+            commands::windows::set_detached_window_interaction,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::create_project,

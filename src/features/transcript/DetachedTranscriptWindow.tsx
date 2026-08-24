@@ -24,15 +24,15 @@ import {
   reduceLiveRecords,
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
-import type { TranscriptWindowAppearance } from "@/contracts/windows"
+import type { DetachedWindowAppearance } from "@/contracts/windows"
 import {
   listenToSessionTranscriptionFinals,
   listenToSessionTranscriptionGaps,
   listenToSessionTranscriptionPartials,
 } from "@/lib/tauri/sessions"
 import {
-  listenToTranscriptWindowAppearance,
-  listenToTranscriptWindowInteraction,
+  listenToDetachedWindowAppearance,
+  listenToDetachedWindowInteraction,
 } from "@/lib/tauri/windows"
 import { cn } from "@/lib/utils"
 
@@ -53,14 +53,14 @@ export function DetachedTranscriptWindow() {
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const [scope, setScope] = useState<{ sessionId: string }>()
   const [error, setError] = useState<ApplicationError>()
-  const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
+  const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
   const [clickThrough, setClickThrough] = useState(false)
 
   useEffect(() => {
     let disposed = false
     let dispose: UnlistenFn | undefined
     let interactionDispose: UnlistenFn | undefined
-    void listenToTranscriptWindowInteraction((next) => {
+    void listenToDetachedWindowInteraction("transcript", (next) => {
       setClickThrough(next.clickThrough)
     })
       .then((unlisten) => {
@@ -70,7 +70,7 @@ export function DetachedTranscriptWindow() {
       .catch((caught: unknown) => {
         if (!disposed) setError(toApplicationError(caught))
       })
-    void listenToTranscriptWindowAppearance((next) => {
+    void listenToDetachedWindowAppearance("transcript", (next) => {
       setAppearance(next)
     })
       .then((unlisten) => {

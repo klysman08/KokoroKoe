@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
     domain::{
-        AppError, AppSettings, AppSettingsUpdate, ModelDownloadJob, TranscriptWindowState,
+        AppError, AppSettings, AppSettingsUpdate, DetachedWindowState, ModelDownloadJob,
         WorkspaceStatus,
     },
     security::{prepare_foundation_workspace, probe_workspace, validate_workspace_path_syntax},
@@ -177,7 +177,7 @@ impl SettingsService {
     pub(crate) fn load_window_state(
         &self,
         window_label: &str,
-    ) -> Result<Option<TranscriptWindowState>, AppError> {
+    ) -> Result<Option<DetachedWindowState>, AppError> {
         let _operation = self.lock_operation()?;
         self.with_database_recovery(|connection| {
             let stored = connection
@@ -191,7 +191,7 @@ impl SettingsService {
             let Some(json) = stored else {
                 return Ok(None);
             };
-            match serde_json::from_str::<TranscriptWindowState>(&json) {
+            match serde_json::from_str::<DetachedWindowState>(&json) {
                 Ok(state) => Ok(Some(state)),
                 Err(_) => {
                     connection
@@ -210,7 +210,7 @@ impl SettingsService {
     pub(crate) fn save_window_state(
         &self,
         window_label: &str,
-        state: &TranscriptWindowState,
+        state: &DetachedWindowState,
         updated_at: &str,
     ) -> Result<(), AppError> {
         state.validate().map_err(AppError::window_error)?;
@@ -743,7 +743,7 @@ mod tests {
         SETTINGS_SCHEMA_VERSION, SettingsService, schema_version,
     };
     use crate::domain::{
-        AppSettingsUpdate, ModelContractFixture, RequestId, TranscriptWindowState,
+        AppSettingsUpdate, DetachedWindow, DetachedWindowState, ModelContractFixture, RequestId,
     };
     use rusqlite::Connection;
 
@@ -976,7 +976,7 @@ mod tests {
         upgraded
             .save_window_state(
                 "transcript",
-                &TranscriptWindowState::default(),
+                &DetachedWindowState::default_for(DetachedWindow::Transcript),
                 "2026-08-23T10:00:00Z",
             )
             .unwrap();

@@ -59,8 +59,9 @@ describe("DetachedTranscriptWindow", () => {
     render(<DetachedTranscriptWindow />)
     await waitFor(() => expect(listeners.size).toBe(5))
 
-    listeners.get("transcript-window-appearance")?.({
+    listeners.get("detached-window-appearance")?.({
       payload: {
+        window: "transcript",
         schemaVersion: 1,
         backgroundOpacity: 0.45,
         alwaysOnTop: true,
@@ -80,8 +81,9 @@ describe("DetachedTranscriptWindow", () => {
     render(<DetachedTranscriptWindow />)
     await waitFor(() => expect(listeners.size).toBe(5))
 
-    listeners.get("transcript-window-appearance")?.({
+    listeners.get("detached-window-appearance")?.({
       payload: {
+        window: "transcript",
         schemaVersion: 1,
         backgroundOpacity: 0,
         alwaysOnTop: false,
@@ -100,13 +102,13 @@ describe("DetachedTranscriptWindow", () => {
     await waitFor(() => expect(listeners.size).toBe(5))
     expect(screen.queryByText(/clicks pass through/i)).not.toBeInTheDocument()
 
-    listeners.get("transcript-window-interaction")?.({
-      payload: { schemaVersion: 1, clickThrough: true },
+    listeners.get("detached-window-interaction")?.({
+      payload: { window: "transcript", schemaVersion: 1, clickThrough: true },
     })
     expect(await screen.findByText(/clicks pass through/i)).toBeInTheDocument()
 
-    listeners.get("transcript-window-interaction")?.({
-      payload: { schemaVersion: 1, clickThrough: false },
+    listeners.get("detached-window-interaction")?.({
+      payload: { window: "transcript", schemaVersion: 1, clickThrough: false },
     })
     await waitFor(() =>
       expect(

@@ -4,105 +4,133 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
-  setTranscriptWindowAppearanceRequestSchema,
-  setTranscriptWindowInteractionRequestSchema,
-  setTranscriptWindowShortcutRequestSchema,
+  setDetachedWindowAppearanceRequestSchema,
+  setDetachedWindowInteractionRequestSchema,
+  setDetachedWindowShortcutRequestSchema,
+  type DetachedWindow,
 } from "@/contracts/windows"
-import { TranscriptWindowControls } from "./TranscriptWindowControls"
+import { DetachedWindowControls } from "./DetachedWindowControls"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
 
 const invokeMock = vi.mocked(invoke)
 
-const defaultAppearance = {
-  schemaVersion: 1,
-  backgroundOpacity: 1,
-  alwaysOnTop: false,
-  compact: false,
+const defaultShortcuts: Record<DetachedWindow, string> = {
+  transcript: "Ctrl+Shift+T",
+  insights: "Ctrl+Shift+I",
 }
 
-const defaultShortcut = {
-  schemaVersion: 1,
-  binding: "Ctrl+Shift+T",
-  enabled: true,
-  registered: true,
-}
-
-const defaultInteraction = { schemaVersion: 1, clickThrough: false }
-
-function respondWithStoredAppearance(
-  shortcut: Record<string, unknown> = defaultShortcut,
-) {
+/**
+ * Answers as Rust does: every reply names the window it is about, and the
+ * stored values differ per window so a cross-window leak would be visible.
+ */
+function respondPerWindow(overrides: { registered?: boolean } = {}) {
   invokeMock.mockImplementation(async (command, args) => {
-    if (command === "get_transcript_window_appearance") return defaultAppearance
-    if (command === "get_transcript_window_shortcut") return shortcut
-    if (command === "get_transcript_window_interaction")
-      return defaultInteraction
-    if (command === "set_transcript_window_interaction") {
-      const request = setTranscriptWindowInteractionRequestSchema.parse(
-        (args as { request: unknown }).request,
-      )
-      return { schemaVersion: 1, ...request }
+    const request = (args as { request: Record<string, unknown> }).request
+    const window = request.window as DetachedWindow
+    if (command === "get_detached_window_appearance")
+      return {
+        window,
+        schemaVersion: 1,
+        backgroundOpacity: window === "transcript" ? 1 : 0.5,
+        alwaysOnTop: false,
+        compact: false,
+      }
+    if (command === "get_detached_window_shortcut")
+      return {
+        window,
+        schemaVersion: 1,
+        binding: defaultShortcuts[window],
+        enabled: true,
+        registered: overrides.registered ?? true,
+      }
+    if (command === "get_detached_window_interaction")
+      return { window, schemaVersion: 1, clickThrough: false }
+    if (command === "set_detached_window_appearance") {
+      const parsed = setDetachedWindowAppearanceRequestSchema.parse(request)
+      return { schemaVersion: 1, ...parsed }
     }
-    if (command === "set_transcript_window_appearance") {
-      const request = setTranscriptWindowAppearanceRequestSchema.parse(
-        (args as { request: unknown }).request,
-      )
-      return { schemaVersion: 1, ...request }
+    if (command === "set_detached_window_shortcut") {
+      const parsed = setDetachedWindowShortcutRequestSchema.parse(request)
+      return { schemaVersion: 1, ...parsed, registered: parsed.enabled }
     }
-    if (command === "set_transcript_window_shortcut") {
-      const request = setTranscriptWindowShortcutRequestSchema.parse(
-        (args as { request: unknown }).request,
-      )
-      return { schemaVersion: 1, ...request, registered: request.enabled }
+    if (command === "set_detached_window_interaction") {
+      const parsed = setDetachedWindowInteractionRequestSchema.parse(request)
+      return { schemaVersion: 1, ...parsed }
     }
     return undefined
   })
 }
 
-describe("TranscriptWindowControls", () => {
+function renderControls(window: DetachedWindow = "transcript") {
+  return render(<DetachedWindowControls collapsed={false} window={window} />)
+}
+
+describe("DetachedWindowControls", () => {
   beforeEach(() => {
     invokeMock.mockReset()
   })
 
-  it("reads the Rust-owned appearance on mount", async () => {
-    respondWithStoredAppearance()
+  it("reads the Rust-owned state for the window it controls", async () => {
+    respondPerWindow()
 
-    render(<TranscriptWindowControls collapsed={false} />)
+    renderControls("insights")
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
-        "get_transcript_window_appearance",
+        "get_detached_window_appearance",
+        { request: { window: "insights" } },
       ),
     )
-    expect(screen.getByText(/100%/)).toBeInTheDocument()
+    expect(screen.getByText(/50%/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /on top/i })).toHaveAttribute(
       "aria-pressed",
       "false",
     )
   })
 
-  it("renders nothing while the sidebar is collapsed", () => {
-    respondWithStoredAppearance()
+  /// The whole point of keying state by window: each panel must read and write
+  /// only its own window.
+  it("keeps the two windows' settings apart", async () => {
+    respondPerWindow()
 
-    render(<TranscriptWindowControls collapsed />)
+    const transcript = renderControls("transcript")
+    await waitFor(() => expect(screen.getByText(/100%/)).toBeInTheDocument())
+    transcript.unmount()
+    invokeMock.mockClear()
+
+    renderControls("insights")
+
+    await waitFor(() => expect(screen.getByText(/50%/)).toBeInTheDocument())
+    for (const [, args] of invokeMock.mock.calls) {
+      expect((args as { request: { window: string } }).request.window).toBe(
+        "insights",
+      )
+    }
+  })
+
+  it("renders nothing while the sidebar is collapsed", () => {
+    respondPerWindow()
+
+    render(<DetachedWindowControls collapsed window="transcript" />)
 
     expect(invokeMock).not.toHaveBeenCalled()
     expect(screen.queryByText(/background opacity/i)).toBeNull()
   })
 
   it("sends a validated appearance when always-on-top is toggled", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls()
     await waitFor(() => expect(invokeMock).toHaveBeenCalled())
 
     await userEvent.click(screen.getByRole("button", { name: /on top/i }))
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
-        "set_transcript_window_appearance",
+        "set_detached_window_appearance",
         {
           request: {
+            window: "transcript",
             backgroundOpacity: 1,
             alwaysOnTop: true,
             compact: false,
@@ -119,8 +147,8 @@ describe("TranscriptWindowControls", () => {
   })
 
   it("keeps the opacity slider inside the readable range", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls()
     await waitFor(() => expect(invokeMock).toHaveBeenCalled())
 
     const slider = screen.getByLabelText(/background opacity/i)
@@ -130,11 +158,11 @@ describe("TranscriptWindowControls", () => {
   })
 
   it("applies a rebinding and shows the canonical result", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls("insights")
     await waitFor(() =>
       expect(screen.getByLabelText(/show\/hide shortcut/i)).toHaveValue(
-        "Ctrl+Shift+T",
+        "Ctrl+Shift+I",
       ),
     )
 
@@ -144,33 +172,27 @@ describe("TranscriptWindowControls", () => {
     await userEvent.click(screen.getByRole("button", { name: /apply/i }))
 
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith(
-        "set_transcript_window_shortcut",
-        { request: { binding: "Alt+F9", enabled: true } },
-      ),
+      expect(invokeMock).toHaveBeenCalledWith("set_detached_window_shortcut", {
+        request: { window: "insights", binding: "Alt+F9", enabled: true },
+      }),
     )
   })
 
   it("warns when the system refused the binding", async () => {
-    respondWithStoredAppearance({
-      schemaVersion: 1,
-      binding: "Ctrl+Shift+T",
-      enabled: true,
-      registered: false,
-    })
+    respondPerWindow({ registered: false })
 
-    render(<TranscriptWindowControls collapsed={false} />)
+    renderControls()
 
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
-        /another application is probably using it/i,
+        /is probably using it/i,
       ),
     )
   })
 
   it("keeps the window reachable when the shortcut is turned off", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls()
     await waitFor(() =>
       expect(
         screen.getByLabelText(/use this shortcut system-wide/i),
@@ -182,18 +204,21 @@ describe("TranscriptWindowControls", () => {
     )
 
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith(
-        "set_transcript_window_shortcut",
-        { request: { binding: "Ctrl+Shift+T", enabled: false } },
-      ),
+      expect(invokeMock).toHaveBeenCalledWith("set_detached_window_shortcut", {
+        request: {
+          window: "transcript",
+          binding: "Ctrl+Shift+T",
+          enabled: false,
+        },
+      }),
     )
     // The visible recovery path must survive a disabled shortcut.
     expect(screen.getByRole("button", { name: /pop out/i })).toBeEnabled()
   })
 
   it("sends a validated click-through request and reflects the result", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls("insights")
     const toggle = await screen.findByLabelText(/let clicks pass through/i)
     await waitFor(() => expect(toggle).toBeEnabled())
 
@@ -201,18 +226,18 @@ describe("TranscriptWindowControls", () => {
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
-        "set_transcript_window_interaction",
-        { request: { clickThrough: true } },
+        "set_detached_window_interaction",
+        { request: { window: "insights", clickThrough: true } },
       ),
     )
     await waitFor(() => expect(toggle).toBeChecked())
   })
 
-  /// The off switch lives in this window, which never becomes click-through, so
-  /// the user can always take pointer input back.
+  /// The off switch lives in the main window, which never becomes
+  /// click-through, so the user can always take pointer input back.
   it("keeps the click-through switch usable while click-through is on", async () => {
-    respondWithStoredAppearance()
-    render(<TranscriptWindowControls collapsed={false} />)
+    respondPerWindow()
+    renderControls()
     const toggle = await screen.findByLabelText(/let clicks pass through/i)
     await waitFor(() => expect(toggle).toBeEnabled())
     await userEvent.click(toggle)
@@ -222,8 +247,8 @@ describe("TranscriptWindowControls", () => {
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
-        "set_transcript_window_interaction",
-        { request: { clickThrough: false } },
+        "set_detached_window_interaction",
+        { request: { window: "transcript", clickThrough: false } },
       ),
     )
     await waitFor(() => expect(toggle).not.toBeChecked())
@@ -241,7 +266,7 @@ describe("TranscriptWindowControls", () => {
       },
     })
 
-    render(<TranscriptWindowControls collapsed={false} />)
+    renderControls()
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(

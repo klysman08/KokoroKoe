@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-detached-window-shortcut"
+description = "Enables the get_detached_window_shortcut command without any pre-configured scope."
+commands.allow = ["get_detached_window_shortcut"]
+
+[[permission]]
+identifier = "deny-get-detached-window-shortcut"
+description = "Denies the get_detached_window_shortcut command without any pre-configured scope."
+commands.deny = ["get_detached_window_shortcut"]

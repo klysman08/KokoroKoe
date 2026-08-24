@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-detached-window-appearance"
+description = "Enables the set_detached_window_appearance command without any pre-configured scope."
+commands.allow = ["set_detached_window_appearance"]
+
+[[permission]]
+identifier = "deny-set-detached-window-appearance"
+description = "Denies the set_detached_window_appearance command without any pre-configured scope."
+commands.deny = ["set_detached_window_appearance"]

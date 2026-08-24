@@ -10,39 +10,48 @@ import {
 import {
   MAXIMUM_BACKGROUND_OPACITY,
   MINIMUM_BACKGROUND_OPACITY,
-  type TranscriptWindowAppearance,
-  type TranscriptWindowInteraction,
-  type TranscriptWindowShortcutStatus,
+  type DetachedWindow,
+  type DetachedWindowAppearance,
+  type DetachedWindowInteraction,
+  type DetachedWindowShortcutStatus,
 } from "@/contracts/windows"
 import { cn } from "@/lib/utils"
 import {
-  closeTranscriptWindow,
-  getTranscriptWindowAppearance,
-  getTranscriptWindowInteraction,
-  getTranscriptWindowShortcut,
-  openTranscriptWindow,
-  setTranscriptWindowAppearance,
-  setTranscriptWindowInteraction,
-  setTranscriptWindowShortcut,
+  closeDetachedWindow,
+  getDetachedWindowAppearance,
+  getDetachedWindowInteraction,
+  getDetachedWindowShortcut,
+  openDetachedWindow,
+  setDetachedWindowAppearance,
+  setDetachedWindowInteraction,
+  setDetachedWindowShortcut,
 } from "@/lib/tauri/windows"
 
 const OPACITY_STEP = 0.05
 
+const WINDOW_LABELS: Record<DetachedWindow, string> = {
+  transcript: "Transcript window",
+  insights: "Insights window",
+}
+
 /**
- * Controls for the detached transcript window.
+ * Controls for one detached window.
  *
- * These live in the main window on purpose: the transcript window holds no
- * command permission, so its appearance is changed here and Rust pushes the
- * result to it.
+ * These live in the main window on purpose: a detached window holds no command
+ * permission, so its state is changed here and Rust pushes the result to it.
+ * The same component serves every window because the state is keyed by window,
+ * which is also what keeps the two from sharing a setting by accident.
  */
-export function TranscriptWindowControls({
+export function DetachedWindowControls({
   collapsed,
+  window,
 }: {
   collapsed: boolean
+  window: DetachedWindow
 }) {
-  const [appearance, setAppearance] = useState<TranscriptWindowAppearance>()
-  const [shortcut, setShortcut] = useState<TranscriptWindowShortcutStatus>()
-  const [interaction, setInteraction] = useState<TranscriptWindowInteraction>()
+  const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
+  const [shortcut, setShortcut] = useState<DetachedWindowShortcutStatus>()
+  const [interaction, setInteraction] = useState<DetachedWindowInteraction>()
   const [binding, setBinding] = useState("")
   const [error, setError] = useState<ApplicationError>()
   const [pending, setPending] = useState(false)
@@ -50,14 +59,14 @@ export function TranscriptWindowControls({
   useEffect(() => {
     if (collapsed) return
     let disposed = false
-    void getTranscriptWindowAppearance()
+    void getDetachedWindowAppearance(window)
       .then((current) => {
         if (!disposed) setAppearance(current)
       })
       .catch((caught: unknown) => {
         if (!disposed) setError(toApplicationError(caught))
       })
-    void getTranscriptWindowShortcut()
+    void getDetachedWindowShortcut(window)
       .then((current) => {
         if (disposed) return
         setShortcut(current)
@@ -66,7 +75,7 @@ export function TranscriptWindowControls({
       .catch((caught: unknown) => {
         if (!disposed) setError(toApplicationError(caught))
       })
-    void getTranscriptWindowInteraction()
+    void getDetachedWindowInteraction(window)
       .then((current) => {
         if (!disposed) setInteraction(current)
       })
@@ -76,7 +85,7 @@ export function TranscriptWindowControls({
     return () => {
       disposed = true
     }
-  }, [collapsed])
+  }, [collapsed, window])
 
   async function run(operation: () => Promise<void>) {
     setError(undefined)
@@ -90,9 +99,10 @@ export function TranscriptWindowControls({
     }
   }
 
-  async function update(changes: Partial<TranscriptWindowAppearance>) {
+  async function update(changes: Partial<DetachedWindowAppearance>) {
     if (!appearance) return
-    const next = await setTranscriptWindowAppearance({
+    const next = await setDetachedWindowAppearance({
+      window,
       backgroundOpacity:
         changes.backgroundOpacity ?? appearance.backgroundOpacity,
       alwaysOnTop: changes.alwaysOnTop ?? appearance.alwaysOnTop,
@@ -106,7 +116,8 @@ export function TranscriptWindowControls({
     enabled?: boolean
   }) {
     if (!shortcut) return
-    const next = await setTranscriptWindowShortcut({
+    const next = await setDetachedWindowShortcut({
+      window,
       binding: (changes.binding ?? shortcut.binding).trim(),
       enabled: changes.enabled ?? shortcut.enabled,
     })
@@ -115,35 +126,35 @@ export function TranscriptWindowControls({
   }
 
   async function updateInteraction(changes: { clickThrough: boolean }) {
-    setInteraction(await setTranscriptWindowInteraction(changes))
+    setInteraction(await setDetachedWindowInteraction({ window, ...changes }))
   }
 
   if (collapsed) return null
 
+  const title = WINDOW_LABELS[window]
   const opacityPercent = Math.round(
     (appearance?.backgroundOpacity ?? MAXIMUM_BACKGROUND_OPACITY) * 100,
   )
+  const opacityId = `${window}-window-opacity`
+  const shortcutId = `${window}-window-shortcut`
 
   return (
-    <section
-      aria-label="Transcript window"
-      className="mb-3 rounded-xl border p-3"
-    >
-      <p className="text-xs font-medium">Transcript window</p>
+    <section aria-label={title} className="mb-3 rounded-xl border p-3">
+      <p className="text-xs font-medium">{title}</p>
       <div className="mt-2 flex gap-2">
         <Button
           className="flex-1"
           disabled={pending}
-          onClick={() => void run(openTranscriptWindow)}
+          onClick={() => void run(() => openDetachedWindow(window))}
           size="sm"
           variant="outline"
         >
           <PanelRightOpen data-icon="inline-start" /> Pop out
         </Button>
         <Button
-          aria-label="Close transcript window"
+          aria-label={`Close ${title.toLowerCase()}`}
           disabled={pending}
-          onClick={() => void run(closeTranscriptWindow)}
+          onClick={() => void run(() => closeDetachedWindow(window))}
           size="icon"
           variant="ghost"
         >
@@ -178,14 +189,14 @@ export function TranscriptWindowControls({
         </Button>
       </div>
 
-      <label className="mt-3 block text-xs" htmlFor="transcript-window-opacity">
+      <label className="mt-3 block text-xs" htmlFor={opacityId}>
         Background opacity
         <span className="text-muted-foreground ml-1">{opacityPercent}%</span>
       </label>
       <input
         className="mt-1 w-full"
         disabled={pending || !appearance}
-        id="transcript-window-opacity"
+        id={opacityId}
         max={MAXIMUM_BACKGROUND_OPACITY}
         min={MINIMUM_BACKGROUND_OPACITY}
         onChange={(event) =>
@@ -198,20 +209,17 @@ export function TranscriptWindowControls({
         value={appearance?.backgroundOpacity ?? MAXIMUM_BACKGROUND_OPACITY}
       />
       <p className="text-muted-foreground mt-1 text-xs">
-        Dims the window background only. Transcript text stays fully opaque.
+        Dims the window background only. Text stays fully opaque.
       </p>
 
-      <label
-        className="mt-3 block text-xs"
-        htmlFor="transcript-window-shortcut"
-      >
+      <label className="mt-3 block text-xs" htmlFor={shortcutId}>
         Show/hide shortcut
       </label>
       <div className="mt-1 flex gap-2">
         <Input
           className="h-8 text-xs"
           disabled={pending || !shortcut}
-          id="transcript-window-shortcut"
+          id={shortcutId}
           onChange={(event) => setBinding(event.target.value)}
           placeholder="Ctrl+Shift+T"
           value={binding}
@@ -238,13 +246,15 @@ export function TranscriptWindowControls({
       </label>
       {shortcut?.enabled && !shortcut.registered && (
         <p className="text-xs text-amber-700" role="status">
-          Windows did not accept {shortcut.binding}. Another application is
-          probably using it — try a different combination.
+          Windows did not accept {shortcut.binding}. Another application — or
+          this app's other window — is probably using it; try a different
+          combination.
         </p>
       )}
       <p className="text-muted-foreground mt-1 text-xs">
-        Needs Ctrl, Alt, or Win. The same shortcut hides and shows the window,
-        and <strong>Pop out</strong> always brings it back.
+        Needs Ctrl, Alt, or Win, and each window needs its own combination. The
+        same shortcut hides and shows the window, and <strong>Pop out</strong>{" "}
+        always brings it back.
       </p>
 
       <label className="mt-3 flex items-start gap-2 text-xs">
@@ -258,7 +268,7 @@ export function TranscriptWindowControls({
           }
           type="checkbox"
         />
-        <span>Let clicks pass through the transcript window</span>
+        <span>Let clicks pass through this window</span>
       </label>
       <p className="text-muted-foreground mt-1 text-xs">
         The window stops accepting the mouse entirely — you cannot move, resize,

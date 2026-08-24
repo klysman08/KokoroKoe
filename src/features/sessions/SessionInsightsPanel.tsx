@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Lightbulb, PanelRightClose, PanelRightOpen } from "lucide-react"
+import { Lightbulb, PanelRightOpen } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,11 +14,8 @@ import {
 import type { Project, Session } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
-import {
-  closeInsightsWindow,
-  generateRecentInsights,
-  openInsightsWindow,
-} from "@/lib/tauri/insights"
+import { generateRecentInsights } from "@/lib/tauri/insights"
+import { openDetachedWindow } from "@/lib/tauri/windows"
 
 /**
  * Transient recent-transcript insights for one active Session.
@@ -76,7 +73,7 @@ export function SessionInsightsPanel({
           <Button
             aria-label="Pop out insights"
             onClick={() =>
-              void openInsightsWindow().catch((caught: unknown) =>
+              void openDetachedWindow("insights").catch((caught: unknown) =>
                 setError(toApplicationError(caught)),
               )
             }
@@ -86,26 +83,13 @@ export function SessionInsightsPanel({
           >
             <PanelRightOpen />
           </Button>
-          <Button
-            aria-label="Close insights window"
-            onClick={() =>
-              void closeInsightsWindow().catch((caught: unknown) =>
-                setError(toApplicationError(caught)),
-              )
-            }
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <PanelRightClose />
-          </Button>
         </div>
       </div>
       <p className="text-muted-foreground mb-2 text-xs">
         Sends only the most recent finalized transcript text to the Session's
         insights model. Results are shown once and are never saved. Popping the
         insights out shows each generated batch in its own window, one insight
-        at a time.
+        at a time; its opacity, position, and shortcut live in the sidebar.
       </p>
       {error && <SanitizedErrorPanel error={error} />}
       {response && (

@@ -102,22 +102,18 @@ describe("SessionInsightsPanel", () => {
     )
   })
 
-  /// The window is Rust-owned: the control sends nothing that could name or
-  /// redirect a webview.
-  it("pops the insights window out without sending any argument", async () => {
+  /// The window is Rust-owned: the control names one of the two windows and
+  /// sends no label, URL, path, or dimension.
+  it("pops the insights window out by naming it and nothing else", async () => {
     invokeMock.mockResolvedValue(undefined)
     renderPanel()
 
     await userEvent.click(
       screen.getByRole("button", { name: /pop out insights/i }),
     )
-    await userEvent.click(
-      screen.getByRole("button", { name: /close insights window/i }),
-    )
 
     expect(invokeMock.mock.calls).toEqual([
-      ["open_insights_window"],
-      ["close_insights_window"],
+      ["open_detached_window", { request: { window: "insights" } }],
     ])
   })
 

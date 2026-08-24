@@ -89,6 +89,72 @@ describe("DetachedInsightsWindow", () => {
     expect(screen.queryByRole("button", { name: /next/i })).toBeNull()
   })
 
+  /// The window holds no command permission, so its own opacity and compact
+  /// layout can only reach it through the Rust-owned event.
+  it("applies the appearance it receives without invoking a command", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() =>
+      expect(listeners.has("detached-window-appearance")).toBe(true),
+    )
+
+    listeners.get("detached-window-appearance")?.({
+      payload: {
+        window: "insights",
+        schemaVersion: 1,
+        backgroundOpacity: 0.45,
+        alwaysOnTop: true,
+        compact: true,
+      },
+    })
+
+    const surface = await screen.findByTestId("detached-insights-window")
+    await waitFor(() =>
+      expect(surface).toHaveStyle({ "--insights-window-opacity": "0.45" }),
+    )
+    expect(surface).toHaveAttribute("data-compact", "true")
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  /// Both windows receive every event, so each must act only on its own.
+  it("ignores state addressed to the other window", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() =>
+      expect(listeners.has("detached-window-appearance")).toBe(true),
+    )
+
+    listeners.get("detached-window-appearance")?.({
+      payload: {
+        window: "transcript",
+        schemaVersion: 1,
+        backgroundOpacity: 0.35,
+        alwaysOnTop: false,
+        compact: true,
+      },
+    })
+    listeners.get("detached-window-interaction")?.({
+      payload: { window: "transcript", schemaVersion: 1, clickThrough: true },
+    })
+
+    const surface = await screen.findByTestId("detached-insights-window")
+    expect(surface).toHaveStyle({ "--insights-window-opacity": "1" })
+    expect(surface).not.toHaveAttribute("data-compact")
+    expect(screen.queryByText(/clicks pass through/i)).not.toBeInTheDocument()
+  })
+
+  it("shows a click-through indicator driven by the Rust-owned event", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() =>
+      expect(listeners.has("detached-window-interaction")).toBe(true),
+    )
+
+    listeners.get("detached-window-interaction")?.({
+      payload: { window: "insights", schemaVersion: 1, clickThrough: true },
+    })
+
+    expect(await screen.findByText(/clicks pass through/i)).toBeInTheDocument()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it("ignores a batch that does not match the contract", async () => {
     render(<DetachedInsightsWindow />)
     await waitFor(() => expect(listeners.has("session-insights")).toBe(true))

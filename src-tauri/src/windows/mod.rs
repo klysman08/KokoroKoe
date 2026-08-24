@@ -9,107 +9,148 @@ use tauri::{
 };
 
 mod hotkey;
-mod insights;
 
 use crate::{
     domain::{
-        AppError, SetTranscriptWindowAppearanceRequest, SetTranscriptWindowInteractionRequest,
-        SetTranscriptWindowShortcutRequest, TranscriptWindowAppearance, TranscriptWindowGeometry,
-        TranscriptWindowInteraction, TranscriptWindowShortcutStatus, TranscriptWindowState,
-        now_rfc3339,
+        AppError, DetachedWindow, DetachedWindowAppearance, DetachedWindowGeometry,
+        DetachedWindowInteraction, DetachedWindowShortcutStatus, DetachedWindowState,
+        DetachedWindowView, SetDetachedWindowAppearanceRequest,
+        SetDetachedWindowInteractionRequest, SetDetachedWindowShortcutRequest, now_rfc3339,
     },
     persistence::SettingsService,
 };
 
 use hotkey::HotkeyController;
-pub(crate) use insights::InsightsWindowService;
 
-/// The detached live-transcript window.
+/// Everything Rust owns about a detached window's identity.
 ///
-/// Its label, URL, title, and size are fixed here: React never supplies a
-/// label, URL, path, or dimension, so no frontend input can create or address
-/// an arbitrary webview.
-pub(crate) const TRANSCRIPT_WINDOW_LABEL: &str = "transcript";
-const TRANSCRIPT_WINDOW_URL: &str = "index.html#/transcript-window";
-const TRANSCRIPT_WINDOW_TITLE: &str = "KokoroKoe transcript";
-const TRANSCRIPT_WINDOW_WIDTH: f64 = 520.0;
-const TRANSCRIPT_WINDOW_HEIGHT: f64 = 720.0;
-const TRANSCRIPT_WINDOW_MIN_WIDTH: f64 = 360.0;
-const TRANSCRIPT_WINDOW_MIN_HEIGHT: f64 = 320.0;
+/// Label, URL, title, and size are compile-time constants: React names a window
+/// by choosing a `DetachedWindow` variant and never supplies a label, URL,
+/// path, or dimension, so no frontend input can create or address an arbitrary
+/// webview.
+struct WindowSpec {
+    url: &'static str,
+    title: &'static str,
+    width: f64,
+    height: f64,
+    minimum_width: f64,
+    minimum_height: f64,
+}
+
+const fn spec(window: DetachedWindow) -> WindowSpec {
+    match window {
+        DetachedWindow::Transcript => WindowSpec {
+            url: "index.html#/transcript-window",
+            title: "KokoroKoe transcript",
+            width: 520.0,
+            height: 720.0,
+            minimum_width: 360.0,
+            minimum_height: 320.0,
+        },
+        DetachedWindow::Insights => WindowSpec {
+            url: "index.html#/insights-window",
+            title: "KokoroKoe insights",
+            width: 440.0,
+            height: 560.0,
+            minimum_width: 320.0,
+            minimum_height: 280.0,
+        },
+    }
+}
 
 /// Dragging a window emits a continuous stream of move events. Geometry is kept
 /// in memory and written at most this often, plus once when the window closes.
 const GEOMETRY_WRITE_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Carries the appearance to the transcript window, which holds only event
-/// permissions and therefore cannot request it.
-pub(crate) const TRANSCRIPT_WINDOW_APPEARANCE_EVENT: &str = "transcript-window-appearance";
+/// Carries the appearance to a detached window, which holds only event
+/// permissions and therefore cannot request it. The payload names its window,
+/// because every window receives every event.
+pub(crate) const DETACHED_WINDOW_APPEARANCE_EVENT: &str = "detached-window-appearance";
 
-/// Carries the pointer-interaction state to the transcript window so a
-/// click-through window can show that it is not accepting input.
-pub(crate) const TRANSCRIPT_WINDOW_INTERACTION_EVENT: &str = "transcript-window-interaction";
+/// Carries the pointer-interaction state so a click-through window can show
+/// that it is not accepting input.
+pub(crate) const DETACHED_WINDOW_INTERACTION_EVENT: &str = "detached-window-interaction";
 
-/// The window that owns every transcript-window control.
+/// The window that owns every detached-window control.
 const MAIN_WINDOW_LABEL: &str = "main";
 
-#[derive(Default)]
 struct WindowRuntime {
-    state: TranscriptWindowState,
+    state: DetachedWindowState,
     loaded: bool,
     last_write: Option<Instant>,
     /// False when the system refused the binding, usually because another
     /// application already owns the combination.
     shortcut_registered: bool,
-    /// Never persisted: see `TranscriptWindowInteraction`.
+    /// Never persisted: see `DetachedWindowInteraction`.
     click_through: bool,
 }
 
-/// Rust-owned appearance and geometry for the transcript window.
+impl WindowRuntime {
+    fn new(window: DetachedWindow) -> Self {
+        Self {
+            state: DetachedWindowState::default_for(window),
+            loaded: false,
+            last_write: None,
+            shortcut_registered: false,
+            click_through: false,
+        }
+    }
+}
+
+/// Rust-owned appearance, geometry, shortcut, and pointer state for every
+/// detached window, keyed by window.
 ///
-/// The transcript window never invokes a command, so every value it renders
-/// arrives through the appearance event: on page load for the initial state,
-/// and on each accepted change afterwards.
+/// A detached window never invokes a command, so every value it renders arrives
+/// through an event: on page load for the initial state, and on each accepted
+/// change afterwards.
 #[derive(Clone)]
-pub(crate) struct TranscriptWindowService {
+pub(crate) struct DetachedWindowService {
     settings: SettingsService,
-    runtime: Arc<Mutex<WindowRuntime>>,
+    runtimes: Arc<[Mutex<WindowRuntime>; DetachedWindow::ALL.len()]>,
     hotkey: Arc<Mutex<Option<Arc<HotkeyController>>>>,
 }
 
-impl TranscriptWindowService {
+impl DetachedWindowService {
     pub(crate) fn new(settings: SettingsService) -> Self {
         Self {
             settings,
-            runtime: Arc::new(Mutex::new(WindowRuntime::default())),
+            runtimes: Arc::new([
+                Mutex::new(WindowRuntime::new(DetachedWindow::Transcript)),
+                Mutex::new(WindowRuntime::new(DetachedWindow::Insights)),
+            ]),
             hotkey: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Starts the system-wide show/hide hotkey and binds the stored shortcut.
+    /// Starts the system-wide show/hide hotkeys and binds each stored shortcut.
     ///
-    /// A refused registration is recorded and reported rather than retried: the
-    /// window always remains reachable through the main window's control, so a
-    /// taken combination degrades the shortcut and nothing else.
-    pub(crate) fn install_shortcut<R: Runtime>(&self, app: &AppHandle<R>) {
+    /// A refused registration is recorded and reported rather than retried:
+    /// every window always remains reachable through the main window's control,
+    /// so a taken combination degrades one shortcut and nothing else.
+    pub(crate) fn install_shortcuts<R: Runtime>(&self, app: &AppHandle<R>) {
         let service = self.clone();
         let target = app.clone();
-        let controller = HotkeyController::start(Arc::new(move || {
-            service.toggle(&target);
+        let controller = HotkeyController::start(Arc::new(move |id| {
+            if let Some(window) = window_for_hotkey(id) {
+                service.toggle(&target, window);
+            }
         }));
         let Some(controller) = controller else {
-            tracing::warn!("the show/hide shortcut could not be started");
+            tracing::warn!("the show/hide shortcuts could not be started");
             return;
         };
         if let Ok(mut slot) = self.hotkey.lock() {
             *slot = Some(controller);
         }
-        let _ = self.rebind_shortcut();
+        for window in DetachedWindow::ALL {
+            let _ = self.rebind_shortcut(window);
+        }
     }
 
-    /// Applies the stored shortcut to the platform, returning whether it was
-    /// accepted. A disabled shortcut clears the registration.
-    fn rebind_shortcut(&self) -> Result<bool, AppError> {
-        let state = self.hydrated()?;
+    /// Applies a window's stored shortcut to the platform, returning whether it
+    /// was accepted. A disabled shortcut clears the registration.
+    fn rebind_shortcut(&self, window: DetachedWindow) -> Result<bool, AppError> {
+        let state = self.hydrated(window)?;
         let controller = self
             .hotkey
             .lock()
@@ -123,52 +164,64 @@ impl TranscriptWindowService {
         } else {
             None
         };
-        let registered = controller.bind(binding) && state.shortcut.enabled;
-        if let Ok(mut runtime) = self.runtime.lock() {
+        let registered = controller.bind(hotkey_id(window), binding) && state.shortcut.enabled;
+        if let Ok(mut runtime) = self.locked(window) {
             runtime.shortcut_registered = registered;
         }
         Ok(registered)
     }
 
-    pub(crate) fn shortcut_status(&self) -> Result<TranscriptWindowShortcutStatus, AppError> {
-        let state = self.hydrated()?;
+    pub(crate) fn shortcut_status(
+        &self,
+        window: DetachedWindow,
+    ) -> Result<DetachedWindowView<DetachedWindowShortcutStatus>, AppError> {
+        let state = self.hydrated(window)?;
         let registered = self
-            .runtime
-            .lock()
+            .locked(window)
             .map(|runtime| runtime.shortcut_registered)
             .unwrap_or(false);
-        Ok(TranscriptWindowShortcutStatus {
-            schema_version: 1,
-            binding: state.shortcut.binding,
-            enabled: state.shortcut.enabled,
-            registered,
-        })
+        Ok(DetachedWindowView::new(
+            window,
+            DetachedWindowShortcutStatus {
+                schema_version: 1,
+                binding: state.shortcut.binding,
+                enabled: state.shortcut.enabled,
+                registered,
+            },
+        ))
     }
 
     pub(crate) fn set_shortcut(
         &self,
-        request: SetTranscriptWindowShortcutRequest,
-    ) -> Result<TranscriptWindowShortcutStatus, AppError> {
+        request: SetDetachedWindowShortcutRequest,
+    ) -> Result<DetachedWindowView<DetachedWindowShortcutStatus>, AppError> {
+        let window = request.window;
         let shortcut = request.into_shortcut().map_err(AppError::window_error)?;
-        self.hydrated()?;
+        self.hydrated(window)?;
         let state = {
-            let mut runtime = self.locked()?;
+            let mut runtime = self.locked(window)?;
             runtime.state.shortcut = shortcut;
             runtime.state.clone()
         };
-        self.persist(state)?;
-        self.rebind_shortcut()?;
-        self.shortcut_status()
+        self.persist(window, state)?;
+        self.rebind_shortcut(window)?;
+        self.shortcut_status(window)
     }
 
-    pub(crate) fn interaction(&self) -> Result<TranscriptWindowInteraction, AppError> {
-        Ok(TranscriptWindowInteraction {
-            schema_version: 1,
-            click_through: self.locked()?.click_through,
-        })
+    pub(crate) fn interaction(
+        &self,
+        window: DetachedWindow,
+    ) -> Result<DetachedWindowView<DetachedWindowInteraction>, AppError> {
+        Ok(DetachedWindowView::new(
+            window,
+            DetachedWindowInteraction {
+                schema_version: 1,
+                click_through: self.locked(window)?.click_through,
+            },
+        ))
     }
 
-    /// Turns mouse pass-through on or off for the transcript window.
+    /// Turns mouse pass-through on or off for one window.
     ///
     /// Enabling requires the main window to exist, because the main window is
     /// the surface that can turn it back off. A click-through window cannot be
@@ -177,93 +230,107 @@ impl TranscriptWindowService {
     pub(crate) fn set_click_through<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        request: SetTranscriptWindowInteractionRequest,
-    ) -> Result<TranscriptWindowInteraction, AppError> {
+        request: SetDetachedWindowInteractionRequest,
+    ) -> Result<DetachedWindowView<DetachedWindowInteraction>, AppError> {
         if !click_through_is_recoverable(
             request.click_through,
             app.get_webview_window(MAIN_WINDOW_LABEL).is_some(),
         ) {
             return Err(AppError::window_error("window_click_through_unrecoverable"));
         }
-        self.apply_click_through(app, request.click_through)?;
-        self.interaction()
+        self.apply_click_through(app, request.window, request.click_through)?;
+        self.interaction(request.window)
     }
 
     fn apply_click_through<R: Runtime>(
         &self,
         app: &AppHandle<R>,
+        window: DetachedWindow,
         click_through: bool,
     ) -> Result<(), AppError> {
-        if let Some(window) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
-            window
+        if let Some(webview) = app.get_webview_window(window.label()) {
+            webview
                 .set_ignore_cursor_events(click_through)
                 .map_err(|_| AppError::window_error("window_click_through_failed"))?;
         }
-        self.locked()?.click_through = click_through;
-        let interaction = TranscriptWindowInteraction {
-            schema_version: 1,
-            click_through,
-        };
-        app.emit(TRANSCRIPT_WINDOW_INTERACTION_EVENT, interaction)
+        self.locked(window)?.click_through = click_through;
+        self.publish_interaction(app, window)
+    }
+
+    fn publish_interaction<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        window: DetachedWindow,
+    ) -> Result<(), AppError> {
+        let interaction = self.interaction(window)?;
+        app.emit(DETACHED_WINDOW_INTERACTION_EVENT, interaction)
             .map_err(|_| AppError::window_error("window_interaction_publish_failed"))
     }
 
-    /// Restores pointer input when the main window goes away.
+    /// Restores pointer input for every window when the main window goes away.
     ///
-    /// Without this the transcript window could be left click-through with no
+    /// Without this a detached window could be left click-through with no
     /// surface able to turn it off, which is the failure the R-010 rule guards
     /// against.
     pub(crate) fn restore_interaction_without_main_window<R: Runtime>(&self, app: &AppHandle<R>) {
-        let engaged = self.runtime.lock().map(|runtime| runtime.click_through);
-        if engaged.unwrap_or(false) {
-            let _ = self.apply_click_through(app, false);
-            tracing::warn!("click-through cleared because the main window closed");
+        for window in DetachedWindow::ALL {
+            let engaged = self.locked(window).map(|runtime| runtime.click_through);
+            if engaged.unwrap_or(false) {
+                let _ = self.apply_click_through(app, window, false);
+                tracing::warn!(
+                    window = window.label(),
+                    "click-through cleared because the main window closed"
+                );
+            }
         }
     }
 
-    /// Show/hide toggle used by the shortcut.
+    /// Show/hide toggle used by a window's shortcut.
     ///
     /// An absent window is created, so the same combination always brings the
-    /// transcript back: a quick-hide the user cannot undo would be the same
-    /// trap as a window hidden off-screen.
-    fn toggle<R: Runtime>(&self, app: &AppHandle<R>) {
-        match app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
-            Some(window) => {
-                if window.is_visible().unwrap_or(true) {
-                    let _ = window.hide();
+    /// window back: a quick-hide the user cannot undo would be the same trap as
+    /// a window hidden off-screen.
+    fn toggle<R: Runtime>(&self, app: &AppHandle<R>, window: DetachedWindow) {
+        match app.get_webview_window(window.label()) {
+            Some(webview) => {
+                if webview.is_visible().unwrap_or(true) {
+                    let _ = webview.hide();
                 } else {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
+                    let _ = webview.show();
+                    let _ = webview.unminimize();
+                    let _ = webview.set_focus();
                 }
             }
             None => {
-                let _ = self.open(app);
+                let _ = self.open(app, window);
             }
         }
     }
 
-    fn locked(&self) -> Result<std::sync::MutexGuard<'_, WindowRuntime>, AppError> {
-        self.runtime
+    fn locked(
+        &self,
+        window: DetachedWindow,
+    ) -> Result<std::sync::MutexGuard<'_, WindowRuntime>, AppError> {
+        self.runtimes[window.index()]
             .lock()
             .map_err(|_| AppError::window_error("window_appearance_unavailable"))
     }
 
-    /// Loads persisted state once per process. A failed or absent read leaves
-    /// the defaults in place: remembered state is a convenience and must never
-    /// prevent the window from opening.
-    fn hydrated(&self) -> Result<TranscriptWindowState, AppError> {
+    /// Loads one window's persisted state once per process. A failed or absent
+    /// read leaves that window's defaults in place: remembered state is a
+    /// convenience and must never prevent a window from opening.
+    fn hydrated(&self, window: DetachedWindow) -> Result<DetachedWindowState, AppError> {
         {
-            let runtime = self.locked()?;
+            let runtime = self.locked(window)?;
             if runtime.loaded {
                 return Ok(runtime.state.clone());
             }
         }
         let stored = self
             .settings
-            .load_window_state(TRANSCRIPT_WINDOW_LABEL)
+            .load_window_state(window.label())
             .unwrap_or(None);
-        let mut runtime = self.locked()?;
+        let mut runtime = self.locked(window)?;
         if !runtime.loaded {
             if let Some(state) = stored {
                 runtime.state = state;
@@ -273,14 +340,20 @@ impl TranscriptWindowService {
         Ok(runtime.state.clone())
     }
 
-    pub(crate) fn appearance(&self) -> Result<TranscriptWindowAppearance, AppError> {
-        Ok(self.hydrated()?.appearance)
+    pub(crate) fn appearance(
+        &self,
+        window: DetachedWindow,
+    ) -> Result<DetachedWindowView<DetachedWindowAppearance>, AppError> {
+        Ok(DetachedWindowView::new(
+            window,
+            self.hydrated(window)?.appearance,
+        ))
     }
 
-    fn persist(&self, state: TranscriptWindowState) -> Result<(), AppError> {
+    fn persist(&self, window: DetachedWindow, state: DetachedWindowState) -> Result<(), AppError> {
         let updated_at = now_rfc3339()?;
         self.settings
-            .save_window_state(TRANSCRIPT_WINDOW_LABEL, &state, &updated_at)
+            .save_window_state(window.label(), &state, &updated_at)
     }
 
     /// Applies an accepted appearance: the native always-on-top flag directly,
@@ -289,42 +362,48 @@ impl TranscriptWindowService {
     pub(crate) fn apply<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        request: SetTranscriptWindowAppearanceRequest,
-    ) -> Result<TranscriptWindowAppearance, AppError> {
+        request: SetDetachedWindowAppearanceRequest,
+    ) -> Result<DetachedWindowView<DetachedWindowAppearance>, AppError> {
         request.validate().map_err(AppError::window_error)?;
-        self.hydrated()?;
+        let window = request.window;
+        self.hydrated(window)?;
         let state = {
-            let mut runtime = self.locked()?;
+            let mut runtime = self.locked(window)?;
             runtime.state.appearance = request.into_appearance();
             runtime.state.clone()
         };
-        if let Some(window) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
-            window
+        if let Some(webview) = app.get_webview_window(window.label()) {
+            webview
                 .set_always_on_top(state.appearance.always_on_top)
                 .map_err(|_| AppError::window_error("window_always_on_top_failed"))?;
         }
-        let appearance = state.appearance;
-        self.publish(app, appearance)?;
-        self.persist(state)?;
-        Ok(appearance)
+        let view = DetachedWindowView::new(window, state.appearance);
+        self.publish(app, view.clone())?;
+        self.persist(window, state)?;
+        Ok(view)
     }
 
     fn publish<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        appearance: TranscriptWindowAppearance,
+        appearance: DetachedWindowView<DetachedWindowAppearance>,
     ) -> Result<(), AppError> {
-        app.emit(TRANSCRIPT_WINDOW_APPEARANCE_EVENT, appearance)
+        app.emit(DETACHED_WINDOW_APPEARANCE_EVENT, appearance)
             .map_err(|_| AppError::window_error("window_appearance_publish_failed"))
     }
 
     /// Records observed geometry, writing through at most once per interval so
     /// a drag does not become a stream of database writes.
-    fn record_geometry(&self, geometry: TranscriptWindowGeometry, force: bool) {
+    fn record_geometry(
+        &self,
+        window: DetachedWindow,
+        geometry: DetachedWindowGeometry,
+        force: bool,
+    ) {
         if geometry.validate().is_err() {
             return;
         }
-        let Ok(mut runtime) = self.runtime.lock() else {
+        let Ok(mut runtime) = self.locked(window) else {
             return;
         };
         if runtime.state.geometry == Some(geometry) && !force {
@@ -341,15 +420,20 @@ impl TranscriptWindowService {
         runtime.last_write = Some(Instant::now());
         let state = runtime.state.clone();
         drop(runtime);
-        let _ = self.persist(state);
+        let _ = self.persist(window, state);
     }
 
-    /// Opens the transcript window, or focuses it when it already exists.
+    /// Opens a detached window, or focuses it when it already exists.
     ///
     /// Reopening is deliberately idempotent: a user pressing the control twice
-    /// must never end up with two transcript webviews.
-    pub(crate) fn open<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), AppError> {
-        if let Some(existing) = app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
+    /// must never end up with two webviews for the same window.
+    pub(crate) fn open<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        window: DetachedWindow,
+    ) -> Result<(), AppError> {
+        let spec = spec(window);
+        if let Some(existing) = app.get_webview_window(window.label()) {
             existing
                 .show()
                 .and_then(|()| existing.unminimize())
@@ -357,7 +441,7 @@ impl TranscriptWindowService {
                 .map_err(|_| AppError::window_error("window_focus_failed"))?;
             return Ok(());
         }
-        let state = self.hydrated()?;
+        let state = self.hydrated(window)?;
         let restored = state.geometry.filter(|geometry| reachable(app, *geometry));
         let publisher = self.clone();
         let published = app.clone();
@@ -365,63 +449,56 @@ impl TranscriptWindowService {
 
         // Built hidden so a restored position is applied before the window is
         // ever painted, avoiding a visible jump from the default placement.
-        let window = WebviewWindowBuilder::new(
-            app,
-            TRANSCRIPT_WINDOW_LABEL,
-            WebviewUrl::App(TRANSCRIPT_WINDOW_URL.into()),
-        )
-        .title(TRANSCRIPT_WINDOW_TITLE)
-        .inner_size(TRANSCRIPT_WINDOW_WIDTH, TRANSCRIPT_WINDOW_HEIGHT)
-        .min_inner_size(TRANSCRIPT_WINDOW_MIN_WIDTH, TRANSCRIPT_WINDOW_MIN_HEIGHT)
-        .resizable(true)
-        .visible(false)
-        // Required for background opacity: the page paints its own translucent
-        // background while text stays fully opaque.
-        .transparent(true)
-        .always_on_top(state.appearance.always_on_top)
-        // The window cannot ask for its own state, so publish it once the page
-        // is ready to receive the events. Interaction is included because a
-        // window reopened during click-through must say so from the first paint.
-        .on_page_load(move |_window, _payload| {
-            if let Ok(current) = publisher.appearance() {
-                let _ = publisher.publish(&published, current);
-            }
-            if let Ok(current) = publisher.interaction() {
-                let _ = published.emit(TRANSCRIPT_WINDOW_INTERACTION_EVENT, current);
-            }
-        })
-        .build()
-        .map_err(|_| AppError::window_error("window_open_failed"))?;
+        let webview =
+            WebviewWindowBuilder::new(app, window.label(), WebviewUrl::App(spec.url.into()))
+                .title(spec.title)
+                .inner_size(spec.width, spec.height)
+                .min_inner_size(spec.minimum_width, spec.minimum_height)
+                .resizable(true)
+                .visible(false)
+                // Required for background opacity: the page paints its own
+                // translucent background while text stays fully opaque.
+                .transparent(true)
+                .always_on_top(state.appearance.always_on_top)
+                // The window cannot ask for its own state, so publish it once the
+                // page is ready to receive the events. Interaction is included
+                // because a window reopened during click-through must say so from
+                // the first paint.
+                .on_page_load(move |_webview, _payload| {
+                    if let Ok(current) = publisher.appearance(window) {
+                        let _ = publisher.publish(&published, current);
+                    }
+                    let _ = publisher.publish_interaction(&published, window);
+                })
+                .build()
+                .map_err(|_| AppError::window_error("window_open_failed"))?;
 
         if let Some(geometry) = restored {
-            let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
-            let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
+            let _ = webview.set_size(PhysicalSize::new(geometry.width, geometry.height));
+            let _ = webview.set_position(PhysicalPosition::new(geometry.x, geometry.y));
         } else {
-            let _ = window.set_size(LogicalSize::new(
-                TRANSCRIPT_WINDOW_WIDTH,
-                TRANSCRIPT_WINDOW_HEIGHT,
-            ));
-            let _ = window.center();
+            let _ = webview.set_size(LogicalSize::new(spec.width, spec.height));
+            let _ = webview.center();
         }
         // A window reopened during a click-through session must match the state
         // the user last chose, which the freshly built window does not inherit.
-        if self.locked()?.click_through {
-            let _ = window.set_ignore_cursor_events(true);
+        if self.locked(window)?.click_through {
+            let _ = webview.set_ignore_cursor_events(true);
         }
-        window
+        webview
             .show()
             .map_err(|_| AppError::window_error("window_open_failed"))?;
 
-        let tracked = window.clone();
-        window.on_window_event(move |event| match event {
+        let tracked = webview.clone();
+        webview.on_window_event(move |event| match event {
             WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
                 if let Some(geometry) = current_geometry(&tracked) {
-                    observer.record_geometry(geometry, false);
+                    observer.record_geometry(window, geometry, false);
                 }
             }
             WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
                 if let Some(geometry) = current_geometry(&tracked) {
-                    observer.record_geometry(geometry, true);
+                    observer.record_geometry(window, geometry, true);
                 }
             }
             _ => {}
@@ -429,16 +506,32 @@ impl TranscriptWindowService {
         Ok(())
     }
 
-    /// Closes the transcript window. Closing an absent window succeeds so the
+    /// Closes a detached window. Closing an absent window succeeds so the
     /// control stays usable after the user closes the window themselves.
-    pub(crate) fn close<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), AppError> {
-        match app.get_webview_window(TRANSCRIPT_WINDOW_LABEL) {
+    pub(crate) fn close<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        window: DetachedWindow,
+    ) -> Result<(), AppError> {
+        match app.get_webview_window(window.label()) {
             Some(existing) => existing
                 .close()
                 .map_err(|_| AppError::window_error("window_close_failed")),
             None => Ok(()),
         }
     }
+}
+
+/// Hotkey identifiers are process-wide, so each window gets its own. Zero is
+/// avoided so an uninitialized value can never look like a valid registration.
+const fn hotkey_id(window: DetachedWindow) -> i32 {
+    window.index() as i32 + 1
+}
+
+fn window_for_hotkey(id: i32) -> Option<DetachedWindow> {
+    DetachedWindow::ALL
+        .into_iter()
+        .find(|window| hotkey_id(*window) == id)
 }
 
 /// The R-010 recovery rule, stated once so it can be checked directly.
@@ -451,10 +544,10 @@ const fn click_through_is_recoverable(requested: bool, main_window_present: bool
 
 fn current_geometry<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
-) -> Option<TranscriptWindowGeometry> {
+) -> Option<DetachedWindowGeometry> {
     let position = window.outer_position().ok()?;
     let size = window.inner_size().ok()?;
-    Some(TranscriptWindowGeometry {
+    Some(DetachedWindowGeometry {
         x: position.x,
         y: position.y,
         width: size.width,
@@ -465,7 +558,7 @@ fn current_geometry<R: Runtime>(
 /// A remembered position is only restored when a currently attached monitor
 /// still shows enough of the window to grab it. Otherwise the window would
 /// reopen on a display that is no longer there.
-fn reachable<R: Runtime>(app: &AppHandle<R>, geometry: TranscriptWindowGeometry) -> bool {
+fn reachable<R: Runtime>(app: &AppHandle<R>, geometry: DetachedWindowGeometry) -> bool {
     let Ok(monitors) = app.available_monitors() else {
         return false;
     };
@@ -482,17 +575,22 @@ mod tests {
 
     use super::*;
 
-    fn service() -> (tempfile::TempDir, TranscriptWindowService) {
+    fn service() -> (tempfile::TempDir, DetachedWindowService) {
         let root = tempdir().unwrap();
         let app_data = root.path().join("app-data");
         let documents = root.path().join("documents");
         std::fs::create_dir_all(&documents).unwrap();
         let settings = SettingsService::open(app_data, documents).unwrap();
-        (root, TranscriptWindowService::new(settings))
+        (root, DetachedWindowService::new(settings))
     }
 
-    fn request(opacity: f64, always_on_top: bool) -> SetTranscriptWindowAppearanceRequest {
+    fn request(
+        window: &str,
+        opacity: f64,
+        always_on_top: bool,
+    ) -> SetDetachedWindowAppearanceRequest {
         serde_json::from_value(serde_json::json!({
+            "window": window,
             "backgroundOpacity": opacity,
             "alwaysOnTop": always_on_top,
             "compact": true
@@ -501,23 +599,109 @@ mod tests {
     }
 
     #[test]
-    fn the_transcript_window_target_is_fixed_and_local() {
-        assert_eq!(TRANSCRIPT_WINDOW_LABEL, "transcript");
-        assert_eq!(TRANSCRIPT_WINDOW_URL, "index.html#/transcript-window");
-        assert!(!TRANSCRIPT_WINDOW_URL.contains("://"));
-        assert!(!TRANSCRIPT_WINDOW_URL.starts_with('/'));
-        assert!(!TRANSCRIPT_WINDOW_URL.contains(".."));
+    fn every_window_target_is_fixed_and_local() {
+        for window in DetachedWindow::ALL {
+            let spec = spec(window);
+            assert!(spec.url.starts_with("index.html#/"));
+            assert!(!spec.url.contains("://"));
+            assert!(!spec.url.contains(".."));
+            assert!(spec.minimum_width <= spec.width);
+            assert!(spec.minimum_height <= spec.height);
+        }
+    }
+
+    /// One combination cannot show and hide two windows, and the platform
+    /// refuses a second registration of the same binding.
+    #[test]
+    fn each_window_has_its_own_hotkey_identity_and_default_binding() {
+        assert_ne!(
+            hotkey_id(DetachedWindow::Transcript),
+            hotkey_id(DetachedWindow::Insights)
+        );
+        assert_ne!(
+            DetachedWindow::Transcript.default_shortcut_binding(),
+            DetachedWindow::Insights.default_shortcut_binding()
+        );
+        for window in DetachedWindow::ALL {
+            assert_eq!(window_for_hotkey(hotkey_id(window)), Some(window));
+        }
+        assert_eq!(window_for_hotkey(0), None);
+        assert_eq!(window_for_hotkey(99), None);
     }
 
     #[test]
     fn a_service_without_stored_state_starts_fully_opaque_and_unpinned() {
         let (_root, service) = service();
 
-        let appearance = service.appearance().unwrap();
+        for window in DetachedWindow::ALL {
+            let view = service.appearance(window).unwrap();
 
-        assert_eq!(appearance.background_opacity, 1.0);
-        assert!(!appearance.always_on_top);
-        assert!(!appearance.compact);
+            assert_eq!(view.window, window);
+            assert_eq!(view.value.background_opacity, 1.0);
+            assert!(!view.value.always_on_top);
+            assert!(!view.value.compact);
+        }
+    }
+
+    /// The whole point of keying state by window: changing one window's state
+    /// must leave the other exactly as it was, in memory and on disk.
+    #[test]
+    fn each_window_keeps_its_own_state() {
+        let (root, service) = service();
+        let app_data = root.path().join("app-data");
+        let documents = root.path().join("documents");
+
+        {
+            let mut runtime = service.locked(DetachedWindow::Transcript).unwrap();
+            runtime.state.appearance = request("transcript", 0.55, true).into_appearance();
+            runtime.loaded = true;
+        }
+        let transcript = service
+            .locked(DetachedWindow::Transcript)
+            .unwrap()
+            .state
+            .clone();
+        service
+            .persist(DetachedWindow::Transcript, transcript)
+            .unwrap();
+        let insights_geometry = DetachedWindowGeometry {
+            x: 10,
+            y: 20,
+            width: 440,
+            height: 560,
+        };
+        service.record_geometry(DetachedWindow::Insights, insights_geometry, true);
+
+        assert_eq!(
+            service.appearance(DetachedWindow::Insights).unwrap().value,
+            DetachedWindowAppearance::default(),
+            "one window's appearance must not follow the other"
+        );
+        assert!(
+            service
+                .locked(DetachedWindow::Transcript)
+                .unwrap()
+                .state
+                .geometry
+                .is_none(),
+            "one window's geometry must not follow the other"
+        );
+
+        // A new process reads both rows back independently.
+        let restarted =
+            DetachedWindowService::new(SettingsService::open(app_data, documents).unwrap());
+
+        assert_eq!(
+            restarted
+                .hydrated(DetachedWindow::Transcript)
+                .unwrap()
+                .appearance
+                .background_opacity,
+            0.55
+        );
+        let insights = restarted.hydrated(DetachedWindow::Insights).unwrap();
+        assert_eq!(insights.geometry, Some(insights_geometry));
+        assert_eq!(insights.appearance.background_opacity, 1.0);
     }
 
     #[test]
@@ -525,7 +709,7 @@ mod tests {
         let (root, service) = service();
         let app_data = root.path().join("app-data");
         let documents = root.path().join("documents");
-        let geometry = TranscriptWindowGeometry {
+        let geometry = DetachedWindowGeometry {
             x: -1_400,
             y: 120,
             width: 640,
@@ -533,18 +717,16 @@ mod tests {
         };
 
         {
-            let mut runtime = service.locked().unwrap();
-            runtime.state.appearance = request(0.55, true).into_appearance();
+            let mut runtime = service.locked(DetachedWindow::Transcript).unwrap();
+            runtime.state.appearance = request("transcript", 0.55, true).into_appearance();
             runtime.loaded = true;
         }
-        service.record_geometry(geometry, true);
-        let stored = service.persist(service.locked().unwrap().state.clone());
-        stored.unwrap();
+        service.record_geometry(DetachedWindow::Transcript, geometry, true);
 
         // A new process reads the same database.
         let restarted =
-            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
-        let state = restarted.hydrated().unwrap();
+            DetachedWindowService::new(SettingsService::open(app_data, documents).unwrap());
+        let state = restarted.hydrated(DetachedWindow::Transcript).unwrap();
 
         assert_eq!(state.appearance.background_opacity, 0.55);
         assert!(state.appearance.always_on_top);
@@ -555,11 +737,12 @@ mod tests {
     #[test]
     fn repeated_moves_are_throttled_but_a_close_always_writes() {
         let (_root, service) = service();
-        service.hydrated().unwrap();
+        service.hydrated(DetachedWindow::Transcript).unwrap();
 
         for offset in 0..5 {
             service.record_geometry(
-                TranscriptWindowGeometry {
+                DetachedWindow::Transcript,
+                DetachedWindowGeometry {
                     x: offset,
                     y: 0,
                     width: 520,
@@ -568,25 +751,32 @@ mod tests {
                 false,
             );
         }
-        let after_moves = service.locked().unwrap().last_write;
+        let after_moves = service
+            .locked(DetachedWindow::Transcript)
+            .unwrap()
+            .last_write;
         assert!(after_moves.is_some(), "the first move writes immediately");
 
-        let final_geometry = TranscriptWindowGeometry {
+        let final_geometry = DetachedWindowGeometry {
             x: 900,
             y: 40,
             width: 520,
             height: 720,
         };
-        service.record_geometry(final_geometry, true);
+        service.record_geometry(DetachedWindow::Transcript, final_geometry, true);
 
         assert_eq!(
-            service.locked().unwrap().state.geometry,
+            service
+                .locked(DetachedWindow::Transcript)
+                .unwrap()
+                .state
+                .geometry,
             Some(final_geometry)
         );
         assert_eq!(
             service
                 .settings
-                .load_window_state(TRANSCRIPT_WINDOW_LABEL)
+                .load_window_state(DetachedWindow::Transcript.label())
                 .unwrap()
                 .unwrap()
                 .geometry,
@@ -598,10 +788,11 @@ mod tests {
     #[test]
     fn absurd_geometry_is_never_recorded() {
         let (_root, service) = service();
-        service.hydrated().unwrap();
+        service.hydrated(DetachedWindow::Transcript).unwrap();
 
         service.record_geometry(
-            TranscriptWindowGeometry {
+            DetachedWindow::Transcript,
+            DetachedWindowGeometry {
                 x: 0,
                 y: 0,
                 width: 1,
@@ -610,7 +801,14 @@ mod tests {
             true,
         );
 
-        assert!(service.locked().unwrap().state.geometry.is_none());
+        assert!(
+            service
+                .locked(DetachedWindow::Transcript)
+                .unwrap()
+                .state
+                .geometry
+                .is_none()
+        );
     }
 
     /// The R-010 rule allows click-through only while pointer control is
@@ -621,30 +819,34 @@ mod tests {
         let (root, service) = service();
         let app_data = root.path().join("app-data");
         let documents = root.path().join("documents");
-        service.hydrated().unwrap();
 
-        service.locked().unwrap().click_through = true;
-        let state = service.locked().unwrap().state.clone();
-        service.persist(state).unwrap();
+        for window in DetachedWindow::ALL {
+            service.hydrated(window).unwrap();
+            service.locked(window).unwrap().click_through = true;
+            let state = service.locked(window).unwrap().state.clone();
+            service.persist(window, state).unwrap();
 
-        let stored = service
-            .settings
-            .load_window_state(TRANSCRIPT_WINDOW_LABEL)
-            .unwrap()
-            .unwrap();
-        let serialized = serde_json::to_string(&stored).unwrap();
-        assert!(
-            !serialized.contains("clickThrough"),
-            "persisted state must not carry click-through"
-        );
+            let stored = service
+                .settings
+                .load_window_state(window.label())
+                .unwrap()
+                .unwrap();
+            let serialized = serde_json::to_string(&stored).unwrap();
+            assert!(
+                !serialized.contains("clickThrough"),
+                "persisted state must not carry click-through"
+            );
+        }
 
         let restarted =
-            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
-        restarted.hydrated().unwrap();
-        assert!(
-            !restarted.interaction().unwrap().click_through,
-            "a restart must always restore pointer input"
-        );
+            DetachedWindowService::new(SettingsService::open(app_data, documents).unwrap());
+        for window in DetachedWindow::ALL {
+            restarted.hydrated(window).unwrap();
+            assert!(
+                !restarted.interaction(window).unwrap().value.click_through,
+                "a restart must always restore pointer input"
+            );
+        }
     }
 
     /// The main window is the only surface able to turn click-through off, so
@@ -662,10 +864,13 @@ mod tests {
     fn a_new_service_accepts_pointer_input() {
         let (_root, service) = service();
 
-        let interaction = service.interaction().unwrap();
+        for window in DetachedWindow::ALL {
+            let view = service.interaction(window).unwrap();
 
-        assert_eq!(interaction.schema_version, 1);
-        assert!(!interaction.click_through);
+            assert_eq!(view.window, window);
+            assert_eq!(view.value.schema_version, 1);
+            assert!(!view.value.click_through);
+        }
     }
 
     #[test]
@@ -673,20 +878,20 @@ mod tests {
         let (root, service) = service();
         let app_data = root.path().join("app-data");
         let documents = root.path().join("documents");
-        service.hydrated().unwrap();
+        service.hydrated(DetachedWindow::Transcript).unwrap();
         service
             .settings
             .save_window_state(
-                TRANSCRIPT_WINDOW_LABEL,
-                &TranscriptWindowState::default(),
+                DetachedWindow::Transcript.label(),
+                &DetachedWindowState::default_for(DetachedWindow::Transcript),
                 "2026-08-23T10:00:00Z",
             )
             .unwrap();
 
         let restarted =
-            TranscriptWindowService::new(SettingsService::open(app_data, documents).unwrap());
+            DetachedWindowService::new(SettingsService::open(app_data, documents).unwrap());
 
-        let state = restarted.hydrated().unwrap();
+        let state = restarted.hydrated(DetachedWindow::Transcript).unwrap();
         assert_eq!(state.appearance.background_opacity, 1.0);
         assert!(state.geometry.is_none());
     }

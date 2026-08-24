@@ -51,7 +51,8 @@ pub(crate) use transcripts::{
     TranscriptSearchQuery, TranscriptSegmentStatus, TranscriptSegmentView,
 };
 pub(crate) use windows::{
-    ParsedShortcut, SetTranscriptWindowAppearanceRequest, SetTranscriptWindowInteractionRequest,
-    SetTranscriptWindowShortcutRequest, TranscriptWindowAppearance, TranscriptWindowGeometry,
-    TranscriptWindowInteraction, TranscriptWindowShortcutStatus, TranscriptWindowState,
+    DetachedWindow, DetachedWindowAppearance, DetachedWindowGeometry, DetachedWindowInteraction,
+    DetachedWindowShortcutStatus, DetachedWindowState, DetachedWindowView, ParsedShortcut,
+    SetDetachedWindowAppearanceRequest, SetDetachedWindowInteractionRequest,
+    SetDetachedWindowShortcutRequest,
 };

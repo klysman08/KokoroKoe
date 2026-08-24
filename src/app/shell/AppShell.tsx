@@ -18,7 +18,7 @@ import { SettingsPage } from "@/features/settings/SettingsPage"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
 import { useSessionLifecycleMutation } from "@/features/sessions/use-sessions"
 import { cn } from "@/lib/utils"
-import { TranscriptWindowControls } from "@/features/transcript/TranscriptWindowControls"
+import { DetachedWindowControls } from "@/features/windows/DetachedWindowControls"
 import {
   type ActiveSession,
   useActiveSessionStore,
@@ -107,7 +107,8 @@ export function AppShell() {
               session={activeSession}
             />
           )}
-          <TranscriptWindowControls collapsed={collapsed} />
+          <DetachedWindowControls collapsed={collapsed} window="transcript" />
+          <DetachedWindowControls collapsed={collapsed} window="insights" />
           {!collapsed && (
             <div className="bg-card text-muted-foreground mb-3 rounded-xl border p-3 text-xs leading-relaxed">
               Audio stays local. External analysis remains off until explicitly

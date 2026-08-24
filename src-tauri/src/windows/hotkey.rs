@@ -1,4 +1,4 @@
-//! A system-wide show/hide hotkey for the transcript window.
+//! System-wide show/hide hotkeys for the detached windows.
 //!
 //! `RegisterHotKey` delivers `WM_HOTKEY` to the message queue of the thread
 //! that registered it, so the binding is owned by a dedicated thread with its
@@ -8,16 +8,16 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use crate::domain::ParsedShortcut;
 
-/// Identifies our hotkey within this process. Any value is fine as long as it
-/// is stable and not shared with another registration we make.
-const HOTKEY_ID: i32 = 1;
-
 enum Request {
-    Bind(Option<ParsedShortcut>, mpsc::Sender<bool>),
+    Bind(i32, Option<ParsedShortcut>, mpsc::Sender<bool>),
     Shutdown,
 }
 
-/// Owns the registration thread and the currently bound combination.
+/// Owns the registration thread and every combination currently bound on it.
+///
+/// One thread serves all windows: `RegisterHotKey` scopes registrations to the
+/// registering thread, so a second thread would only add a second message loop
+/// to keep alive for no benefit. Each window is told apart by its own id.
 pub(crate) struct HotkeyController {
     requests: mpsc::Sender<Request>,
     thread_id: u32,
@@ -27,7 +27,7 @@ pub(crate) struct HotkeyController {
 impl HotkeyController {
     /// Starts the registration thread. `on_pressed` runs on that thread, so it
     /// must not block; the caller dispatches real work elsewhere.
-    pub(crate) fn start(on_pressed: Arc<dyn Fn() + Send + Sync + 'static>) -> Option<Arc<Self>> {
+    pub(crate) fn start(on_pressed: Arc<dyn Fn(i32) + Send + Sync + 'static>) -> Option<Arc<Self>> {
         let (requests, incoming) = mpsc::channel();
         let (ready, started) = mpsc::channel();
         let handle = std::thread::Builder::new()
@@ -47,9 +47,13 @@ impl HotkeyController {
     /// Returns whether the system accepted the registration; a combination
     /// already owned by another application is refused rather than silently
     /// doing nothing.
-    pub(crate) fn bind(&self, shortcut: Option<ParsedShortcut>) -> bool {
+    pub(crate) fn bind(&self, id: i32, shortcut: Option<ParsedShortcut>) -> bool {
         let (answer, reply) = mpsc::channel();
-        if self.requests.send(Request::Bind(shortcut, answer)).is_err() {
+        if self
+            .requests
+            .send(Request::Bind(id, shortcut, answer))
+            .is_err()
+        {
             return false;
         }
         wake(self.thread_id);
@@ -82,7 +86,7 @@ mod platform {
 
     use crate::domain::ParsedShortcut;
 
-    use super::{HOTKEY_ID, Request};
+    use super::Request;
 
     pub(super) fn modifiers(shortcut: &ParsedShortcut) -> HOT_KEY_MODIFIERS {
         let mut value = MOD_NOREPEAT;
@@ -111,14 +115,14 @@ mod platform {
     pub(super) fn run_message_loop(
         incoming: &std::sync::mpsc::Receiver<Request>,
         ready: &std::sync::mpsc::Sender<u32>,
-        on_pressed: &(dyn Fn() + Send + Sync + 'static),
+        on_pressed: &(dyn Fn(i32) + Send + Sync + 'static),
     ) {
         // Safety: reading this thread's own identifier.
         let thread_id = unsafe { GetCurrentThreadId() };
         if ready.send(thread_id).is_err() {
             return;
         }
-        let mut bound = false;
+        let mut bound: Vec<i32> = Vec::new();
         let mut message = MSG {
             hwnd: std::ptr::null_mut(),
             message: 0,
@@ -136,8 +140,8 @@ mod platform {
             if received == 0 {
                 break;
             }
-            if message.message == WM_HOTKEY && message.wParam as i32 == HOTKEY_ID {
-                on_pressed();
+            if message.message == WM_HOTKEY {
+                on_pressed(message.wParam as i32);
                 continue;
             }
             if message.message != WM_APP {
@@ -146,13 +150,13 @@ mod platform {
             let mut shutdown = false;
             while let Ok(request) = incoming.try_recv() {
                 match request {
-                    Request::Bind(shortcut, answer) => {
-                        if bound {
+                    Request::Bind(id, shortcut, answer) => {
+                        if let Some(position) = bound.iter().position(|held| *held == id) {
                             // Safety: unregistering a hotkey this thread owns.
                             unsafe {
-                                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+                                UnregisterHotKey(std::ptr::null_mut(), id);
                             }
-                            bound = false;
+                            bound.swap_remove(position);
                         }
                         let accepted = match shortcut {
                             Some(shortcut) => {
@@ -161,13 +165,15 @@ mod platform {
                                 let result = unsafe {
                                     RegisterHotKey(
                                         std::ptr::null_mut(),
-                                        HOTKEY_ID,
+                                        id,
                                         modifiers(&shortcut),
                                         u32::from(shortcut.virtual_key),
                                     )
                                 };
-                                bound = result != 0;
-                                bound
+                                if result != 0 {
+                                    bound.push(id);
+                                }
+                                result != 0
                             }
                             None => true,
                         };
@@ -180,10 +186,10 @@ mod platform {
                 break;
             }
         }
-        if bound {
+        for id in bound {
             // Safety: unregistering a hotkey this thread owns.
             unsafe {
-                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+                UnregisterHotKey(std::ptr::null_mut(), id);
             }
         }
     }
@@ -200,14 +206,14 @@ mod platform {
     pub(super) fn run_message_loop(
         incoming: &std::sync::mpsc::Receiver<Request>,
         ready: &std::sync::mpsc::Sender<u32>,
-        _on_pressed: &(dyn Fn() + Send + Sync + 'static),
+        _on_pressed: &(dyn Fn(i32) + Send + Sync + 'static),
     ) {
         if ready.send(0).is_err() {
             return;
         }
         while let Ok(request) = incoming.recv() {
             match request {
-                Request::Bind(_shortcut, answer) => {
+                Request::Bind(_id, _shortcut, answer) => {
                     let _ = answer.send(false);
                 }
                 Request::Shutdown => break,
@@ -232,13 +238,13 @@ mod tests {
     fn a_controller_starts_and_stops_cleanly() {
         let presses = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&presses);
-        let controller = HotkeyController::start(Arc::new(move || {
+        let controller = HotkeyController::start(Arc::new(move |_id| {
             observed.fetch_add(1, Ordering::SeqCst);
         }))
         .expect("the hotkey thread should start");
 
         // Clearing a binding always succeeds, even where registration cannot.
-        assert!(controller.bind(None));
+        assert!(controller.bind(1, None));
         assert_eq!(presses.load(Ordering::SeqCst), 0);
 
         drop(controller);
@@ -248,19 +254,55 @@ mod tests {
     #[test]
     fn a_validated_binding_is_accepted_and_can_be_replaced() {
         let controller =
-            HotkeyController::start(Arc::new(|| {})).expect("the hotkey thread should start");
+            HotkeyController::start(Arc::new(|_id| {})).expect("the hotkey thread should start");
 
         // F24 combinations are unlikely to be owned by another application.
         let first = ParsedShortcut::parse("Ctrl+Alt+Shift+F24").unwrap();
-        assert!(controller.bind(Some(first)), "an unused combination binds");
+        assert!(
+            controller.bind(1, Some(first)),
+            "an unused combination binds"
+        );
 
         let second = ParsedShortcut::parse("Ctrl+Alt+Shift+F23").unwrap();
         assert!(
-            controller.bind(Some(second)),
+            controller.bind(1, Some(second)),
             "rebinding releases the first"
         );
 
-        assert!(controller.bind(None), "clearing releases the registration");
+        assert!(
+            controller.bind(1, None),
+            "clearing releases the registration"
+        );
+        drop(controller);
+    }
+
+    /// Two windows must be able to hold two different combinations at once,
+    /// and releasing one must not release the other.
+    #[cfg(windows)]
+    #[test]
+    fn two_windows_hold_independent_registrations() {
+        let controller =
+            HotkeyController::start(Arc::new(|_id| {})).expect("the hotkey thread should start");
+
+        let first = ParsedShortcut::parse("Ctrl+Alt+Shift+F22").unwrap();
+        let second = ParsedShortcut::parse("Ctrl+Alt+Shift+F21").unwrap();
+        assert!(controller.bind(1, Some(first)));
+        assert!(controller.bind(2, Some(second)));
+
+        // Clearing the first leaves the second held, so rebinding the second's
+        // combination onto the first id must be refused.
+        assert!(controller.bind(1, None));
+        assert!(
+            !controller.bind(1, Some(second)),
+            "a combination another registration owns is refused"
+        );
+
+        assert!(controller.bind(2, None));
+        assert!(
+            controller.bind(1, Some(second)),
+            "the combination is available once its holder releases it"
+        );
+        assert!(controller.bind(1, None));
         drop(controller);
     }
 }

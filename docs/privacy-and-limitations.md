@@ -106,6 +106,8 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 
 ## Window limitations
 
+- The **Explain**, **Suggest a response**, and **Summarize** buttons on a transcript segment send nothing. They fill the question box with a prepared question, which you can read, edit, or abandon; transcript text reaches OpenRouter only when you press **Ask OpenRouter**, exactly as for a question you typed yourself.
+- Copying a transcript segment puts that segment on the system clipboard — the speaker, the timecode, and the text, but no segment identifier, language, or confidence. As with any clipboard use, other applications can read it and nothing clears it afterwards.
 - Copying an insight puts model-generated text about the meeting on the system clipboard, where any other application can read it. It is copied only when you press **Copy**, and only the title, body, and rationale you can already see are copied — never segment identifiers, cost, or session metadata. Nothing clears the clipboard afterwards.
 - Pinning and dismissing insights are view-local and unsaved. Closing the insights window discards every pin and every dismissal along with the insights themselves, so a dismissed insight can reappear in a later run.
 - The detached transcript and insights windows each hold an event-subscription-only capability: neither can invoke a command, read a file, reach the network, or manage a window. They receive the same locally emitted events the main window does and display them; nothing leaves the machine because a second window is open.

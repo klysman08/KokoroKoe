@@ -1,4 +1,10 @@
-import { MessageCircleQuestion, Search, ShieldCheck, X } from "lucide-react"
+import {
+  Copy,
+  MessageCircleQuestion,
+  Search,
+  ShieldCheck,
+  X,
+} from "lucide-react"
 import { type FormEvent, useState } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -38,12 +44,18 @@ import {
   useSavedTranscript,
   useTranscriptSearch,
 } from "@/features/transcript/use-saved-transcript"
+import {
+  SEGMENT_QUESTION_PRESETS,
+  segmentAsText,
+} from "@/features/transcript/segment-actions"
 import { askManualQuestion } from "@/lib/tauri/manual-question"
 
 type QuestionTarget = {
   id: string
   source: "microphone" | "system_output"
   startMs: number
+  /** Prefilled question text. Empty when the user asked to write their own. */
+  question: string
 }
 
 export function SavedTranscript({
@@ -59,6 +71,7 @@ export function SavedTranscript({
   const [searchQuery, setSearchQuery] = useState("")
   const [validationMessage, setValidationMessage] = useState<string>()
   const [questionTarget, setQuestionTarget] = useState<QuestionTarget>()
+  const [copiedSegmentId, setCopiedSegmentId] = useState<string>()
   const transcriptQuery = useSavedTranscript(project.id, session.id)
   const search = useTranscriptSearch(project.id, session.id, searchQuery)
   const segments =
@@ -66,6 +79,21 @@ export function SavedTranscript({
   const hits = search.data?.pages.flatMap((page) => page.items) ?? []
   const showingSearch = searchQuery.length > 0
   const activeError = showingSearch ? search.error : transcriptQuery.error
+
+  async function copySegment(segment: {
+    id: string
+    source: "microphone" | "system_output"
+    startMs: number
+    text: string
+  }) {
+    try {
+      await navigator.clipboard.writeText(segmentAsText(segment))
+      setCopiedSegmentId(segment.id)
+    } catch {
+      setCopiedSegmentId(undefined)
+      setValidationMessage("The clipboard is not available.")
+    }
+  }
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
@@ -148,7 +176,9 @@ export function SavedTranscript({
 
         {questionTarget && (
           <ManualQuestionPanel
-            key={`${project.id}:${session.id}:${questionTarget.id}`}
+            // Remounting on a new target or preset is what puts the prefilled
+            // question in the box; an open panel must not keep stale text.
+            key={`${project.id}:${session.id}:${questionTarget.id}:${questionTarget.question}`}
             onClose={() => setQuestionTarget(undefined)}
             project={project}
             session={session}
@@ -177,12 +207,17 @@ export function SavedTranscript({
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <SegmentHeader source={hit.source} startMs={hit.startMs} />
-                    <AskSegmentButton
-                      onClick={() =>
+                    <SegmentActions
+                      // A search hit shows a snippet with match markers, not the
+                      // segment's own text, so copying it would quote something
+                      // the transcript does not actually say.
+                      copied={false}
+                      onAsk={(question) =>
                         setQuestionTarget({
                           id: hit.id,
                           source: hit.source,
                           startMs: hit.startMs,
+                          question,
                         })
                       }
                     />
@@ -211,14 +246,17 @@ export function SavedTranscript({
                     source={segment.source}
                     startMs={segment.startMs}
                   />
-                  <AskSegmentButton
-                    onClick={() =>
+                  <SegmentActions
+                    copied={copiedSegmentId === segment.id}
+                    onAsk={(question) =>
                       setQuestionTarget({
                         id: segment.id,
                         source: segment.source,
                         startMs: segment.startMs,
+                        question,
                       })
                     }
+                    onCopy={() => void copySegment(segment)}
                   />
                 </div>
                 <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
@@ -257,12 +295,46 @@ export function SavedTranscript({
   )
 }
 
-function AskSegmentButton({ onClick }: { onClick: () => void }) {
+/**
+ * Per-segment actions.
+ *
+ * Copying is view-local. Every question action only opens the question box with
+ * text already filled in: nothing reaches OpenRouter until the user reads it
+ * and presses Ask, which is the point of prefilling rather than sending.
+ */
+function SegmentActions({
+  copied,
+  onAsk,
+  onCopy,
+}: {
+  copied: boolean
+  onAsk: (question: string) => void
+  onCopy?: () => void
+}) {
   return (
-    <Button onClick={onClick} size="xs" type="button" variant="ghost">
-      <MessageCircleQuestion aria-hidden="true" data-icon="inline-start" />
-      Ask about this segment
-    </Button>
+    <div className="flex flex-wrap items-center gap-1">
+      {onCopy && (
+        <Button onClick={onCopy} size="xs" type="button" variant="ghost">
+          <Copy aria-hidden="true" data-icon="inline-start" />
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      )}
+      {SEGMENT_QUESTION_PRESETS.map((preset) => (
+        <Button
+          key={preset.id}
+          onClick={() => onAsk(preset.question)}
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          {preset.label}
+        </Button>
+      ))}
+      <Button onClick={() => onAsk("")} size="xs" type="button" variant="ghost">
+        <MessageCircleQuestion aria-hidden="true" data-icon="inline-start" />
+        Ask about this segment
+      </Button>
+    </div>
   )
 }
 
@@ -277,7 +349,7 @@ function ManualQuestionPanel({
   target: QuestionTarget
   onClose: () => void
 }) {
-  const [question, setQuestion] = useState("")
+  const [question, setQuestion] = useState(target.question)
   const [response, setResponse] = useState<ManualQuestionResponse>()
   const [error, setError] = useState<ApplicationError>()
   const [validationMessage, setValidationMessage] = useState<string>()

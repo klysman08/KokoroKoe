@@ -1,5 +1,6 @@
-# KokoroKoe Project Memory
-
+| P6-009 | Primary Codex agent | Completed | Per-segment transcript copy and one-click question presets | P5-010 manual question; P5-014 saved transcript reading and search | Add only the Manifest section 9.2 per-block actions that need no new backend surface; implement Explain, Suggest a response, and Summarize as prefilled editable questions through the one verified manual-question path rather than as new prompt specs, so the user sees the exact text before anything leaves the machine and the answer stays inside the schema that path validates; send nothing until the user presses Ask; copy the speaker, timecode, and text and nothing internal; report a refused clipboard rather than claiming success; offer copy on segments but not on search snippets; defer marking-as-important and correcting a segment, which both need durable writes | 9 new frontend tests (47 Vitest files/246 tests) with Rust unchanged (341 ordinary, 14 ignored, 7 capability); locked Node 24/Rust gates, clean audits, x64 no-bundle release build, and launch smoke |
+# KokoroKoe Project Memoryand 6 new frontend tests (45 Vitest files/219 tests); locked Node 24/Rust gates, clean audits, x64 no-bundle release build, and launch smoke |
+| P6-008
 This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API keys, transcript content, audio, model weights, or personal meeting data here.
 
 ## Current phase
@@ -1466,6 +1467,34 @@ This checked-in ledger coordinates tasks and handoffs. Do not store secrets, API
 - Deliberately unmet Manifest requirement: section 9.3 asks to "differentiate provisional insights from confirmed insights." Nothing in the pipeline confirms an insight against the transcript — the only signal available is the model's self-reported confidence, which the card already shows as a percentage. Labelling insights "confirmed" on that basis would claim a verification that did not happen, so the distinction is left unimplemented rather than faked. Implementing it honestly needs a confirmation step that does not exist yet.
 - Known limitations: pins and dismissals are view-local and unsaved, so closing the window discards them and a dismissed insight can reappear in a later run. De-duplication is exact-text only: a model that rephrases the same observation produces a new card. The actions live in the detached window only; the main-window panel remains the generation surface and shows the raw batch. Generating an alternative version is not implemented, because it is the one section 9.3 action that needs a command. Copying puts meeting-derived text on the system clipboard where other applications can read it, and nothing clears it afterwards. Clipboard success was verified against a mocked clipboard, not against WebView2 on a real desktop; that check joins the outstanding R-010 desktop pass.
 
+### P6-009 - Per-segment transcript actions
+
+- Task ID: P6-009
+- Status: completed 2026-08-25
+- Owner: primary Codex agent
+- Scope: give saved transcript segments the Manifest section 9.2 per-block actions that need no new backend surface — copy, and one-click Explain, Suggest a response, and Summarize. Add no command, capability, prompt spec, or dependency.
+- Dependencies: P5-010 manual question; P5-014 saved transcript reading and search; the P6-008 precedent that an action's cost is what it requires.
+- Acceptance criteria:
+  - A preset fills the question box and sends nothing. Transcript text reaches OpenRouter only when the user presses **Ask OpenRouter**, exactly as for a typed question.
+  - Every preset is a question the existing manual-question contract already accepts, so pressing Ask can never fail on the preset itself.
+  - Choosing a different preset replaces the prefilled text rather than leaving a stale question under a new label.
+  - Asking freehand still opens an empty box.
+  - Copying carries the speaker, timecode, and text and nothing internal — no segment identifier, language, or confidence.
+  - A refused clipboard is reported rather than claimed as a copy.
+  - Search hits get the question actions but not copy, because a hit renders a snippet with match markers rather than the segment's own text.
+- Deliverables: the `segment-actions` module with `SEGMENT_QUESTION_PRESETS`, `segmentAsText`, and `formatTimecode`; a per-segment action row replacing the single ask button in `SavedTranscript`; a prefilled, editable question seed carried on the question target and keyed so a new preset remounts the panel; per-segment copy with success and refusal states.
+- Verification evidence:
+  - Module tests prove every preset parses against `askManualQuestionRequestSchema`, that ids, labels, and questions are all distinct, the exact clipboard text for both sources, and that a timecode is never negative.
+  - Component tests prove a preset prefills the box while `ask_manual_question` is never invoked, that a second preset replaces the text, that the freehand path still opens empty, that copying writes the expected text and shows **Copied**, and that a refused clipboard surfaces a message instead of claiming success.
+  - Node 24.19.0/pnpm 10.30.2 `pnpm verify:frontend` passed Prettier, ESLint with zero warnings, strict TypeScript, 47 Vitest files/246 tests, the Vite production build, and repository policy.
+  - Rust 1.88 `pnpm verify:rust` passed unchanged at 341 ordinary tests, 14 explicit ignored gates, and 7 capability tests; this task changed no Rust.
+  - Cargo deny license/bans/source policy passed and Cargo audit reported the existing 17 allowed warnings. The production frontend license inventory parsed 160 packages. `Cargo.lock` is byte-identical and no dependency changed.
+  - `pnpm tauri build --ci --no-bundle --target x86_64-pc-windows-msvc -- --locked` produced the release executable, and a hidden five-second native launch remained alive and responsive before intentional termination.
+- Architectural note: recorded in `docs/architecture.md`. No ADR is required: nothing crossed a boundary that an accepted decision describes.
+- Rejected approach: giving Explain, Suggest a response, and Summarize their own versioned prompt specs and commands. That would have added three prompt versions, three output schemas, and three command permissions to do what one already-verified path does, and it would have hidden the text being sent. Prefilling an editable box keeps the answer inside the validated `manual_answer_v1` schema and shows the user the exact question before any meeting text leaves the machine.
+- Process note: `npx tsc -b` reported success on a type error that `pnpm verify:frontend` then caught, because the incremental build info was stale. Treat the composite gate, not a bare `tsc -b`, as the typecheck of record.
+- Known limitations: the actions are on the saved transcript only. The live transcript view and the detached transcript window have none, and the manual-question path needs a finalized segment the journal has materialized, so a live partial is not addressable at all. The Manifest's remaining section 9.2 per-block actions are unimplemented: marking a segment as important needs durable storage, and correcting a finalized segment writes to the record of the meeting — both are deferred deliberately, not overlooked. Manual bookmarks are likewise absent. A preset is fixed English text; it does not follow the Session language. Copying a segment puts meeting text on the system clipboard where other applications can read it, and nothing clears it. Clipboard behavior is verified against a stub, not against WebView2 on a real desktop.
+
 ## Known environment facts
 
 - The machine-wide shell still defaults to Node 26.5.1; P2 verification initializes `fnm` and uses the repository-pinned Node 24.19.0.
@@ -1502,7 +1531,13 @@ P6-007 keyed all of that state by window, so both windows now have independent o
 
 P6-008 added the section 9.3 per-insight actions that need no command — pin, dismiss, and copy — and made a dismissal stick across batches, which is what "avoid repeatedly generating the same insight" means from the user's side. It deliberately did not implement the provisional-versus-confirmed distinction: nothing in the pipeline confirms an insight, so labelling one "confirmed" would claim a verification that never happened. Read that checkpoint before revisiting it.
 
-**The recommended next bounded task is the Manifest section 9.2 per-segment transcript actions.** Each transcript block should offer ask-about-this-segment, suggest-a-response, explain, summarize, mark-as-important, copy, and correct-text. Two of those already have Rust behind them: `ask_manual_question` exists and takes a segment id, and the summary pipeline exists. The rest are new. Start by deciding which are view-local — mark-as-important and copy are, the same way pin and dismiss were — and which need a command, because that split is what kept P6-008 inside the existing boundary. Correcting a finalized segment is the one to think hardest about: it writes to the transcript, which is the record of the meeting, so it needs a decision about whether the original text stays recoverable.
+P6-009 added the section 9.2 per-block actions that need no new backend surface: copy, and one-click Explain, Suggest a response, and Summarize as prefilled editable questions through the existing `ask_manual_question` path. Nothing is sent until the user presses Ask — keep that property if these grow.
+
+**The recommended next bounded task is the two remaining section 9.2 actions, and they should be taken together because they are the same problem: writing to the record of the meeting.** Marking a segment as important and correcting a finalized segment both need durable state, and the repo's rule is that Markdown is the source of truth with SQLite as a rebuildable index — so a mark stored only in SQLite would vanish on a rebuild, and a correction has to change `transcript.md` itself.
+
+Decide three things before writing code. First, where the mark lives: a new Markdown-visible marker in the transcript, or a sidecar the rebuild preserves. Second, whether a correction keeps the original recoverable — the transcript is verified against the recovery journal, so an in-place overwrite breaks that verification unless the journal records the correction as its own event; treat "the original stays recoverable" as the default and only drop it with a recorded reason. Third, what the summary and insight pipelines read: if they keep reading the raw journal, a correction the user made will not reach them, which would be a surprising and quiet failure.
+
+Manual bookmarks from section 9.2 are the same shape as marking a segment important and should probably land in that task rather than separately. The live transcript view and the detached transcript window still have no per-segment actions at all; the manual-question path needs a materialized finalized segment, so a live partial cannot be addressed until that changes.
 
 Two smaller follow-ups remain open in the insights window. Generating an alternative version is the one section 9.3 action that needs a command, and would be the first thing to force a deliberate widening of a display-only capability — record that against ADR 0008 rather than reusing the main capability. Showing *which* transcript segment an insight came from belongs with the section 9.2 work, because the window currently shows only a count and cannot read transcript text it did not receive.
 

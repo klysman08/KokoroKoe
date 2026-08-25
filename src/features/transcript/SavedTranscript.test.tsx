@@ -12,6 +12,7 @@ import {
   manualQuestionFixtureSchema,
 } from "@/contracts/manual-question"
 import { projectSessionFixtureSchema } from "@/contracts/projects"
+import { SEGMENT_QUESTION_PRESETS, segmentAsText } from "./segment-actions"
 import { SavedTranscript } from "./SavedTranscript"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
@@ -197,5 +198,110 @@ describe("SavedTranscript", () => {
     ).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent("provider-secret")
     expect(document.body).not.toHaveTextContent("private\\meeting.md")
+  })
+
+  /// A preset fills the question box and stops there. Meeting text must never
+  /// leave the machine because the user pressed a one-click label.
+  it("prefills a preset question without sending anything", async () => {
+    const user = userEvent.setup()
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+    invokeMock.mockClear()
+
+    await user.click(screen.getAllByRole("button", { name: "Explain" })[0]!)
+
+    const box = await screen.findByRole("textbox", { name: "Question" })
+    expect(box).toHaveValue(
+      SEGMENT_QUESTION_PRESETS.find((preset) => preset.id === "explain")!
+        .question,
+    )
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "ask_manual_question",
+      expect.anything(),
+    )
+  })
+
+  it("replaces the prefilled question when another preset is chosen", async () => {
+    const user = userEvent.setup()
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(screen.getAllByRole("button", { name: "Explain" })[0]!)
+    await screen.findByRole("textbox", { name: "Question" })
+    await user.click(screen.getAllByRole("button", { name: "Summarize" })[0]!)
+
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Question" })).toHaveValue(
+        SEGMENT_QUESTION_PRESETS.find((preset) => preset.id === "summarize")!
+          .question,
+      ),
+    )
+  })
+
+  it("leaves the question box empty when the user writes their own", async () => {
+    const user = userEvent.setup()
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Ask about this segment" })[0]!,
+    )
+
+    expect(
+      await screen.findByRole("textbox", { name: "Question" }),
+    ).toHaveValue("")
+  })
+
+  it("copies a segment as speaker, timecode, and text", async () => {
+    const user = userEvent.setup()
+    // `userEvent.setup()` installs its own clipboard stub, so the double must
+    // be defined after it or it is immediately replaced.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(screen.getAllByRole("button", { name: "Copy" })[0]!)
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        segmentAsText({
+          source: "microphone",
+          startMs: 1_200,
+          text: "We should keep the authoritative transcript local.",
+        }),
+      ),
+    )
+    expect(await screen.findByText("Copied")).toBeInTheDocument()
+  })
+
+  it("reports a refused clipboard instead of claiming a copy", async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(screen.getAllByRole("button", { name: "Copy" })[0]!)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The clipboard is not available.",
+    )
+    expect(screen.queryByText("Copied")).toBeNull()
   })
 })

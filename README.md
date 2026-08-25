@@ -25,9 +25,11 @@ to OpenRouter, and only when you ask for it.
   catalog, per-role model selection, versioned prompts, conservative cost reservation with
   reconciliation against a per-Session spending limit, bounded retries, and strict schema validation
   with a single JSON repair attempt.
-- **Questions and insights.** Ask a question about a saved transcript segment, or generate insights
-  over the recent transcript of a running Session. Both are explicit, per-request user actions that
-  return transient, validated, typed results with their token and cost accounting.
+- **Questions and insights.** Ask a question about a saved transcript segment — freehand, or with a
+  one-click **Explain**, **Suggest a response**, or **Summarize** that fills the question box for
+  you to read and edit before sending — or generate insights over the recent transcript of a running
+  Session. Both are explicit, per-request user actions that return transient, validated, typed
+  results with their token and cost accounting. Transcript segments can also be copied.
 - **Final session summary.** Once a Session is finished, generate an executive summary with main
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
@@ -52,9 +54,9 @@ to OpenRouter, and only when you ask for it.
   exists today.
 - An explicit monitor picker. Each window returns to where it was left, which is remembered between
   runs, but a preferred display cannot be named.
-- Generating an alternative version of an insight, and the per-segment transcript actions from the
-  Manifest. Insights also show how many transcript segments they came from but cannot yet show
-  which.
+- Correcting a finalized transcript segment, and marking one as important. Insights show how many
+  transcript segments they came from but cannot yet show which, and an alternative version of an
+  insight cannot be generated.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 

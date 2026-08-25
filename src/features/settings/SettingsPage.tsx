@@ -41,6 +41,11 @@ import { AudioDeviceSettings } from "@/features/settings/AudioDeviceSettings"
 import { OpenRouterCredentialCard } from "@/features/settings/OpenRouterCredentialCard"
 import { openRouterModelQueryKey } from "@/features/settings/openrouter-query"
 import { type OpenRouterModel } from "@/contracts/openrouter"
+import {
+  buildModelChoices,
+  matchesModelQuery,
+  type ModelChoice,
+} from "@/features/settings/model-choices"
 import { listOpenRouterModels } from "@/lib/tauri/openrouter"
 import {
   useChooseWorkspaceMutation,
@@ -559,12 +564,6 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
                 }
               />
             </div>
-            {!catalog.data && (
-              <p className="text-muted-foreground text-sm">
-                Validate the credential and load the privacy-filtered catalog
-                above before choosing role models.
-              </p>
-            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field data-invalid={!tokensValid}>
                 <FieldLabel htmlFor="max-tokens">
@@ -617,12 +616,6 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
   )
 }
 
-type ModelChoice = {
-  value: string
-  label: string
-  disabled?: boolean
-}
-
 function ModelRoleField({
   id,
   label,
@@ -638,18 +631,8 @@ function ModelRoleField({
   value: string | undefined
   onChange: (value: string | undefined) => void
 }) {
-  const currentMissing =
-    value !== undefined && !models.some((model) => model.id === value)
-  const choices: ModelChoice[] = [
-    { value: "", label: "Not selected" },
-    ...(currentMissing && value
-      ? [{ value, label: `Unavailable · ${value}`, disabled: true }]
-      : []),
-    ...models.map((model) => ({
-      value: model.id,
-      label: `${model.name} · ${model.provider}`,
-    })),
-  ]
+  const empty = models.length === 0
+  const choices = buildModelChoices(models, value)
   const selected = choices.find((choice) => choice.value === (value ?? ""))
   return (
     <Field>
@@ -659,13 +642,19 @@ function ModelRoleField({
         itemToStringValue={(choice) => choice.label}
         value={selected ?? null}
         onValueChange={(next) => onChange(next?.value || undefined)}
-        disabled={models.length === 0}
+        disabled={empty}
+        filter={matchesModelQuery}
       >
+        {/* The chevron trigger is what makes this read as a dropdown rather
+            than a text field, so it stays visible instead of being replaced by
+            a clear button; "Not selected" is how a role is cleared. */}
         <ComboboxInput
           id={id}
           className="w-full"
-          placeholder="Search OpenRouter models…"
-          showClear
+          disabled={empty}
+          placeholder={
+            empty ? "Load the catalog first" : "Search or browse models…"
+          }
         />
         <ComboboxContent>
           <ComboboxEmpty>No matching models.</ComboboxEmpty>
@@ -676,13 +665,24 @@ function ModelRoleField({
                 value={choice}
                 disabled={choice.disabled}
               >
-                {choice.label}
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{choice.label}</span>
+                  {choice.detail && (
+                    <span className="text-muted-foreground truncate text-xs">
+                      {choice.detail}
+                    </span>
+                  )}
+                </span>
               </ComboboxItem>
             )}
           </ComboboxList>
         </ComboboxContent>
       </Combobox>
-      <FieldDescription>{description}</FieldDescription>
+      <FieldDescription>
+        {empty
+          ? "Validate the credential and load the catalog above to choose a model."
+          : `${models.length} privacy-qualified models. ${description}`}
+      </FieldDescription>
     </Field>
   )
 }

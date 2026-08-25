@@ -66,6 +66,16 @@ function renderControls(window: DetachedWindow = "transcript") {
   return render(<DetachedWindowControls collapsed={false} window={window} />)
 }
 
+/// The settings are folded by default so two windows of controls cannot fill
+/// the sidebar; every test that touches one has to open it first.
+async function openSettings(window: DetachedWindow = "transcript") {
+  const result = renderControls(window)
+  await userEvent.click(
+    screen.getByRole("button", { name: /show .* settings/i }),
+  )
+  return result
+}
+
 describe("DetachedWindowControls", () => {
   beforeEach(() => {
     invokeMock.mockReset()
@@ -74,7 +84,7 @@ describe("DetachedWindowControls", () => {
   it("reads the Rust-owned state for the window it controls", async () => {
     respondPerWindow()
 
-    renderControls("insights")
+    await openSettings("insights")
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
@@ -94,12 +104,12 @@ describe("DetachedWindowControls", () => {
   it("keeps the two windows' settings apart", async () => {
     respondPerWindow()
 
-    const transcript = renderControls("transcript")
+    const transcript = await openSettings("transcript")
     await waitFor(() => expect(screen.getByText(/100%/)).toBeInTheDocument())
     transcript.unmount()
     invokeMock.mockClear()
 
-    renderControls("insights")
+    await openSettings("insights")
 
     await waitFor(() => expect(screen.getByText(/50%/)).toBeInTheDocument())
     for (const [, args] of invokeMock.mock.calls) {
@@ -107,6 +117,30 @@ describe("DetachedWindowControls", () => {
         "insights",
       )
     }
+  })
+
+  /// Two windows of controls fill a sidebar, so the settings fold away — but
+  /// the action people actually reach for must stay one click from the top.
+  it("folds the settings away while keeping Pop out reachable", async () => {
+    respondPerWindow()
+
+    renderControls("transcript")
+
+    expect(screen.getByRole("button", { name: /pop out/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/background opacity/i)).toBeNull()
+    expect(screen.queryByLabelText(/show\/hide shortcut/i)).toBeNull()
+    expect(screen.queryByLabelText(/let clicks pass through/i)).toBeNull()
+
+    const toggle = screen.getByRole("button", { name: /show .* settings/i })
+    expect(toggle).toHaveAttribute("aria-expanded", "false")
+    await userEvent.click(toggle)
+
+    expect(
+      await screen.findByLabelText(/background opacity/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /hide .* settings/i }),
+    ).toHaveAttribute("aria-expanded", "true")
   })
 
   it("renders nothing while the sidebar is collapsed", () => {
@@ -120,7 +154,7 @@ describe("DetachedWindowControls", () => {
 
   it("sends a validated appearance when always-on-top is toggled", async () => {
     respondPerWindow()
-    renderControls()
+    await openSettings()
     await waitFor(() => expect(invokeMock).toHaveBeenCalled())
 
     await userEvent.click(screen.getByRole("button", { name: /on top/i }))
@@ -148,7 +182,7 @@ describe("DetachedWindowControls", () => {
 
   it("keeps the opacity slider inside the readable range", async () => {
     respondPerWindow()
-    renderControls()
+    await openSettings()
     await waitFor(() => expect(invokeMock).toHaveBeenCalled())
 
     const slider = screen.getByLabelText(/background opacity/i)
@@ -159,7 +193,7 @@ describe("DetachedWindowControls", () => {
 
   it("applies a rebinding and shows the canonical result", async () => {
     respondPerWindow()
-    renderControls("insights")
+    await openSettings("insights")
     await waitFor(() =>
       expect(screen.getByLabelText(/show\/hide shortcut/i)).toHaveValue(
         "Ctrl+Shift+I",
@@ -181,7 +215,7 @@ describe("DetachedWindowControls", () => {
   it("warns when the system refused the binding", async () => {
     respondPerWindow({ registered: false })
 
-    renderControls()
+    await openSettings()
 
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -192,7 +226,7 @@ describe("DetachedWindowControls", () => {
 
   it("keeps the window reachable when the shortcut is turned off", async () => {
     respondPerWindow()
-    renderControls()
+    await openSettings()
     await waitFor(() =>
       expect(
         screen.getByLabelText(/use this shortcut system-wide/i),
@@ -218,7 +252,7 @@ describe("DetachedWindowControls", () => {
 
   it("sends a validated click-through request and reflects the result", async () => {
     respondPerWindow()
-    renderControls("insights")
+    await openSettings("insights")
     const toggle = await screen.findByLabelText(/let clicks pass through/i)
     await waitFor(() => expect(toggle).toBeEnabled())
 
@@ -237,7 +271,7 @@ describe("DetachedWindowControls", () => {
   /// click-through, so the user can always take pointer input back.
   it("keeps the click-through switch usable while click-through is on", async () => {
     respondPerWindow()
-    renderControls()
+    await openSettings()
     const toggle = await screen.findByLabelText(/let clicks pass through/i)
     await waitFor(() => expect(toggle).toBeEnabled())
     await userEvent.click(toggle)

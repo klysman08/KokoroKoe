@@ -213,6 +213,57 @@ describe("SettingsPage", () => {
     )
   })
 
+  /// People know models by `vendor/model-name`, so the option itself has to
+  /// carry the id and the context window, not just a display name.
+  it("shows the model id and context window in the option", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
+      return appSettingsFixture
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(["openrouter-models"], [openRouterModelFixture])
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    )
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Fast insights model" }),
+    )
+
+    const option = screen.getByRole("option", {
+      name: new RegExp(openRouterModelFixture.name, "i"),
+    })
+    expect(option).toHaveTextContent(openRouterModelFixture.id)
+    expect(option).toHaveTextContent(/context/i)
+  })
+
+  /// An unexplained dead field is worse than a disabled one that says why.
+  it("says why the model picker is unusable before a catalog is loaded", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_transcription_models") return []
+      return appSettingsFixture
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    )
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Fast insights model",
+    })
+    expect(selector).toBeDisabled()
+    expect(selector).toHaveAttribute("placeholder", "Load the catalog first")
+    expect(
+      screen.getAllByText(/load the catalog above to choose a model/i)[0],
+    ).toBeInTheDocument()
+  })
+
   it("keeps a conflicting draft visible after the authoritative refetch", async () => {
     const user = userEvent.setup()
     let getCount = 0

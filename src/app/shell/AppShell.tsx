@@ -60,11 +60,14 @@ export function AppShell() {
       <aside
         aria-label="Primary navigation"
         className={cn(
-          "bg-sidebar text-sidebar-foreground sticky top-0 flex h-svh shrink-0 flex-col border-r px-3 py-4 transition-[width] duration-200",
+          // `overflow-hidden` plus a scrolling middle section is what keeps the
+          // sidebar inside the viewport: it holds two window-control panels and
+          // an active-session panel, which together are taller than any screen.
+          "bg-sidebar text-sidebar-foreground sticky top-0 flex h-svh shrink-0 flex-col overflow-hidden border-r px-3 py-4 transition-[width] duration-200",
           collapsed ? "w-18" : "w-64",
         )}
       >
-        <div className="flex h-11 items-center gap-3 px-2">
+        <div className="flex h-11 shrink-0 items-center gap-3 px-2">
           <span className="bg-primary text-primary-foreground grid size-9 shrink-0 place-items-center rounded-xl shadow-sm">
             <AudioLines aria-hidden="true" className="size-5" />
           </span>
@@ -78,54 +81,59 @@ export function AppShell() {
           )}
         </div>
 
-        <nav className="mt-8 grid gap-1">
-          {navigation.map(({ label, route, icon: Icon }) => (
-            <a
-              key={route}
-              aria-label={collapsed ? label : undefined}
-              aria-current={activeRoute === route ? "page" : undefined}
-              className={cn(
-                "flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
-                activeRoute === route
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                collapsed && "justify-center px-0",
-              )}
-              href={routeHref[route]}
-              onClick={(event) => navigateFromLink(event, route)}
-            >
-              <Icon aria-hidden="true" className="size-4 shrink-0" />
-              {!collapsed && <span>{label}</span>}
-            </a>
-          ))}
-        </nav>
+        <div className="-mx-1 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-1">
+          <nav className="mt-8 grid gap-1">
+            {navigation.map(({ label, route, icon: Icon }) => (
+              <a
+                key={route}
+                aria-label={collapsed ? label : undefined}
+                aria-current={activeRoute === route ? "page" : undefined}
+                className={cn(
+                  "flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                  activeRoute === route
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+                  collapsed && "justify-center px-0",
+                )}
+                href={routeHref[route]}
+                onClick={(event) => navigateFromLink(event, route)}
+              >
+                <Icon aria-hidden="true" className="size-4 shrink-0" />
+                {!collapsed && <span>{label}</span>}
+              </a>
+            ))}
+          </nav>
 
-        <div className="mt-auto">
-          {activeSession && (
-            <ActiveSessionControls
-              collapsed={collapsed}
-              session={activeSession}
-            />
-          )}
-          <DetachedWindowControls collapsed={collapsed} window="transcript" />
-          <DetachedWindowControls collapsed={collapsed} window="insights" />
-          {!collapsed && (
-            <div className="bg-card text-muted-foreground mb-3 rounded-xl border p-3 text-xs leading-relaxed">
-              Audio stays local. External analysis remains off until explicitly
-              enabled.
-            </div>
-          )}
-          <Button
-            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-            className="w-full"
-            onClick={toggleNavigation}
-            size={collapsed ? "icon" : "default"}
-            variant="ghost"
-          >
-            {collapsed ? <ChevronRight /> : <ChevronLeft />}
-            {!collapsed && <span>Collapse</span>}
-          </Button>
+          <div className="mt-6">
+            {activeSession && (
+              <ActiveSessionControls
+                collapsed={collapsed}
+                session={activeSession}
+              />
+            )}
+            <DetachedWindowControls collapsed={collapsed} window="transcript" />
+            <DetachedWindowControls collapsed={collapsed} window="insights" />
+            {!collapsed && (
+              <div className="bg-card text-muted-foreground mb-3 rounded-xl border p-3 text-xs leading-relaxed">
+                Audio stays local. External analysis remains off until
+                explicitly enabled.
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Outside the scroll area: collapsing must always be reachable, even
+            while a Session and both window panels fill the sidebar. */}
+        <Button
+          aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+          className="mt-2 w-full shrink-0"
+          onClick={toggleNavigation}
+          size={collapsed ? "icon" : "default"}
+          variant="ghost"
+        >
+          {collapsed ? <ChevronRight /> : <ChevronLeft />}
+          {!collapsed && <span>Collapse</span>}
+        </Button>
       </aside>
 
       <div className="min-w-0 flex-1">

@@ -572,9 +572,16 @@ impl AppError {
             "transcript_page_invalid"
             | "transcript_page_cursor_invalid"
             | "transcript_search_request_invalid"
-            | "transcript_search_cursor_invalid" => (
+            | "transcript_search_cursor_invalid"
+            | "transcript_annotation_invalid"
+            | "transcript_history_invalid" => (
                 "The transcript request is not valid.",
                 ErrorSeverity::Warning,
+                false,
+            ),
+            "transcript_segment_not_found" => (
+                "That transcript segment is no longer part of this session.",
+                ErrorSeverity::Info,
                 false,
             ),
             "project_not_found" | "session_not_found" => (

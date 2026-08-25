@@ -107,9 +107,39 @@ export const transcriptSearchPageSchema = z.strictObject({
   nextCursor: searchCursorSchema.optional(),
 })
 
+/**
+ * How one segment came to read as it does.
+ *
+ * A correction never replaces the transcription, so every wording the user has
+ * committed exists in the append-only journal. Rust reads them back oldest
+ * first; `truncated` says older ones were dropped to stay bounded, never that
+ * the transcription itself is missing.
+ */
+export const transcriptSegmentRevisionSchema = z.strictObject({
+  recordedAt: z.iso.datetime({ offset: true }),
+  text: transcriptTextSchema,
+})
+
+export const transcriptSegmentHistorySchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+  segmentId: segmentIdSchema,
+  originalText: transcriptTextSchema,
+  revisions: z.array(transcriptSegmentRevisionSchema).max(64),
+  truncated: z.boolean().optional(),
+})
+
+export const transcriptSegmentHistoryRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+  segmentId: segmentIdSchema,
+})
+
 export const transcriptReadingFixtureSchema = z.strictObject({
   pageRequest: transcriptPageRequestSchema,
   page: transcriptPageSchema,
+  historyRequest: transcriptSegmentHistoryRequestSchema,
+  history: transcriptSegmentHistorySchema,
   searchRequest: transcriptSearchRequestSchema,
   searchPage: transcriptSearchPageSchema,
 })
@@ -145,4 +175,14 @@ export const annotateTranscriptSegmentRequestSchema = z.strictObject({
 export type SegmentAnnotation = z.infer<typeof segmentAnnotationSchema>
 export type AnnotateTranscriptSegmentRequest = z.infer<
   typeof annotateTranscriptSegmentRequestSchema
+>
+
+export type TranscriptSegmentRevision = z.infer<
+  typeof transcriptSegmentRevisionSchema
+>
+export type TranscriptSegmentHistory = z.infer<
+  typeof transcriptSegmentHistorySchema
+>
+export type TranscriptSegmentHistoryRequest = z.infer<
+  typeof transcriptSegmentHistoryRequestSchema
 >

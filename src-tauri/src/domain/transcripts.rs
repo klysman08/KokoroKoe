@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::audio::AudioSource;
@@ -13,6 +14,8 @@ pub(crate) const MAX_TRANSCRIPT_TEXT_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_TRANSCRIPT_SNIPPET_CHARS: usize = 240;
 pub(crate) const MAX_TRANSCRIPT_LANGUAGE_BYTES: usize = 64;
 pub(crate) const MAX_TRANSCRIPT_CURSOR_BYTES: usize = 256;
+/// Must match the journal's own history bound, which is what fills this view.
+pub(crate) const MAX_TRANSCRIPT_SEGMENT_REVISIONS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -206,6 +209,7 @@ fn valid_language(value: &str) -> bool {
 mod tests {
     use super::{
         TranscriptPage, TranscriptPageRequest, TranscriptSearchPageView, TranscriptSearchQuery,
+        TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView,
     };
 
     #[test]
@@ -226,9 +230,36 @@ mod tests {
         assert!(search_request.validate().is_ok());
         assert!(search_page.validate().is_ok());
 
+        let history_request: TranscriptSegmentHistoryRequest =
+            serde_json::from_value(fixture["historyRequest"].clone()).unwrap();
+        let history: TranscriptSegmentHistoryView =
+            serde_json::from_value(fixture["history"].clone()).unwrap();
+        assert!(history_request.validate().is_ok());
+        assert!(history.validate().is_ok());
+
         let mut invalid = fixture["searchRequest"].clone();
         invalid["unknown"] = serde_json::json!(true);
         assert!(serde_json::from_value::<TranscriptSearchQuery>(invalid).is_err());
+    }
+
+    /// A history is read straight into the view, so a malformed timestamp or an
+    /// unusable wording must be refused at the boundary rather than rendered.
+    #[test]
+    fn a_history_with_an_unusable_revision_is_refused() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/transcript-reading-v1.json"
+        ))
+        .expect("fixture JSON");
+        for revision in [
+            serde_json::json!({ "recordedAt": "not a time", "text": "Fine." }),
+            serde_json::json!({ "recordedAt": "2026-08-12T10:04:00Z", "text": "" }),
+            serde_json::json!({ "recordedAt": "2026-08-12T10:04:00Z", "text": "carriage\rreturn" }),
+        ] {
+            let mut invalid = fixture["history"].clone();
+            invalid["revisions"] = serde_json::json!([revision]);
+            let view: TranscriptSegmentHistoryView = serde_json::from_value(invalid).unwrap();
+            assert_eq!(view.validate(), Err("transcript_history_invalid"));
+        }
     }
 }
 
@@ -333,4 +364,114 @@ impl AnnotateTranscriptSegmentRequest {
         }
         self.annotation.validate()
     }
+}
+
+/// How one segment came to read as it does.
+///
+/// A correction never replaces the transcription, so the full sequence exists
+/// in the append-only journal. This is the read-only view of it: the reader can
+/// see what was transcribed, every rewrite since, and when each was recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptSegmentRevision {
+    pub(crate) recorded_at: String,
+    pub(crate) text: String,
+}
+
+impl TranscriptSegmentRevision {
+    fn validate(&self) -> Result<(), &'static str> {
+        if !valid_timestamp(&self.recorded_at) || !valid_segment_text(&self.text) {
+            return Err("transcript_history_invalid");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptSegmentHistoryView {
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) segment_id: Uuid,
+    /// The transcription as it was produced. Never a reconstruction.
+    pub(crate) original_text: String,
+    /// Oldest first. Empty when the segment has never been corrected.
+    pub(crate) revisions: Vec<TranscriptSegmentRevision>,
+    /// Set when older revisions existed but were dropped to stay bounded.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) truncated: bool,
+}
+
+impl TranscriptSegmentHistoryView {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.project_id.as_uuid().is_nil()
+            || self.session_id.as_uuid().is_nil()
+            || self.segment_id.is_nil()
+            || !valid_segment_text(&self.original_text)
+            || self.revisions.len() > MAX_TRANSCRIPT_SEGMENT_REVISIONS
+        {
+            return Err("transcript_history_invalid");
+        }
+        self.revisions
+            .iter()
+            .try_for_each(TranscriptSegmentRevision::validate)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptSegmentHistoryRequest {
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) segment_id: Uuid,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawTranscriptSegmentHistoryRequest {
+    project_id: ProjectId,
+    session_id: SessionId,
+    segment_id: Uuid,
+}
+
+impl<'de> Deserialize<'de> for TranscriptSegmentHistoryRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawTranscriptSegmentHistoryRequest::deserialize(deserializer)?;
+        let request = Self {
+            project_id: raw.project_id,
+            session_id: raw.session_id,
+            segment_id: raw.segment_id,
+        };
+        request.validate().map_err(serde::de::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl TranscriptSegmentHistoryRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.project_id.as_uuid().is_nil()
+            || self.session_id.as_uuid().is_nil()
+            || self.segment_id.is_nil()
+        {
+            return Err("transcript_history_invalid");
+        }
+        Ok(())
+    }
+}
+
+/// The same bounds a transcription must satisfy. Both readings are rendered in
+/// the same place, so neither may carry what the other could not.
+fn valid_segment_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_TRANSCRIPT_TEXT_BYTES
+        && !value
+            .chars()
+            .any(|value| value == '\r' || (value.is_control() && value != '\n' && value != '\t'))
+}
+
+fn valid_timestamp(value: &str) -> bool {
+    value.len() >= 20 && value.len() <= 64 && OffsetDateTime::parse(value, &Rfc3339).is_ok()
 }

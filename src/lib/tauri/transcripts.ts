@@ -12,7 +12,11 @@ import {
   transcriptSegmentSchema,
   transcriptSearchPageSchema,
   transcriptSearchRequestSchema,
+  transcriptSegmentHistoryRequestSchema,
+  transcriptSegmentHistorySchema,
   type AnnotateTranscriptSegmentRequest,
+  type TranscriptSegmentHistory,
+  type TranscriptSegmentHistoryRequest,
   type TranscriptPage,
   type TranscriptPageRequest,
   type TranscriptSegment,
@@ -110,4 +114,29 @@ export async function annotateTranscriptSegment(
   if (!segment.success || segment.data.id !== request.data.segmentId)
     throw createContractApplicationError()
   return segment.data
+}
+
+/**
+ * Reads how one segment came to read as it does.
+ *
+ * Rust reads the append-only journal, so this returns wordings the transcript
+ * document no longer carries. It writes nothing: asking how a segment got here
+ * cannot change where it is.
+ */
+export async function getTranscriptSegmentHistory(
+  value: TranscriptSegmentHistoryRequest,
+): Promise<TranscriptSegmentHistory> {
+  const validated = request(transcriptSegmentHistoryRequestSchema, value)
+  const history = await call(
+    "get_transcript_segment_history",
+    { request: validated },
+    transcriptSegmentHistorySchema,
+  )
+  if (
+    history.projectId !== validated.projectId ||
+    history.sessionId !== validated.sessionId ||
+    history.segmentId !== validated.segmentId
+  )
+    throw createContractApplicationError()
+  return history
 }

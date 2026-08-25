@@ -8,7 +8,8 @@ use serde::Serialize;
 use crate::domain::{
     AnnotateTranscriptSegmentRequest, AppError, Project, ProjectId, SegmentAnnotation, Session,
     SessionId, TranscriptPage, TranscriptPageRequest, TranscriptSearchHit,
-    TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
+    TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentHistoryRequest,
+    TranscriptSegmentHistoryView, TranscriptSegmentRevision, TranscriptSegmentStatus,
     TranscriptSegmentView, now_rfc3339,
 };
 
@@ -230,6 +231,52 @@ impl TranscriptService {
                     .corrected()
                     .then(|| segment.original_text().to_owned()),
                 important: segment.important,
+            };
+            view.validate().map_err(AppError::transcript_error)?;
+            Ok(view)
+        })
+    }
+
+    /// How one segment came to read as it does.
+    ///
+    /// This reads the journal directly rather than the document, because a
+    /// superseded correction only exists in the log: the document carries the
+    /// current reading and the transcription, and nothing in between. Nothing
+    /// is written, so a history read cannot disturb what it is reporting on.
+    pub(crate) fn get_segment_history(
+        &self,
+        request: TranscriptSegmentHistoryRequest,
+    ) -> Result<TranscriptSegmentHistoryView, AppError> {
+        request.validate().map_err(AppError::transcript_error)?;
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(request.project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(request.project_id, request.session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let history = SessionJournal::open(workspace)
+                .and_then(|journal| journal.segment_history(&locator, request.segment_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .ok_or_else(|| AppError::transcript_error("transcript_segment_not_found"))?;
+            let view = TranscriptSegmentHistoryView {
+                project_id: request.project_id,
+                session_id: request.session_id,
+                segment_id: request.segment_id,
+                original_text: history.original_text,
+                revisions: history
+                    .revisions
+                    .into_iter()
+                    .map(|revision| TranscriptSegmentRevision {
+                        recorded_at: revision.recorded_at,
+                        text: revision.text,
+                    })
+                    .collect(),
+                truncated: history.truncated,
             };
             view.validate().map_err(AppError::transcript_error)?;
             Ok(view)
@@ -578,7 +625,7 @@ mod tests {
     use crate::{
         domain::{
             CreateProjectInput, CreateSessionSnapshotInput, TranscriptPageRequest,
-            TranscriptSearchQuery,
+            TranscriptSearchQuery, TranscriptSegmentHistoryRequest,
         },
         persistence::{
             ProjectService, SessionJournal, SessionService, SettingsService, TranscriptStore,
@@ -758,6 +805,164 @@ mod tests {
         assert_eq!(error.code, "transcript_segment_not_found");
     }
 
+    /// P6-011 made the original recoverable; this makes it readable. The
+    /// document only ever carries the current reading and the transcription, so
+    /// a wording that was corrected and then corrected again exists nowhere but
+    /// the log — and the history read is what gets it back out.
+    #[test]
+    fn correction_history_reads_back_every_wording_the_document_dropped() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let segment_id = uuid::Uuid::new_v4();
+        SessionJournal::open(&workspace)
+            .unwrap()
+            .append(
+                &locator,
+                crate::persistence::JournalAppend {
+                    event_id: uuid::Uuid::new_v4(),
+                    recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+                    mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                        crate::persistence::FinalizedTranscriptSegment {
+                            id: segment_id,
+                            source: crate::audio::AudioSource::Microphone,
+                            start_ms: 0,
+                            end_ms: 800,
+                            text: "kokoro co is local".to_owned(),
+                            language: "en-US".to_owned(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+        for text in ["Kokoro Koe is local", "KokoroKoe is local"] {
+            service
+                .annotate_segment(annotation(
+                    project.id,
+                    session.id,
+                    segment_id,
+                    serde_json::json!({ "kind": "correction", "text": text }),
+                ))
+                .unwrap();
+        }
+
+        let history = service
+            .get_segment_history(history_request(project.id, session.id, segment_id))
+            .unwrap();
+
+        assert_eq!(history.original_text, "kokoro co is local");
+        assert_eq!(
+            history
+                .revisions
+                .iter()
+                .map(|revision| revision.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Kokoro Koe is local", "KokoroKoe is local"]
+        );
+        assert!(!history.truncated);
+        assert!(history.revisions.iter().all(|revision| {
+            time::OffsetDateTime::parse(
+                &revision.recorded_at,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .is_ok()
+        }));
+        // The middle wording really is gone from the document, which is why the
+        // history has to come from the journal rather than from a re-read.
+        let document =
+            std::fs::read_to_string(transcript_path(&workspace, &project, &session)).unwrap();
+        assert!(!document.contains("Kokoro Koe is local"));
+
+        // Marking does not appear as a revision: it never changed the wording.
+        service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                segment_id,
+                serde_json::json!({ "kind": "importance", "important": true }),
+            ))
+            .unwrap();
+        assert_eq!(
+            service
+                .get_segment_history(history_request(project.id, session.id, segment_id))
+                .unwrap()
+                .revisions
+                .len(),
+            2
+        );
+
+        let error = service
+            .get_segment_history(history_request(
+                project.id,
+                session.id,
+                uuid::Uuid::new_v4(),
+            ))
+            .unwrap_err();
+        assert_eq!(error.code, "transcript_segment_not_found");
+    }
+
+    /// A segment nobody has corrected still has a history: what was
+    /// transcribed, and nothing since.
+    #[test]
+    fn an_uncorrected_segment_reports_the_transcription_and_no_revisions() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let segment_id = uuid::Uuid::new_v4();
+        SessionJournal::open(&workspace)
+            .unwrap()
+            .append(
+                &locator,
+                crate::persistence::JournalAppend {
+                    event_id: uuid::Uuid::new_v4(),
+                    recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+                    mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                        crate::persistence::FinalizedTranscriptSegment {
+                            id: segment_id,
+                            source: crate::audio::AudioSource::SystemOutput,
+                            start_ms: 0,
+                            end_ms: 800,
+                            text: "Nobody has touched this.".to_owned(),
+                            language: "en-US".to_owned(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+
+        let history = service
+            .get_segment_history(history_request(project.id, session.id, segment_id))
+            .unwrap();
+
+        assert_eq!(history.original_text, "Nobody has touched this.");
+        assert!(history.revisions.is_empty());
+        assert!(!history.truncated);
+    }
+
     /// A correction is rendered where the transcription was, so an empty or
     /// control-bearing rewrite must be refused before it reaches the journal.
     #[test]
@@ -789,6 +994,19 @@ mod tests {
             "sessionId": session_id,
             "segmentId": segment_id,
             "annotation": annotation,
+        }))
+        .unwrap()
+    }
+
+    fn history_request(
+        project_id: crate::domain::ProjectId,
+        session_id: crate::domain::SessionId,
+        segment_id: uuid::Uuid,
+    ) -> TranscriptSegmentHistoryRequest {
+        serde_json::from_value(serde_json::json!({
+            "projectId": project_id,
+            "sessionId": session_id,
+            "segmentId": segment_id,
         }))
         .unwrap()
     }

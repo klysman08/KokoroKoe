@@ -5,6 +5,7 @@ import {
   Search,
   ShieldCheck,
   Star,
+  Undo2,
   X,
 } from "lucide-react"
 import { type FormEvent, useState } from "react"
@@ -45,6 +46,7 @@ import {
   transcriptSearchRequestSchema,
   type SegmentAnnotation,
   type TranscriptSegment,
+  type TranscriptSegmentHistory,
 } from "@/contracts/transcripts"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { cn } from "@/lib/utils"
@@ -57,7 +59,10 @@ import {
   segmentAsText,
 } from "@/features/transcript/segment-actions"
 import { askManualQuestion } from "@/lib/tauri/manual-question"
-import { annotateTranscriptSegment } from "@/lib/tauri/transcripts"
+import {
+  annotateTranscriptSegment,
+  getTranscriptSegmentHistory,
+} from "@/lib/tauri/transcripts"
 
 type QuestionTarget = {
   id: string
@@ -81,7 +86,8 @@ export function SavedTranscript({
   const [validationMessage, setValidationMessage] = useState<string>()
   const [questionTarget, setQuestionTarget] = useState<QuestionTarget>()
   const [copiedSegmentId, setCopiedSegmentId] = useState<string>()
-  const [correctingId, setCorrectingId] = useState<string>()
+  /** The open correction box, and the wording it opened with. */
+  const [correcting, setCorrecting] = useState<{ id: string; text: string }>()
   const [annotatingId, setAnnotatingId] = useState<string>()
   const [annotationError, setAnnotationError] = useState<ApplicationError>()
   const [annotations, setAnnotations] = useState<
@@ -122,7 +128,7 @@ export function SavedTranscript({
     try {
       const updated = await annotateTranscriptSegment(request.data)
       setAnnotations((current) => ({ ...current, [segmentId]: updated }))
-      setCorrectingId(undefined)
+      setCorrecting(undefined)
     } catch (caught: unknown) {
       setAnnotationError(toApplicationError(caught))
     } finally {
@@ -309,7 +315,12 @@ export function SavedTranscript({
                     }
                     important={annotated(segment).important === true}
                     onCopy={() => void copySegment(segment)}
-                    onCorrect={() => setCorrectingId(segment.id)}
+                    onCorrect={() =>
+                      setCorrecting({
+                        id: segment.id,
+                        text: annotated(segment).text,
+                      })
+                    }
                     onMark={() =>
                       void annotate(segment.id, {
                         kind: "importance",
@@ -318,10 +329,13 @@ export function SavedTranscript({
                     }
                   />
                 </div>
-                {correctingId === segment.id ? (
+                {correcting?.id === segment.id ? (
                   <SegmentCorrectionForm
-                    initialText={annotated(segment).text}
-                    onCancel={() => setCorrectingId(undefined)}
+                    // Remounting on a new starting wording is what puts it in
+                    // the box; an open form must not keep the previous text.
+                    key={correcting.text}
+                    initialText={correcting.text}
+                    onCancel={() => setCorrecting(undefined)}
                     onSubmit={(text) =>
                       void annotate(segment.id, { kind: "correction", text })
                     }
@@ -335,14 +349,19 @@ export function SavedTranscript({
                 {annotated(segment).originalText && (
                   // A correction changes what the transcript reads as, never
                   // what it recorded, so the transcription stays on screen.
-                  <details className="text-muted-foreground text-xs">
-                    <summary className="text-foreground cursor-pointer">
-                      Corrected — show the original transcription
-                    </summary>
-                    <p className="mt-1 leading-6 break-words whitespace-pre-wrap">
-                      {annotated(segment).originalText}
-                    </p>
-                  </details>
+                  <SegmentHistoryDisclosure
+                    // A saved correction is a new entry in the log, so the
+                    // history this holds is now one wording short; remounting
+                    // on the new reading is what makes it ask again.
+                    key={annotated(segment).text}
+                    onRestore={(text) =>
+                      setCorrecting({ id: segment.id, text })
+                    }
+                    originalText={annotated(segment).originalText ?? ""}
+                    projectId={project.id}
+                    segmentId={segment.id}
+                    sessionId={session.id}
+                  />
                 )}
               </article>
             ))
@@ -675,6 +694,139 @@ function formatTime(milliseconds: number) {
   return [hours, minutes, remainder]
     .map((value) => value.toString().padStart(2, "0"))
     .join(":")
+}
+
+/**
+ * Everything this segment has said, oldest first.
+ *
+ * The transcript document only ever carries the current reading and the
+ * transcription, so a wording that was corrected and then corrected again
+ * exists nowhere but the journal. This asks Rust for it, and only when the
+ * reader opens the disclosure: a history nobody looked at costs nothing.
+ *
+ * The transcription is shown from what the segment already carries, so the
+ * disclosure is never empty while the rest is loading.
+ */
+function SegmentHistoryDisclosure({
+  onRestore,
+  originalText,
+  projectId,
+  segmentId,
+  sessionId,
+}: {
+  onRestore: (text: string) => void
+  originalText: string
+  projectId: Project["id"]
+  segmentId: TranscriptSegment["id"]
+  sessionId: Session["id"]
+}) {
+  const [history, setHistory] = useState<TranscriptSegmentHistory>()
+  const [error, setError] = useState<ApplicationError>()
+  const [pending, setPending] = useState(false)
+  const [asked, setAsked] = useState(false)
+
+  async function load() {
+    setAsked(true)
+    setPending(true)
+    setError(undefined)
+    try {
+      setHistory(
+        await getTranscriptSegmentHistory({ projectId, sessionId, segmentId }),
+      )
+    } catch (caught: unknown) {
+      setHistory(undefined)
+      setError(toApplicationError(caught))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  // The newest revision is what the segment already reads as above, so
+  // repeating it here would show the same wording twice.
+  const superseded = history?.revisions.slice(0, -1) ?? []
+
+  return (
+    <details
+      className="text-muted-foreground text-xs"
+      onToggle={(event) => {
+        if (event.currentTarget.open && !asked) void load()
+      }}
+    >
+      <summary className="text-foreground cursor-pointer">
+        Corrected — show what this segment said before
+      </summary>
+      <div className="mt-2 flex flex-col gap-3">
+        {error && <SanitizedErrorPanel error={error} />}
+        {history?.truncated === true && (
+          <p>
+            Older corrections than these were recorded and are kept in the
+            journal, but are not shown here.
+          </p>
+        )}
+        <PreviousWording
+          label="Transcribed"
+          onRestore={onRestore}
+          text={history?.originalText ?? originalText}
+        />
+        {superseded.map((revision) => (
+          <PreviousWording
+            key={`${revision.recordedAt}:${revision.text}`}
+            label={`Corrected ${formatRecordedAt(revision.recordedAt)}`}
+            onRestore={onRestore}
+            text={revision.text}
+          />
+        ))}
+        <p aria-live="polite">
+          {pending
+            ? "Reading the recovery journal…"
+            : history === undefined
+              ? ""
+              : superseded.length === 0
+                ? "This is the only correction recorded for this segment."
+                : ""}
+        </p>
+      </div>
+    </details>
+  )
+}
+
+/**
+ * One wording this segment used to have.
+ *
+ * Restoring it fills the correction box rather than saving: putting an old
+ * wording back is itself a correction, and the user should see it before it
+ * becomes one.
+ */
+function PreviousWording({
+  label,
+  onRestore,
+  text,
+}: {
+  label: string
+  onRestore: (text: string) => void
+  text: string
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-foreground font-medium">{label}</p>
+      <p className="leading-6 break-words whitespace-pre-wrap">{text}</p>
+      <div>
+        <Button
+          onClick={() => onRestore(text)}
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          <Undo2 aria-hidden="true" data-icon="inline-start" /> Use this wording
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function formatRecordedAt(value: string) {
+  const recorded = new Date(value)
+  return Number.isNaN(recorded.getTime()) ? value : recorded.toLocaleString()
 }
 
 /**

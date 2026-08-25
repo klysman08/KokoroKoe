@@ -31,7 +31,9 @@ to OpenRouter, and only when you ask for it.
   Session. Both are explicit, per-request user actions that return transient, validated, typed
   results with their token and cost accounting. Transcript segments can also be copied, marked
   important, and corrected — a correction is recorded as a new journal event, so the transcription
-  it replaced stays readable in the document and the app.
+  it replaced stays readable in the document and the app. A corrected segment can show its whole
+  history: what was transcribed, every wording since, and when each was recorded, with any of them
+  restorable into the correction box.
 - **Final session summary.** Once a Session is finished, generate an executive summary with main
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much

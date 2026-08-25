@@ -12,7 +12,10 @@ import {
   manualQuestionFixtureSchema,
 } from "@/contracts/manual-question"
 import { projectSessionFixtureSchema } from "@/contracts/projects"
-import { annotateTranscriptSegmentRequestSchema } from "@/contracts/transcripts"
+import {
+  annotateTranscriptSegmentRequestSchema,
+  transcriptSegmentHistoryRequestSchema,
+} from "@/contracts/transcripts"
 import { SEGMENT_QUESTION_PRESETS, segmentAsText } from "./segment-actions"
 import { SavedTranscript } from "./SavedTranscript"
 
@@ -30,6 +33,37 @@ function scopedPage() {
       sessionId: scope.session.id,
     })),
   }
+}
+
+/** A segment corrected twice: the middle wording is only in the journal. */
+function correctedSegment() {
+  return {
+    ...scopedPage().items[0]!,
+    text: "KokoroKoe is local",
+    originalText: "kokoro co is local",
+  }
+}
+
+function correctedPage() {
+  return { items: [correctedSegment()] }
+}
+
+function historyResponses(command: string, args: unknown) {
+  if (command === "get_transcript_page") return correctedPage()
+  if (command === "get_transcript_segment_history") {
+    const request = transcriptSegmentHistoryRequestSchema.parse(
+      (args as { request: unknown }).request,
+    )
+    return {
+      ...request,
+      originalText: "kokoro co is local",
+      revisions: [
+        { recordedAt: "2026-08-12T10:04:00Z", text: "Kokoro Koe is local" },
+        { recordedAt: "2026-08-12T10:06:00Z", text: "KokoroKoe is local" },
+      ],
+    }
+  }
+  throw new Error(`Unexpected command: ${command}`)
 }
 
 function renderTranscript() {
@@ -327,9 +361,93 @@ describe("SavedTranscript", () => {
       await screen.findByText("KokoroKoe stays local."),
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/show the original transcription/i),
+      screen.getByText(/show what this segment said before/i),
     ).toBeInTheDocument()
     expect(screen.getByText(segment.text)).toBeInTheDocument()
+  })
+
+  /// The point of the history: the document only carries the current reading
+  /// and the transcription, so a wording that was corrected twice exists
+  /// nowhere but the journal. Opening the disclosure is what asks for it.
+  it("reads the journal on demand and shows wordings the document dropped", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command, args) =>
+      historyResponses(command, args),
+    )
+    renderTranscript()
+    await screen.findByText("KokoroKoe is local")
+    // Nothing is read until the reader asks for it.
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "get_transcript_segment_history",
+      expect.anything(),
+    )
+
+    await user.click(screen.getByText(/show what this segment said before/i))
+
+    expect(await screen.findByText("Kokoro Koe is local")).toBeInTheDocument()
+    expect(invokeMock).toHaveBeenCalledWith("get_transcript_segment_history", {
+      request: {
+        projectId: scope.project.id,
+        sessionId: scope.session.id,
+        segmentId: correctedSegment().id,
+      },
+    })
+    expect(screen.getByText("kokoro co is local")).toBeInTheDocument()
+    // The newest revision is the segment's own text, already on screen above.
+    expect(screen.getAllByText("KokoroKoe is local")).toHaveLength(1)
+  })
+
+  /// Putting an old wording back is itself a correction, so it fills the box
+  /// and waits to be read rather than saving itself.
+  it("restores an earlier wording into the correction box without saving it", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command, args) =>
+      historyResponses(command, args),
+    )
+    renderTranscript()
+    await screen.findByText("KokoroKoe is local")
+    await user.click(screen.getByText(/show what this segment said before/i))
+    await screen.findByText("Kokoro Koe is local")
+
+    await user.click(
+      screen.getAllByRole("button", { name: /use this wording/i })[0]!,
+    )
+
+    expect(
+      await screen.findByRole("textbox", { name: "Corrected text" }),
+    ).toHaveValue("kokoro co is local")
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "annotate_transcript_segment",
+      expect.anything(),
+    )
+  })
+
+  it("surfaces a sanitized failure when the history cannot be read", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_transcript_page") return correctedPage()
+      throw {
+        error: {
+          code: "transcript_segment_not_found",
+          userMessage:
+            "That transcript segment is no longer part of this session.",
+          technicalDetail: "transcript_segment_not_found",
+          severity: "info",
+          retryable: false,
+          correlationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        },
+      }
+    })
+    renderTranscript()
+    await screen.findByText("KokoroKoe is local")
+
+    await user.click(screen.getByText(/show what this segment said before/i))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /no longer part of this session/i,
+    )
+    // The transcription the segment already carries stays readable regardless.
+    expect(screen.getByText("kokoro co is local")).toBeInTheDocument()
   })
 
   it("marks a segment important and can take it back", async () => {

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -35,6 +35,8 @@ const MAX_RECORD_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 100_000;
 const MAX_SEGMENT_TEXT_BYTES: usize = 32 * 1024;
 const MAX_LANGUAGE_BYTES: usize = 64;
+/// How many recorded rewrites of one segment a history read returns.
+const MAX_SEGMENT_REVISIONS: usize = 64;
 const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +231,28 @@ impl ReplayedSegment {
     pub(crate) const fn corrected(&self) -> bool {
         self.corrected_text.is_some()
     }
+}
+
+/// One recorded rewrite of a segment, with when it was written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SegmentRevision {
+    pub(crate) recorded_at: String,
+    pub(crate) text: String,
+}
+
+/// How one segment came to read as it does.
+///
+/// Replay answers what a segment reads as now by collapsing its corrections;
+/// this keeps them. `original_text` is the transcription record itself rather
+/// than a reconstruction, because the journal never rewrites a
+/// `FinalizedTranscriptSegment` however many corrections follow it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SegmentHistory {
+    pub(crate) original_text: String,
+    /// Oldest first. The last entry is what the transcript reads as.
+    pub(crate) revisions: Vec<SegmentRevision>,
+    /// Set when older revisions existed but were dropped to stay bounded.
+    pub(crate) truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,6 +455,39 @@ impl SessionJournal {
         result
     }
 
+    /// Every rewrite of one segment, oldest first, without collapsing them.
+    ///
+    /// The log is the only place a superseded correction still exists, so this
+    /// reads the same records replay does and simply declines to fold them.
+    /// `None` means the journal holds no such segment.
+    pub(crate) fn segment_history(
+        &self,
+        locator: &SessionLocator,
+        segment_id: Uuid,
+    ) -> Result<Option<SegmentHistory>, SessionJournalError> {
+        let session_id = locator.session_id();
+        let directory = self
+            .sessions
+            .open_existing_session(locator)
+            .map_err(map_store_error)?;
+        directory.revalidate().map_err(map_store_error)?;
+        let path = directory.path().join(JOURNAL_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut file = open_existing_journal(&path)?;
+        FileExt::lock_shared(&file)
+            .map_err(|_| SessionJournalError::new("session_journal_lock_failed"))?;
+        let result = (|| {
+            let bytes = read_bounded(&mut file)?;
+            let parsed = parse_records(&bytes, session_id)?;
+            directory.revalidate().map_err(map_store_error)?;
+            Ok(collect_segment_history(&parsed.records, segment_id))
+        })();
+        let _ = FileExt::unlock(&file);
+        result
+    }
+
     pub(crate) fn replay_through(
         &self,
         locator: &SessionLocator,
@@ -518,6 +575,52 @@ fn annotated(
         .get(&segment_id)
         .copied()
         .ok_or_else(|| SessionJournalError::new("session_journal_annotation_orphaned"))
+}
+
+fn collect_segment_history(records: &[JournalRecord], segment_id: Uuid) -> Option<SegmentHistory> {
+    let mut history: Option<SegmentHistory> = None;
+    let mut seen: HashSet<Uuid> = HashSet::new();
+    for record in records {
+        if !seen.insert(record.event_id) {
+            // Replay ignores a repeated event id. A history that counted one
+            // twice would show a correction the user never made.
+            continue;
+        }
+        match &record.mutation {
+            // A second record claiming the same segment id is corruption that
+            // replay refuses outright; keeping the first here means a corrupt
+            // tail can never erase revisions that were genuinely recorded.
+            JournalMutation::FinalizedTranscriptSegment(segment)
+                if segment.id == segment_id && history.is_none() =>
+            {
+                history = Some(SegmentHistory {
+                    original_text: segment.text.clone(),
+                    revisions: Vec::new(),
+                    truncated: false,
+                });
+            }
+            JournalMutation::SegmentCorrection(correction)
+                if correction.segment_id == segment_id =>
+            {
+                let Some(history) = history.as_mut() else {
+                    continue;
+                };
+                history.revisions.push(SegmentRevision {
+                    recorded_at: record.recorded_at.clone(),
+                    text: correction.text.clone(),
+                });
+                if history.revisions.len() > MAX_SEGMENT_REVISIONS {
+                    // The transcription is held separately and the newest
+                    // wording is what the transcript reads as, so dropping the
+                    // oldest revision keeps both ends of the story intact.
+                    history.revisions.remove(0);
+                    history.truncated = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    history
 }
 
 fn replay_records(
@@ -875,6 +978,143 @@ mod tests {
         let bytes =
             fs::read_to_string(journal_path(workspace.path(), &project, &session_record)).unwrap();
         assert!(bytes.contains("First try."));
+    }
+
+    /// Replay collapses corrections; a history read must not. Every wording the
+    /// user has ever committed is in the log, and this is what makes the log
+    /// readable rather than merely durable.
+    #[test]
+    fn a_history_read_keeps_every_superseded_correction() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+        for text in ["First try.", "Second try.", "Third try."] {
+            journal
+                .append(&locator, correction(Uuid::new_v4(), segment_id, text))
+                .unwrap();
+        }
+
+        let history = journal
+            .segment_history(&locator, segment_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(history.original_text, "A bounded finalized segment.");
+        assert_eq!(
+            history
+                .revisions
+                .iter()
+                .map(|revision| revision.text.as_str())
+                .collect::<Vec<_>>(),
+            ["First try.", "Second try.", "Third try."]
+        );
+        assert!(!history.truncated);
+        assert!(
+            history
+                .revisions
+                .iter()
+                .all(|revision| revision.recorded_at == "2026-08-11T10:00:03Z")
+        );
+        // The collapsing read still agrees about what the segment says now.
+        assert_eq!(
+            journal.replay(&locator).unwrap().finalized_segments[0].effective_text(),
+            "Third try."
+        );
+    }
+
+    /// A segment with no correction has a history: the transcription itself.
+    /// An unknown segment has none at all, which is what the caller turns into
+    /// "not found" rather than an empty history.
+    #[test]
+    fn history_distinguishes_an_uncorrected_segment_from_an_unknown_one() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+
+        let history = journal
+            .segment_history(&locator, segment_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.original_text, "A bounded finalized segment.");
+        assert!(history.revisions.is_empty());
+
+        assert!(
+            journal
+                .segment_history(&locator, Uuid::new_v4())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// The history is bounded, and the bound drops the oldest revisions rather
+    /// than the newest. The transcription is held separately and the newest
+    /// wording is what the transcript reads as, so both ends always survive.
+    #[test]
+    fn a_bounded_history_keeps_the_original_and_the_newest_revisions() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+        let total = MAX_SEGMENT_REVISIONS + 5;
+        for index in 0..total {
+            journal
+                .append(
+                    &locator,
+                    correction(Uuid::new_v4(), segment_id, &format!("Revision {index}.")),
+                )
+                .unwrap();
+        }
+
+        let history = journal
+            .segment_history(&locator, segment_id)
+            .unwrap()
+            .unwrap();
+
+        assert!(history.truncated);
+        assert_eq!(history.revisions.len(), MAX_SEGMENT_REVISIONS);
+        assert_eq!(history.original_text, "A bounded finalized segment.");
+        assert_eq!(history.revisions[0].text, "Revision 5.");
+        assert_eq!(
+            history.revisions[MAX_SEGMENT_REVISIONS - 1].text,
+            format!("Revision {}.", total - 1)
+        );
+    }
+
+    /// A correction on one segment is not part of another segment's history,
+    /// however close together the two were recorded.
+    #[test]
+    fn history_reads_only_the_segment_it_was_asked_about() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), first))
+            .unwrap();
+        journal
+            .append(&locator, correction(Uuid::new_v4(), first, "Mine."))
+            .unwrap();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), second))
+            .unwrap();
+        journal
+            .append(&locator, correction(Uuid::new_v4(), second, "Theirs."))
+            .unwrap();
+
+        let history = journal.segment_history(&locator, second).unwrap().unwrap();
+
+        assert_eq!(
+            history
+                .revisions
+                .iter()
+                .map(|revision| revision.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Theirs."]
+        );
     }
 
     #[test]

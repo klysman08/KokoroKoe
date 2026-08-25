@@ -4,7 +4,7 @@ use crate::{
     domain::{
         AnnotateTranscriptSegmentRequest, AppError, CommandError, ProjectId, SessionId,
         TranscriptPage, TranscriptPageRequest, TranscriptSearchPageView, TranscriptSearchQuery,
-        TranscriptSegmentView,
+        TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView, TranscriptSegmentView,
     },
     logging,
     persistence::TranscriptService,
@@ -68,6 +68,20 @@ pub(crate) async fn annotate_transcript_segment<R: tauri::Runtime>(
     let service =
         authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
     run_blocking(move || service.annotate_segment(request))
+        .await
+        .map_err(record_error)
+}
+
+/// Reads how one segment came to read as it does. Nothing is written.
+#[tauri::command]
+pub(crate) async fn get_transcript_segment_history<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, TranscriptService>,
+    request: TranscriptSegmentHistoryRequest,
+) -> Result<TranscriptSegmentHistoryView, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.get_segment_history(request))
         .await
         .map_err(record_error)
 }

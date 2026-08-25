@@ -30,6 +30,7 @@
     "allow-get-transcript-page",
     "allow-search-transcript",
     "allow-annotate-transcript-segment",
+    "allow-get-transcript-segment-history",
     "allow-ask-manual-question",
     "allow-generate-recent-insights",
     "allow-get-session-summary",

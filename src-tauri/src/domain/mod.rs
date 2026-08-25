@@ -48,8 +48,9 @@ pub(crate) use transcription::{
 };
 pub(crate) use transcripts::{
     AnnotateTranscriptSegmentRequest, SegmentAnnotation, TranscriptPage, TranscriptPageRequest,
-    TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
-    TranscriptSegmentView,
+    TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery,
+    TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView, TranscriptSegmentRevision,
+    TranscriptSegmentStatus, TranscriptSegmentView,
 };
 pub(crate) use windows::{
     DetachedWindow, DetachedWindowAppearance, DetachedWindowGeometry, DetachedWindowInteraction,

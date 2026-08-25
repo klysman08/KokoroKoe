@@ -4,6 +4,7 @@ import fixture from "../../fixtures/contracts/transcript-reading-v1.json"
 import {
   transcriptReadingFixtureSchema,
   transcriptSearchRequestSchema,
+  transcriptSegmentHistorySchema,
 } from "./transcripts"
 
 describe("transcript contracts", () => {
@@ -26,5 +27,40 @@ describe("transcript contracts", () => {
         }).success,
       ).toBe(false)
     }
+  })
+})
+
+describe("transcript segment history contract", () => {
+  /// The history is rendered as inert text beside the transcript, so it obeys
+  /// the same bounds a transcription does and carries nothing else.
+  it("rejects an unbounded, unusable, or over-described history", () => {
+    for (const invalid of [
+      { revisions: [{ recordedAt: "2026-08-12", text: "No offset." }] },
+      { revisions: [{ recordedAt: "2026-08-12T10:04:00Z", text: "" }] },
+      {
+        revisions: Array.from({ length: 65 }, () => ({
+          recordedAt: "2026-08-12T10:04:00Z",
+          text: "Too many.",
+        })),
+      },
+      { originalText: "" },
+      { unknownField: true },
+    ]) {
+      expect(
+        transcriptSegmentHistorySchema.safeParse({
+          ...fixture.history,
+          ...invalid,
+        }).success,
+      ).toBe(false)
+    }
+  })
+
+  it("accepts a segment that has never been corrected", () => {
+    expect(
+      transcriptSegmentHistorySchema.safeParse({
+        ...fixture.history,
+        revisions: [],
+      }).success,
+    ).toBe(true)
   })
 })

@@ -539,6 +539,8 @@ mod tests {
             text: text.into(),
             status: TranscriptSegmentStatus::Final,
             language: "en-GB".to_owned(),
+            original_text: None,
+            important: false,
         }
     }
 

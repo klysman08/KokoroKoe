@@ -29,7 +29,9 @@ to OpenRouter, and only when you ask for it.
   one-click **Explain**, **Suggest a response**, or **Summarize** that fills the question box for
   you to read and edit before sending — or generate insights over the recent transcript of a running
   Session. Both are explicit, per-request user actions that return transient, validated, typed
-  results with their token and cost accounting. Transcript segments can also be copied.
+  results with their token and cost accounting. Transcript segments can also be copied, marked
+  important, and corrected — a correction is recorded as a new journal event, so the transcription
+  it replaced stays readable in the document and the app.
 - **Final session summary.** Once a Session is finished, generate an executive summary with main
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
@@ -54,9 +56,9 @@ to OpenRouter, and only when you ask for it.
   exists today.
 - An explicit monitor picker. Each window returns to where it was left, which is remembered between
   runs, but a preferred display cannot be named.
-- Correcting a finalized transcript segment, and marking one as important. Insights show how many
-  transcript segments they came from but cannot yet show which, and an alternative version of an
-  insight cannot be generated.
+- Manual bookmarks separate from marking a segment important. Insights show how many transcript
+  segments they came from but cannot yet show which, and an alternative version of an insight cannot
+  be generated.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 

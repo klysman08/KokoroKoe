@@ -47,8 +47,9 @@ pub(crate) use transcription::{
     TranscriptionGapPayload, TranscriptionPartialPayload,
 };
 pub(crate) use transcripts::{
-    TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
-    TranscriptSearchQuery, TranscriptSegmentStatus, TranscriptSegmentView,
+    AnnotateTranscriptSegmentRequest, SegmentAnnotation, TranscriptPage, TranscriptPageRequest,
+    TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
+    TranscriptSegmentView,
 };
 pub(crate) use windows::{
     DetachedWindow, DetachedWindowAppearance, DetachedWindowGeometry, DetachedWindowInteraction,

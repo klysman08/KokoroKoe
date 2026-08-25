@@ -41,6 +41,9 @@ export const transcriptSegmentSchema = z
     text: transcriptTextSchema,
     status: z.literal("final"),
     language: languageSchema,
+    /** Present only when the user rewrote this segment. */
+    originalText: transcriptTextSchema.optional(),
+    important: z.boolean().optional(),
   })
   .refine((value) => value.endMs > value.startMs)
 
@@ -119,3 +122,27 @@ export type TranscriptSearchRequest = z.infer<
 >
 export type TranscriptSearchHit = z.infer<typeof transcriptSearchHitSchema>
 export type TranscriptSearchPage = z.infer<typeof transcriptSearchPageSchema>
+
+/**
+ * What the user is saying about one finalized segment.
+ *
+ * Correcting changes what the transcript reads as; marking only flags it.
+ * Neither erases the transcription, which Rust keeps in the append-only
+ * journal and in the document itself.
+ */
+export const segmentAnnotationSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("correction"), text: transcriptTextSchema }),
+  z.strictObject({ kind: z.literal("importance"), important: z.boolean() }),
+])
+
+export const annotateTranscriptSegmentRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+  segmentId: segmentIdSchema,
+  annotation: segmentAnnotationSchema,
+})
+
+export type SegmentAnnotation = z.infer<typeof segmentAnnotationSchema>
+export type AnnotateTranscriptSegmentRequest = z.infer<
+  typeof annotateTranscriptSegmentRequestSchema
+>

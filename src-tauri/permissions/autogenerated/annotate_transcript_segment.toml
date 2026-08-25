@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-annotate-transcript-segment"
+description = "Enables the annotate_transcript_segment command without any pre-configured scope."
+commands.allow = ["annotate_transcript_segment"]
+
+[[permission]]
+identifier = "deny-annotate-transcript-segment"
+description = "Denies the annotate_transcript_segment command without any pre-configured scope."
+commands.deny = ["annotate_transcript_segment"]

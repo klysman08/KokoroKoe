@@ -1,8 +1,10 @@
 import {
   Copy,
   MessageCircleQuestion,
+  PencilLine,
   Search,
   ShieldCheck,
+  Star,
   X,
 } from "lucide-react"
 import { type FormEvent, useState } from "react"
@@ -38,8 +40,14 @@ import {
   type ManualQuestionResponse,
 } from "@/contracts/manual-question"
 import { type Project, type Session } from "@/contracts/projects"
-import { transcriptSearchRequestSchema } from "@/contracts/transcripts"
+import {
+  annotateTranscriptSegmentRequestSchema,
+  transcriptSearchRequestSchema,
+  type SegmentAnnotation,
+  type TranscriptSegment,
+} from "@/contracts/transcripts"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { cn } from "@/lib/utils"
 import {
   useSavedTranscript,
   useTranscriptSearch,
@@ -49,6 +57,7 @@ import {
   segmentAsText,
 } from "@/features/transcript/segment-actions"
 import { askManualQuestion } from "@/lib/tauri/manual-question"
+import { annotateTranscriptSegment } from "@/lib/tauri/transcripts"
 
 type QuestionTarget = {
   id: string
@@ -72,6 +81,12 @@ export function SavedTranscript({
   const [validationMessage, setValidationMessage] = useState<string>()
   const [questionTarget, setQuestionTarget] = useState<QuestionTarget>()
   const [copiedSegmentId, setCopiedSegmentId] = useState<string>()
+  const [correctingId, setCorrectingId] = useState<string>()
+  const [annotatingId, setAnnotatingId] = useState<string>()
+  const [annotationError, setAnnotationError] = useState<ApplicationError>()
+  const [annotations, setAnnotations] = useState<
+    Record<string, TranscriptSegment>
+  >({})
   const transcriptQuery = useSavedTranscript(project.id, session.id)
   const search = useTranscriptSearch(project.id, session.id, searchQuery)
   const segments =
@@ -79,6 +94,41 @@ export function SavedTranscript({
   const hits = search.data?.pages.flatMap((page) => page.items) ?? []
   const showingSearch = searchQuery.length > 0
   const activeError = showingSearch ? search.error : transcriptQuery.error
+
+  /**
+   * The segment as it now stands.
+   *
+   * An annotated segment is held locally until the next refetch so the change
+   * is visible immediately; Rust remains the authority, and this only ever
+   * holds what Rust returned.
+   */
+  function annotated(segment: TranscriptSegment): TranscriptSegment {
+    return annotations[segment.id] ?? segment
+  }
+
+  async function annotate(segmentId: string, annotation: SegmentAnnotation) {
+    const request = annotateTranscriptSegmentRequestSchema.safeParse({
+      projectId: project.id,
+      sessionId: session.id,
+      segmentId,
+      annotation,
+    })
+    if (!request.success) {
+      setValidationMessage("That correction cannot be saved as written.")
+      return
+    }
+    setValidationMessage(undefined)
+    setAnnotatingId(segmentId)
+    try {
+      const updated = await annotateTranscriptSegment(request.data)
+      setAnnotations((current) => ({ ...current, [segmentId]: updated }))
+      setCorrectingId(undefined)
+    } catch (caught: unknown) {
+      setAnnotationError(toApplicationError(caught))
+    } finally {
+      setAnnotatingId(undefined)
+    }
+  }
 
   async function copySegment(segment: {
     id: string
@@ -173,6 +223,7 @@ export function SavedTranscript({
           </p>
         )}
         {activeError && <SanitizedErrorPanel error={activeError} />}
+        {annotationError && <SanitizedErrorPanel error={annotationError} />}
 
         {questionTarget && (
           <ManualQuestionPanel
@@ -256,12 +307,43 @@ export function SavedTranscript({
                         question,
                       })
                     }
+                    important={annotated(segment).important === true}
                     onCopy={() => void copySegment(segment)}
+                    onCorrect={() => setCorrectingId(segment.id)}
+                    onMark={() =>
+                      void annotate(segment.id, {
+                        kind: "importance",
+                        important: annotated(segment).important !== true,
+                      })
+                    }
                   />
                 </div>
-                <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
-                  {segment.text}
-                </p>
+                {correctingId === segment.id ? (
+                  <SegmentCorrectionForm
+                    initialText={annotated(segment).text}
+                    onCancel={() => setCorrectingId(undefined)}
+                    onSubmit={(text) =>
+                      void annotate(segment.id, { kind: "correction", text })
+                    }
+                    pending={annotatingId === segment.id}
+                  />
+                ) : (
+                  <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
+                    {annotated(segment).text}
+                  </p>
+                )}
+                {annotated(segment).originalText && (
+                  // A correction changes what the transcript reads as, never
+                  // what it recorded, so the transcription stays on screen.
+                  <details className="text-muted-foreground text-xs">
+                    <summary className="text-foreground cursor-pointer">
+                      Corrected — show the original transcription
+                    </summary>
+                    <p className="mt-1 leading-6 break-words whitespace-pre-wrap">
+                      {annotated(segment).originalText}
+                    </p>
+                  </details>
+                )}
               </article>
             ))
           )}
@@ -304,15 +386,39 @@ export function SavedTranscript({
  */
 function SegmentActions({
   copied,
+  important,
   onAsk,
   onCopy,
+  onCorrect,
+  onMark,
 }: {
   copied: boolean
+  important?: boolean
   onAsk: (question: string) => void
   onCopy?: () => void
+  onCorrect?: () => void
+  onMark?: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
+      {onMark && (
+        <Button
+          aria-pressed={important === true}
+          className={cn(important && "border-primary")}
+          onClick={onMark}
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          <Star aria-hidden="true" data-icon="inline-start" />
+          {important ? "Important" : "Mark important"}
+        </Button>
+      )}
+      {onCorrect && (
+        <Button onClick={onCorrect} size="xs" type="button" variant="ghost">
+          <PencilLine aria-hidden="true" data-icon="inline-start" /> Correct
+        </Button>
+      )}
       {onCopy && (
         <Button onClick={onCopy} size="xs" type="button" variant="ghost">
           <Copy aria-hidden="true" data-icon="inline-start" />
@@ -569,4 +675,71 @@ function formatTime(milliseconds: number) {
   return [hours, minutes, remainder]
     .map((value) => value.toString().padStart(2, "0"))
     .join(":")
+}
+
+/**
+ * Rewrites one finalized segment.
+ *
+ * The box opens with the current text so a correction is an edit of what is
+ * there, not a retype. Saving records an event; it never overwrites what was
+ * transcribed, which stays visible beneath the segment afterwards.
+ */
+function SegmentCorrectionForm({
+  initialText,
+  onCancel,
+  onSubmit,
+  pending,
+}: {
+  initialText: string
+  onCancel: () => void
+  onSubmit: (text: string) => void
+  pending: boolean
+}) {
+  const [text, setText] = useState(initialText)
+  const unchanged = text.trim() === initialText.trim()
+
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit(text)
+      }}
+    >
+      <label className="sr-only" htmlFor="segment-correction">
+        Corrected text
+      </label>
+      <Textarea
+        autoFocus
+        disabled={pending}
+        id="segment-correction"
+        maxLength={32768}
+        onChange={(event) => setText(event.target.value)}
+        rows={3}
+        value={text}
+      />
+      <p className="text-muted-foreground text-xs">
+        The transcription is kept. It stays in the recovery journal and remains
+        readable beneath this segment and in <code>transcript.md</code>.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          disabled={pending || unchanged || text.trim().length === 0}
+          size="sm"
+          type="submit"
+        >
+          {pending ? "Saving…" : "Save correction"}
+        </Button>
+        <Button
+          disabled={pending}
+          onClick={onCancel}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
 }

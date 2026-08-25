@@ -32,6 +32,17 @@ pub(crate) struct TranscriptSegmentView {
     pub(crate) text: String,
     pub(crate) status: TranscriptSegmentStatus,
     pub(crate) language: String,
+    /// The transcription as it was produced, present only when the user
+    /// rewrote this segment. A correction never replaces the original, so the
+    /// reader can always see both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) original_text: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) important: bool,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl TranscriptSegmentView {
@@ -218,5 +229,108 @@ mod tests {
         let mut invalid = fixture["searchRequest"].clone();
         invalid["unknown"] = serde_json::json!(true);
         assert!(serde_json::from_value::<TranscriptSearchQuery>(invalid).is_err());
+    }
+}
+
+/// What the user is saying about one finalized segment.
+///
+/// Correcting and marking are separate because they mean different things: one
+/// changes what the transcript reads as, the other only flags it. Both are
+/// recorded as events, so neither erases what was transcribed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum SegmentAnnotation {
+    #[serde(rename_all = "camelCase")]
+    Correction { text: String },
+    #[serde(rename_all = "camelCase")]
+    Importance { important: bool },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum RawSegmentAnnotation {
+    #[serde(rename_all = "camelCase")]
+    Correction { text: String },
+    #[serde(rename_all = "camelCase")]
+    Importance { important: bool },
+}
+
+impl<'de> Deserialize<'de> for SegmentAnnotation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let annotation = match RawSegmentAnnotation::deserialize(deserializer)? {
+            RawSegmentAnnotation::Correction { text } => Self::Correction { text },
+            RawSegmentAnnotation::Importance { important } => Self::Importance { important },
+        };
+        annotation.validate().map_err(serde::de::Error::custom)?;
+        Ok(annotation)
+    }
+}
+
+impl SegmentAnnotation {
+    /// A correction is rendered exactly where the transcription was, so it
+    /// obeys the same bounds a transcription does.
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        let Self::Correction { text } = self else {
+            return Ok(());
+        };
+        if text.trim().is_empty()
+            || text.len() > MAX_TRANSCRIPT_TEXT_BYTES
+            || text.chars().any(|value| {
+                value == '\r' || (value.is_control() && value != '\n' && value != '\t')
+            })
+        {
+            return Err("transcript_annotation_invalid");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AnnotateTranscriptSegmentRequest {
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) segment_id: Uuid,
+    pub(crate) annotation: SegmentAnnotation,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawAnnotateTranscriptSegmentRequest {
+    project_id: ProjectId,
+    session_id: SessionId,
+    segment_id: Uuid,
+    annotation: SegmentAnnotation,
+}
+
+impl<'de> Deserialize<'de> for AnnotateTranscriptSegmentRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawAnnotateTranscriptSegmentRequest::deserialize(deserializer)?;
+        let request = Self {
+            project_id: raw.project_id,
+            session_id: raw.session_id,
+            segment_id: raw.segment_id,
+            annotation: raw.annotation,
+        };
+        request.validate().map_err(serde::de::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl AnnotateTranscriptSegmentRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.project_id.as_uuid().is_nil()
+            || self.session_id.as_uuid().is_nil()
+            || self.segment_id.is_nil()
+        {
+            return Err("transcript_annotation_invalid");
+        }
+        self.annotation.validate()
     }
 }

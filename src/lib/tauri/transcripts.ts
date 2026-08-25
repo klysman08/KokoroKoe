@@ -6,12 +6,16 @@ import {
   toApplicationError,
 } from "@/contracts/app-error"
 import {
+  annotateTranscriptSegmentRequestSchema,
   transcriptPageRequestSchema,
   transcriptPageSchema,
+  transcriptSegmentSchema,
   transcriptSearchPageSchema,
   transcriptSearchRequestSchema,
+  type AnnotateTranscriptSegmentRequest,
   type TranscriptPage,
   type TranscriptPageRequest,
+  type TranscriptSegment,
   type TranscriptSearchPage,
   type TranscriptSearchRequest,
 } from "@/contracts/transcripts"
@@ -80,4 +84,30 @@ export async function searchTranscript(
   )
     throw createContractApplicationError()
   return page
+}
+
+/**
+ * Records a correction or an importance mark against one finalized segment.
+ *
+ * Rust appends it to the append-only journal and republishes the transcript
+ * from that log, so the transcription is never overwritten and the updated
+ * segment comes back carrying both readings.
+ */
+export async function annotateTranscriptSegment(
+  value: AnnotateTranscriptSegmentRequest,
+): Promise<TranscriptSegment> {
+  const request = annotateTranscriptSegmentRequestSchema.safeParse(value)
+  if (!request.success) throw createRequestContractApplicationError()
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("annotate_transcript_segment", {
+      request: request.data,
+    })
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const segment = transcriptSegmentSchema.safeParse(raw)
+  if (!segment.success || segment.data.id !== request.data.segmentId)
+    throw createContractApplicationError()
+  return segment.data
 }

@@ -106,6 +106,9 @@ P3-010 adds a Rust-owned HTTPS model-download boundary. P5-015 extends the close
 
 ## Window limitations
 
+- Correcting a transcript segment never deletes what was transcribed. The correction is appended to the session's recovery journal as a new event, the original record is left untouched, and `transcript.md` shows the correction with the original quoted beneath it. Both readings therefore survive in the portable folder, and the app shows the original behind a disclosure on the corrected segment.
+- A corrected segment is found by searching its corrected wording. The original stays readable in the document and the journal but is not indexed, and summaries and insights are generated from the corrected text.
+- Marking a segment important is also recorded in the journal and shown in `transcript.md`. It records only that you marked it — no note, reason, or timestamp of your own.
 - The **Explain**, **Suggest a response**, and **Summarize** buttons on a transcript segment send nothing. They fill the question box with a prepared question, which you can read, edit, or abandon; transcript text reaches OpenRouter only when you press **Ask OpenRouter**, exactly as for a question you typed yourself.
 - Copying a transcript segment puts that segment on the system clipboard — the speaker, the timecode, and the text, but no segment identifier, language, or confidence. As with any clipboard use, other applications can read it and nothing clears it afterwards.
 - Copying an insight puts model-generated text about the meeting on the system clipboard, where any other application can read it. It is copied only when you press **Copy**, and only the title, body, and rationale you can already see are copied — never segment identifiers, cost, or session metadata. Nothing clears the clipboard afterwards.

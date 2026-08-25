@@ -29,6 +29,7 @@
     "allow-stop-session",
     "allow-get-transcript-page",
     "allow-search-transcript",
+    "allow-annotate-transcript-segment",
     "allow-ask-manual-question",
     "allow-generate-recent-insights",
     "allow-get-session-summary",

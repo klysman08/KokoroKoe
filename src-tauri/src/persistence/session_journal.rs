@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -106,11 +106,62 @@ impl LifecycleChange {
     }
 }
 
+/// A user's rewrite of one finalized segment.
+///
+/// This is an event, not an edit. The journal is append-only, so the original
+/// `FinalizedTranscriptSegment` record it refers to is never touched and the
+/// transcription as it was produced always stays recoverable.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SegmentCorrection {
+    pub(crate) segment_id: Uuid,
+    pub(crate) text: String,
+}
+
+impl SegmentCorrection {
+    fn validate(&self) -> Result<(), SessionJournalError> {
+        if self.segment_id.is_nil() || !valid_segment_text(&self.text) {
+            return Err(SessionJournalError::new("session_journal_mutation_invalid"));
+        }
+        Ok(())
+    }
+}
+
+/// Whether the user marked one finalized segment as important.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SegmentImportance {
+    pub(crate) segment_id: Uuid,
+    pub(crate) important: bool,
+}
+
+impl SegmentImportance {
+    fn validate(&self) -> Result<(), SessionJournalError> {
+        if self.segment_id.is_nil() {
+            return Err(SessionJournalError::new("session_journal_mutation_invalid"));
+        }
+        Ok(())
+    }
+}
+
+/// The same bounds a transcribed segment must satisfy. A correction is read
+/// back and rendered exactly where the original was, so it cannot be allowed to
+/// carry anything the original could not.
+fn valid_segment_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= MAX_SEGMENT_TEXT_BYTES
+        && !text
+            .chars()
+            .any(|value| value == '\r' || (value.is_control() && value != '\n' && value != '\t'))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub(crate) enum JournalMutation {
     FinalizedTranscriptSegment(FinalizedTranscriptSegment),
     LifecycleChange(LifecycleChange),
+    SegmentCorrection(SegmentCorrection),
+    SegmentImportance(SegmentImportance),
 }
 
 impl JournalMutation {
@@ -118,6 +169,8 @@ impl JournalMutation {
         match self {
             Self::FinalizedTranscriptSegment(segment) => segment.validate(),
             Self::LifecycleChange(change) => change.validate(),
+            Self::SegmentCorrection(correction) => correction.validate(),
+            Self::SegmentImportance(importance) => importance.validate(),
         }
     }
 }
@@ -147,7 +200,35 @@ pub(crate) struct JournalReplay {
     pub(crate) ignored_duplicate_events: usize,
     pub(crate) discarded_torn_tail: bool,
     pub(crate) state: SessionState,
-    pub(crate) finalized_segments: Vec<FinalizedTranscriptSegment>,
+    pub(crate) finalized_segments: Vec<ReplayedSegment>,
+}
+
+/// One finalized segment with whatever the user later said about it.
+///
+/// The journaled segment is kept verbatim: `text` on it is always the
+/// transcription as produced, and a correction sits beside it rather than over
+/// it, so both readings survive every replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReplayedSegment {
+    pub(crate) segment: FinalizedTranscriptSegment,
+    pub(crate) corrected_text: Option<String>,
+    pub(crate) important: bool,
+}
+
+impl ReplayedSegment {
+    /// What the transcript reads as now.
+    pub(crate) fn effective_text(&self) -> &str {
+        self.corrected_text.as_deref().unwrap_or(&self.segment.text)
+    }
+
+    /// The transcription as it was produced. Never overwritten.
+    pub(crate) fn original_text(&self) -> &str {
+        &self.segment.text
+    }
+
+    pub(crate) const fn corrected(&self) -> bool {
+        self.corrected_text.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,13 +510,23 @@ fn parse_records(
     })
 }
 
+fn annotated(
+    positions: &HashMap<Uuid, usize>,
+    segment_id: Uuid,
+) -> Result<usize, SessionJournalError> {
+    positions
+        .get(&segment_id)
+        .copied()
+        .ok_or_else(|| SessionJournalError::new("session_journal_annotation_orphaned"))
+}
+
 fn replay_records(
     records: &[JournalRecord],
     discarded_torn_tail: bool,
 ) -> Result<JournalReplay, SessionJournalError> {
     let mut state = SessionState::Idle;
-    let mut segments = Vec::new();
-    let mut segment_ids = HashSet::new();
+    let mut segments: Vec<ReplayedSegment> = Vec::new();
+    let mut positions: HashMap<Uuid, usize> = HashMap::new();
     let mut events: HashMap<Uuid, (&str, &JournalMutation)> = HashMap::new();
     let mut ignored_duplicate_events = 0;
     for record in records {
@@ -449,10 +540,14 @@ fn replay_records(
         events.insert(record.event_id, (&record.recorded_at, &record.mutation));
         match &record.mutation {
             JournalMutation::FinalizedTranscriptSegment(segment) => {
-                if !segment_ids.insert(segment.id) {
+                if positions.insert(segment.id, segments.len()).is_some() {
                     return Err(SessionJournalError::new("session_journal_segment_conflict"));
                 }
-                segments.push(segment.clone());
+                segments.push(ReplayedSegment {
+                    segment: segment.clone(),
+                    corrected_text: None,
+                    important: false,
+                });
             }
             JournalMutation::LifecycleChange(change) => {
                 if change.previous != state {
@@ -461,6 +556,20 @@ fn replay_records(
                     ));
                 }
                 state = change.current;
+            }
+            // An annotation is always written after the segment it names, so a
+            // reference to an unknown segment is corruption rather than an
+            // ordering the replay should tolerate. A truncated prefix can only
+            // lose annotations, never orphan one.
+            JournalMutation::SegmentCorrection(correction) => {
+                let position = annotated(&positions, correction.segment_id)?;
+                // A later correction supersedes an earlier one; the journaled
+                // original underneath is still untouched.
+                segments[position].corrected_text = Some(correction.text.clone());
+            }
+            JournalMutation::SegmentImportance(importance) => {
+                let position = annotated(&positions, importance.segment_id)?;
+                segments[position].important = importance.important;
             }
         }
     }
@@ -681,6 +790,181 @@ mod tests {
         }
     }
 
+    fn correction(event_id: Uuid, segment_id: Uuid, text: &str) -> JournalAppend {
+        JournalAppend {
+            event_id,
+            recorded_at: "2026-08-11T10:00:03Z".to_owned(),
+            mutation: JournalMutation::SegmentCorrection(SegmentCorrection {
+                segment_id,
+                text: text.to_owned(),
+            }),
+        }
+    }
+
+    fn importance(event_id: Uuid, segment_id: Uuid, important: bool) -> JournalAppend {
+        JournalAppend {
+            event_id,
+            recorded_at: "2026-08-11T10:00:04Z".to_owned(),
+            mutation: JournalMutation::SegmentImportance(SegmentImportance {
+                segment_id,
+                important,
+            }),
+        }
+    }
+
+    /// The whole point of correcting through an append-only journal: the
+    /// transcription as it was produced is never overwritten, so it survives
+    /// every replay and stays recoverable.
+    #[test]
+    fn a_correction_never_overwrites_the_original() {
+        let (workspace, project, session_record, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+
+        journal
+            .append(
+                &locator,
+                correction(Uuid::new_v4(), segment_id, "A corrected segment."),
+            )
+            .unwrap();
+
+        let replay = journal.replay(&locator).unwrap();
+        let replayed = &replay.finalized_segments[0];
+        assert_eq!(replayed.effective_text(), "A corrected segment.");
+        assert_eq!(replayed.original_text(), "A bounded finalized segment.");
+        assert_eq!(replayed.segment.text, "A bounded finalized segment.");
+        assert!(replayed.corrected());
+        // The original is still on disk verbatim, not just in memory.
+        let bytes =
+            fs::read_to_string(journal_path(workspace.path(), &project, &session_record)).unwrap();
+        assert!(bytes.contains("A bounded finalized segment."));
+        assert!(bytes.contains("A corrected segment."));
+    }
+
+    /// Correcting twice is two events, so the first correction and the original
+    /// both remain in the log even though only the last one reads.
+    #[test]
+    fn the_latest_correction_wins_and_the_earlier_ones_remain() {
+        let (workspace, project, session_record, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+        journal
+            .append(
+                &locator,
+                correction(Uuid::new_v4(), segment_id, "First try."),
+            )
+            .unwrap();
+
+        journal
+            .append(
+                &locator,
+                correction(Uuid::new_v4(), segment_id, "Second try."),
+            )
+            .unwrap();
+
+        let replay = journal.replay(&locator).unwrap();
+        assert_eq!(replay.finalized_segments[0].effective_text(), "Second try.");
+        assert_eq!(
+            replay.finalized_segments[0].original_text(),
+            "A bounded finalized segment."
+        );
+        let bytes =
+            fs::read_to_string(journal_path(workspace.path(), &project, &session_record)).unwrap();
+        assert!(bytes.contains("First try."));
+    }
+
+    #[test]
+    fn importance_is_recorded_and_can_be_taken_back() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+        assert!(!journal.replay(&locator).unwrap().finalized_segments[0].important);
+
+        journal
+            .append(&locator, importance(Uuid::new_v4(), segment_id, true))
+            .unwrap();
+        assert!(journal.replay(&locator).unwrap().finalized_segments[0].important);
+
+        journal
+            .append(&locator, importance(Uuid::new_v4(), segment_id, false))
+            .unwrap();
+        assert!(!journal.replay(&locator).unwrap().finalized_segments[0].important);
+    }
+
+    /// An annotation is always written after the segment it names, so a
+    /// reference to an unknown segment means the log is damaged rather than
+    /// merely out of order. The append refuses it outright, so the orphan never
+    /// reaches the file and cannot make the journal unreadable later.
+    #[test]
+    fn an_annotation_for_an_unknown_segment_is_refused() {
+        let (workspace, project, session_record, locator, journal) = workspace_with_session();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), Uuid::new_v4()))
+            .unwrap();
+
+        let refused = journal.append(
+            &locator,
+            correction(Uuid::new_v4(), Uuid::new_v4(), "Orphaned."),
+        );
+
+        assert_eq!(
+            refused.unwrap_err().code,
+            "session_journal_annotation_orphaned"
+        );
+        let bytes =
+            fs::read_to_string(journal_path(workspace.path(), &project, &session_record)).unwrap();
+        assert!(!bytes.contains("Orphaned."));
+        assert_eq!(bytes.lines().count(), 1);
+        // The journal still replays cleanly, so a refused annotation costs
+        // nothing.
+        assert_eq!(
+            journal.replay(&locator).unwrap().finalized_segments.len(),
+            1
+        );
+    }
+
+    /// A correction is rendered where the original was, so it cannot carry
+    /// anything the original could not.
+    #[test]
+    fn a_correction_obeys_the_same_text_bounds_as_a_transcription() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+
+        for rejected in ["", "carriage\rreturn", "bell\u{7}"] {
+            assert_eq!(
+                journal
+                    .append(&locator, correction(Uuid::new_v4(), segment_id, rejected))
+                    .unwrap_err()
+                    .code,
+                "session_journal_mutation_invalid"
+            );
+        }
+        let oversized = "x".repeat(MAX_SEGMENT_TEXT_BYTES + 1);
+        assert_eq!(
+            journal
+                .append(&locator, correction(Uuid::new_v4(), segment_id, &oversized))
+                .unwrap_err()
+                .code,
+            "session_journal_mutation_invalid"
+        );
+        // Newlines and tabs stay allowed, exactly as in a transcription.
+        journal
+            .append(
+                &locator,
+                correction(Uuid::new_v4(), segment_id, "line\nbreak\tkept"),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn canonical_record_matches_the_frozen_golden_bytes() {
         let (workspace, project, session_record, locator, journal) = workspace_with_session();
@@ -728,7 +1012,7 @@ mod tests {
         assert_eq!(replay.applied_events, 2);
         assert_eq!(replay.state, SessionState::Preparing);
         assert_eq!(replay.finalized_segments.len(), 1);
-        assert_eq!(replay.finalized_segments[0].id, segment_id);
+        assert_eq!(replay.finalized_segments[0].segment.id, segment_id);
         assert_eq!(journal.replay(&locator).unwrap(), replay);
     }
 

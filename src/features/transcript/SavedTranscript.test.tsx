@@ -12,6 +12,7 @@ import {
   manualQuestionFixtureSchema,
 } from "@/contracts/manual-question"
 import { projectSessionFixtureSchema } from "@/contracts/projects"
+import { annotateTranscriptSegmentRequestSchema } from "@/contracts/transcripts"
 import { SEGMENT_QUESTION_PRESETS, segmentAsText } from "./segment-actions"
 import { SavedTranscript } from "./SavedTranscript"
 
@@ -284,6 +285,112 @@ describe("SavedTranscript", () => {
       ),
     )
     expect(await screen.findByText("Copied")).toBeInTheDocument()
+  })
+
+  /// The decision this feature rests on: a correction changes what the
+  /// transcript reads as and never what it recorded, so the transcription has
+  /// to stay on screen afterwards.
+  it("corrects a segment and keeps the original readable", async () => {
+    const user = userEvent.setup()
+    const segment = scopedPage().items[0]!
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "annotate_transcript_segment") {
+        const request = annotateTranscriptSegmentRequestSchema.parse(
+          (args as { request: unknown }).request,
+        )
+        expect(request.annotation).toEqual({
+          kind: "correction",
+          text: "KokoroKoe stays local.",
+        })
+        return {
+          ...segment,
+          text: "KokoroKoe stays local.",
+          originalText: segment.text,
+        }
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(screen.getAllByRole("button", { name: "Correct" })[0]!)
+    const box = await screen.findByRole("textbox", { name: "Corrected text" })
+    expect(box).toHaveValue(segment.text)
+    await user.clear(box)
+    await user.type(box, "KokoroKoe stays local.")
+    await user.click(screen.getByRole("button", { name: /save correction/i }))
+
+    expect(
+      await screen.findByText("KokoroKoe stays local."),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/show the original transcription/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(segment.text)).toBeInTheDocument()
+  })
+
+  it("marks a segment important and can take it back", async () => {
+    const user = userEvent.setup()
+    const segment = scopedPage().items[0]!
+    let important = false
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "annotate_transcript_segment") {
+        const request = annotateTranscriptSegmentRequestSchema.parse(
+          (args as { request: unknown }).request,
+        )
+        if (request.annotation.kind !== "importance")
+          throw new Error("expected an importance annotation")
+        important = request.annotation.important
+        return { ...segment, important }
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(
+      screen.getAllByRole("button", { name: /mark important/i })[0]!,
+    )
+
+    const marked = await screen.findByRole("button", { name: "Important" })
+    expect(marked).toHaveAttribute("aria-pressed", "true")
+    await user.click(marked)
+    await waitFor(() => expect(important).toBe(false))
+  })
+
+  it("surfaces a sanitized failure when a correction is refused", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_transcript_page") return scopedPage()
+      throw {
+        error: {
+          code: "transcript_segment_not_found",
+          userMessage: "KokoroKoe could not find that transcript segment.",
+          technicalDetail: "transcript_segment_not_found",
+          severity: "warning",
+          retryable: false,
+          correlationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        },
+      }
+    })
+    renderTranscript()
+    await screen.findByText(
+      "We should keep the authoritative transcript local.",
+    )
+
+    await user.click(
+      screen.getAllByRole("button", { name: /mark important/i })[0]!,
+    )
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not find that transcript segment/i,
+    )
   })
 
   it("reports a refused clipboard instead of claiming a copy", async () => {

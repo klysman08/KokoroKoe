@@ -14,6 +14,7 @@ fn main() {
             "resume_model_download",
             "delete_transcription_model",
             "set_default_transcription_model",
+            "annotate_transcript_segment",
             "ask_manual_question",
             "generate_recent_insights",
             "get_session_summary",

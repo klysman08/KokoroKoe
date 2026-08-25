@@ -379,7 +379,7 @@ fn rebuild_on_connection(
             row_id = row_id
                 .checked_add(1)
                 .ok_or_else(|| TranscriptStoreError::new("transcript_search_limit_exceeded"))?;
-            let source = match segment.source {
+            let source = match segment.segment.source {
                 AudioSource::Microphone => "microphone",
                 AudioSource::SystemOutput => "system_output",
             };
@@ -394,16 +394,19 @@ fn rebuild_on_connection(
                         row_id,
                         project_id,
                         session_id,
-                        segment.id.to_string(),
+                        segment.segment.id.to_string(),
                         source,
-                        i64::try_from(segment.start_ms).map_err(|_| {
+                        i64::try_from(segment.segment.start_ms).map_err(|_| {
                             TranscriptStoreError::new("transcript_search_index_invalid")
                         })?,
-                        i64::try_from(segment.end_ms).map_err(|_| {
+                        i64::try_from(segment.segment.end_ms).map_err(|_| {
                             TranscriptStoreError::new("transcript_search_index_invalid")
                         })?,
-                        segment.language,
-                        segment.text,
+                        segment.segment.language,
+                        // Search finds what the transcript reads as now. The
+                        // original stays readable in the document and the
+                        // journal, but a correction is what people look for.
+                        segment.effective_text(),
                         i64::try_from(transcript.snapshot.checkpoint_sequence).map_err(|_| {
                             TranscriptStoreError::new("transcript_search_index_invalid")
                         })?,

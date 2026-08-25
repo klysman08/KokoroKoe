@@ -27,7 +27,7 @@ pub(crate) use session_index::{SessionCatalog, SessionIndexRebuildReport};
 #[allow(unused_imports)]
 pub(crate) use session_journal::{
     FinalizedTranscriptSegment, JournalAppend, JournalMutation, JournalReplay, LifecycleChange,
-    SessionJournal, SessionJournalError,
+    ReplayedSegment, SegmentCorrection, SegmentImportance, SessionJournal, SessionJournalError,
 };
 pub(crate) use session_lifecycle::{PersistedSessionEvent, PersistedSessionLifecycleService};
 pub(crate) use session_service::SessionService;

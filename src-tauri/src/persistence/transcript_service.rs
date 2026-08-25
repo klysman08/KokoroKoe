@@ -6,13 +6,15 @@ use std::{
 use serde::Serialize;
 
 use crate::domain::{
-    AppError, Project, ProjectId, Session, SessionId, TranscriptPage, TranscriptPageRequest,
-    TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
-    TranscriptSegmentView,
+    AnnotateTranscriptSegmentRequest, AppError, Project, ProjectId, SegmentAnnotation, Session,
+    SessionId, TranscriptPage, TranscriptPageRequest, TranscriptSearchHit,
+    TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentStatus,
+    TranscriptSegmentView, now_rfc3339,
 };
 
 use super::{
-    ProjectCatalog, SessionCatalog, SessionLocator, SettingsService, TranscriptSearchCatalog,
+    JournalAppend, JournalMutation, ProjectCatalog, SegmentCorrection, SegmentImportance,
+    SessionCatalog, SessionJournal, SessionLocator, SettingsService, TranscriptSearchCatalog,
     TranscriptSearchRequest, TranscriptStore,
 };
 
@@ -109,15 +111,19 @@ impl TranscriptService {
                 .iter()
                 .cloned()
                 .map(|segment| TranscriptSegmentView {
-                    id: segment.id,
+                    id: segment.segment.id,
                     project_id: request.project_id,
                     session_id: request.session_id,
-                    source: segment.source,
-                    start_ms: segment.start_ms,
-                    end_ms: segment.end_ms,
-                    text: segment.text,
+                    source: segment.segment.source,
+                    start_ms: segment.segment.start_ms,
+                    end_ms: segment.segment.end_ms,
+                    text: segment.effective_text().to_owned(),
                     status: TranscriptSegmentStatus::Final,
-                    language: segment.language,
+                    language: segment.segment.language.clone(),
+                    original_text: segment
+                        .corrected()
+                        .then(|| segment.original_text().to_owned()),
+                    important: segment.important,
                 })
                 .collect::<Vec<_>>();
             let next_cursor = (end < snapshot.segments.len()).then(|| {
@@ -130,6 +136,103 @@ impl TranscriptService {
             let page = TranscriptPage { items, next_cursor };
             page.validate().map_err(AppError::transcript_error)?;
             Ok(page)
+        })
+    }
+
+    /// Records what the user said about one finalized segment.
+    ///
+    /// The annotation is appended to the journal and the transcript is then
+    /// re-materialized from it, so the document is always a function of the
+    /// log rather than something edited in place. The transcription the model
+    /// produced is never rewritten: it stays in the journal, and a corrected
+    /// segment keeps it visible in `transcript.md` too.
+    pub(crate) fn annotate_segment(
+        &self,
+        request: AnnotateTranscriptSegmentRequest,
+    ) -> Result<TranscriptSegmentView, AppError> {
+        request.validate().map_err(AppError::transcript_error)?;
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(request.project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(request.project_id, request.session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let store = TranscriptStore::open(workspace)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let snapshot = store
+                .read_transcript(&locator)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            if !snapshot
+                .segments
+                .iter()
+                .any(|segment| segment.segment.id == request.segment_id)
+            {
+                return Err(AppError::transcript_error("transcript_segment_not_found"));
+            }
+
+            let mutation = match &request.annotation {
+                SegmentAnnotation::Correction { text } => {
+                    JournalMutation::SegmentCorrection(SegmentCorrection {
+                        segment_id: request.segment_id,
+                        text: text.clone(),
+                    })
+                }
+                SegmentAnnotation::Importance { important } => {
+                    JournalMutation::SegmentImportance(SegmentImportance {
+                        segment_id: request.segment_id,
+                        important: *important,
+                    })
+                }
+            };
+            let recorded_at = now_rfc3339()?;
+            SessionJournal::open(workspace)
+                .and_then(|journal| {
+                    journal.append(
+                        &locator,
+                        JournalAppend {
+                            event_id: uuid::Uuid::new_v4(),
+                            recorded_at,
+                            mutation,
+                        },
+                    )
+                })
+                .map_err(|error| AppError::transcript_error(error.code))?;
+
+            // The document is republished from the journal, and the fingerprint
+            // guards against another writer having moved it underneath us.
+            store
+                .materialize(&locator, Some(snapshot.fingerprint))
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let updated = store
+                .read_transcript(&locator)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let segment = updated
+                .segments
+                .into_iter()
+                .find(|segment| segment.segment.id == request.segment_id)
+                .ok_or_else(|| AppError::transcript_error("transcript_segment_not_found"))?;
+            let view = TranscriptSegmentView {
+                id: segment.segment.id,
+                project_id: request.project_id,
+                session_id: request.session_id,
+                source: segment.segment.source,
+                start_ms: segment.segment.start_ms,
+                end_ms: segment.segment.end_ms,
+                text: segment.effective_text().to_owned(),
+                status: TranscriptSegmentStatus::Final,
+                language: segment.segment.language.clone(),
+                original_text: segment
+                    .corrected()
+                    .then(|| segment.original_text().to_owned()),
+                important: segment.important,
+            };
+            view.validate().map_err(AppError::transcript_error)?;
+            Ok(view)
         })
     }
 
@@ -162,7 +265,7 @@ impl TranscriptService {
             let selected_index = snapshot
                 .segments
                 .iter()
-                .position(|segment| segment.id == selected_segment_id)
+                .position(|segment| segment.segment.id == selected_segment_id)
                 .ok_or_else(|| {
                     AppError::manual_question_error("manual_question_segment_not_found")
                 })?;
@@ -174,15 +277,19 @@ impl TranscriptService {
                 .iter()
                 .cloned()
                 .map(|segment| TranscriptSegmentView {
-                    id: segment.id,
+                    id: segment.segment.id,
                     project_id,
                     session_id,
-                    source: segment.source,
-                    start_ms: segment.start_ms,
-                    end_ms: segment.end_ms,
-                    text: segment.text,
+                    source: segment.segment.source,
+                    start_ms: segment.segment.start_ms,
+                    end_ms: segment.segment.end_ms,
+                    text: segment.effective_text().to_owned(),
                     status: TranscriptSegmentStatus::Final,
-                    language: segment.language,
+                    language: segment.segment.language.clone(),
+                    original_text: segment
+                        .corrected()
+                        .then(|| segment.original_text().to_owned()),
+                    important: segment.important,
                 })
                 .collect::<Vec<_>>();
             let selected_segment = neighboring_segments[selected_index - start].clone();
@@ -232,15 +339,19 @@ impl TranscriptService {
                 .iter()
                 .cloned()
                 .map(|segment| TranscriptSegmentView {
-                    id: segment.id,
+                    id: segment.segment.id,
                     project_id,
                     session_id,
-                    source: segment.source,
-                    start_ms: segment.start_ms,
-                    end_ms: segment.end_ms,
-                    text: segment.text,
+                    source: segment.segment.source,
+                    start_ms: segment.segment.start_ms,
+                    end_ms: segment.segment.end_ms,
+                    text: segment.effective_text().to_owned(),
                     status: TranscriptSegmentStatus::Final,
-                    language: segment.language,
+                    language: segment.segment.language.clone(),
+                    original_text: segment
+                        .corrected()
+                        .then(|| segment.original_text().to_owned()),
+                    important: segment.important,
                 })
                 .collect::<Vec<_>>();
             Ok(RecentInsightContext {
@@ -281,18 +392,23 @@ impl TranscriptService {
             if snapshot.segments.is_empty() {
                 return Err(AppError::summary_error("summary_transcript_empty"));
             }
-            let view =
-                |segment: &crate::persistence::FinalizedTranscriptSegment| TranscriptSegmentView {
-                    id: segment.id,
-                    project_id,
-                    session_id,
-                    source: segment.source,
-                    start_ms: segment.start_ms,
-                    end_ms: segment.end_ms,
-                    text: segment.text.clone(),
-                    status: TranscriptSegmentStatus::Final,
-                    language: segment.language.clone(),
-                };
+            // A summary reads the transcript as it now stands, so a corrected
+            // segment is summarized by its correction.
+            let view = |segment: &crate::persistence::ReplayedSegment| TranscriptSegmentView {
+                id: segment.segment.id,
+                project_id,
+                session_id,
+                source: segment.segment.source,
+                start_ms: segment.segment.start_ms,
+                end_ms: segment.segment.end_ms,
+                text: segment.effective_text().to_owned(),
+                status: TranscriptSegmentStatus::Final,
+                language: segment.segment.language.clone(),
+                original_text: segment
+                    .corrected()
+                    .then(|| segment.original_text().to_owned()),
+                important: segment.important,
+            };
             let total_segments = snapshot.segments.len();
             let sampled_segments = evenly_spaced_indexes(total_segments, SUMMARY_SAMPLE_SEGMENTS)
                 .into_iter()
@@ -495,6 +611,199 @@ mod tests {
         ))
         .unwrap();
         serde_json::from_value(fixture["createRequest"]["value"].clone()).unwrap()
+    }
+
+    /// The decision this feature was built around: a correction changes what
+    /// the transcript reads as and never what it recorded. This checks the
+    /// whole round trip — journal, document, and read-back.
+    #[test]
+    fn correcting_a_segment_keeps_the_original_recoverable() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let segment_id = uuid::Uuid::new_v4();
+        SessionJournal::open(&workspace)
+            .unwrap()
+            .append(
+                &locator,
+                crate::persistence::JournalAppend {
+                    event_id: uuid::Uuid::new_v4(),
+                    recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+                    mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                        crate::persistence::FinalizedTranscriptSegment {
+                            id: segment_id,
+                            source: crate::audio::AudioSource::Microphone,
+                            start_ms: 0,
+                            end_ms: 800,
+                            text: "kokoro co is local".to_owned(),
+                            language: "en-US".to_owned(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data.clone());
+
+        let corrected = service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                segment_id,
+                serde_json::json!({ "kind": "correction", "text": "KokoroKoe is local" }),
+            ))
+            .unwrap();
+
+        assert_eq!(corrected.text, "KokoroKoe is local");
+        assert_eq!(
+            corrected.original_text.as_deref(),
+            Some("kokoro co is local")
+        );
+        // The document carries both readings, so the folder alone is enough.
+        let document = std::fs::read_to_string(transcript_path(&workspace, &project, &session));
+        let document = document.unwrap();
+        assert!(document.contains("KokoroKoe is local"));
+        assert!(document.contains("> kokoro co is local"));
+        assert!(document.contains("corrected: true"));
+        // And so is a fresh read through the ordinary page path.
+        let page = service
+            .get_transcript_page(TranscriptPageRequest {
+                project_id: project.id,
+                session_id: session.id,
+                cursor: None,
+                limit: 10,
+            })
+            .unwrap();
+        assert_eq!(page.items[0].text, "KokoroKoe is local");
+        assert_eq!(
+            page.items[0].original_text.as_deref(),
+            Some("kokoro co is local")
+        );
+
+        let marked = service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                segment_id,
+                serde_json::json!({ "kind": "importance", "important": true }),
+            ))
+            .unwrap();
+        assert!(marked.important);
+        // Marking must not disturb the correction that was already there.
+        assert_eq!(marked.text, "KokoroKoe is local");
+        assert_eq!(marked.original_text.as_deref(), Some("kokoro co is local"));
+    }
+
+    #[test]
+    fn annotating_an_unknown_segment_is_refused() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        SessionJournal::open(&workspace)
+            .unwrap()
+            .append(
+                &locator,
+                crate::persistence::JournalAppend {
+                    event_id: uuid::Uuid::new_v4(),
+                    recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+                    mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                        crate::persistence::FinalizedTranscriptSegment {
+                            id: uuid::Uuid::new_v4(),
+                            source: crate::audio::AudioSource::Microphone,
+                            start_ms: 0,
+                            end_ms: 800,
+                            text: "A real segment.".to_owned(),
+                            language: "en-US".to_owned(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+
+        let error = service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                uuid::Uuid::new_v4(),
+                serde_json::json!({ "kind": "correction", "text": "Nothing to correct." }),
+            ))
+            .unwrap_err();
+
+        assert_eq!(error.code, "transcript_segment_not_found");
+    }
+
+    /// A correction is rendered where the transcription was, so an empty or
+    /// control-bearing rewrite must be refused before it reaches the journal.
+    #[test]
+    fn an_unusable_correction_is_refused_by_the_contract() {
+        for rejected in ["", "   ", "carriage\rreturn"] {
+            assert!(
+                serde_json::from_value::<crate::domain::AnnotateTranscriptSegmentRequest>(
+                    serde_json::json!({
+                        "projectId": "11111111-1111-4111-8111-111111111111",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "segmentId": "33333333-3333-4333-8333-333333333333",
+                        "annotation": { "kind": "correction", "text": rejected },
+                    })
+                )
+                .is_err(),
+                "{rejected:?} must not deserialize"
+            );
+        }
+    }
+
+    fn annotation(
+        project_id: crate::domain::ProjectId,
+        session_id: crate::domain::SessionId,
+        segment_id: uuid::Uuid,
+        annotation: serde_json::Value,
+    ) -> crate::domain::AnnotateTranscriptSegmentRequest {
+        serde_json::from_value(serde_json::json!({
+            "projectId": project_id,
+            "sessionId": session_id,
+            "segmentId": segment_id,
+            "annotation": annotation,
+        }))
+        .unwrap()
+    }
+
+    fn transcript_path(
+        workspace: &std::path::Path,
+        project: &crate::domain::Project,
+        session: &crate::domain::Session,
+    ) -> std::path::PathBuf {
+        workspace
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions")
+            .join(&session.folder_name)
+            .join("transcript.md")
     }
 
     #[test]

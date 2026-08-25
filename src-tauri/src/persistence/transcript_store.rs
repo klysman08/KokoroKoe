@@ -16,9 +16,7 @@ use super::{
         atomic_publish_new, atomic_replace_existing, atomic_replace_with_backup,
         open_snapshot_without_write_share,
     },
-    session_journal::{
-        FinalizedTranscriptSegment, JournalReplay, SessionJournal, SessionJournalError,
-    },
+    session_journal::{JournalReplay, ReplayedSegment, SessionJournal, SessionJournalError},
     session_store::{SessionLocator, SessionStore, SessionStoreError},
 };
 
@@ -74,7 +72,7 @@ pub(crate) struct TranscriptSnapshot {
     pub(crate) checkpoint_checksum: Option<String>,
     pub(crate) segment_count: usize,
     pub(crate) recovered_from_backup: bool,
-    pub(crate) segments: Vec<FinalizedTranscriptSegment>,
+    pub(crate) segments: Vec<ReplayedSegment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,7 +190,7 @@ impl TranscriptStore {
                         .segments
                         .iter()
                         .try_fold(discovered_text_bytes, |total, segment| {
-                            total.checked_add(segment.text.len())
+                            total.checked_add(segment.effective_text().len())
                         })
                         .ok_or_else(|| {
                             TranscriptStoreError::new("transcript_discovery_limit_exceeded")
@@ -405,7 +403,7 @@ struct LockedTranscript {
     checkpoint_sequence: u64,
     checkpoint_checksum: Option<String>,
     segment_count: usize,
-    segments: Vec<FinalizedTranscriptSegment>,
+    segments: Vec<ReplayedSegment>,
 }
 
 impl LockedTranscript {
@@ -461,7 +459,8 @@ fn render_transcript(
     document.push_str(&json_scalar(&replay.last_checksum)?);
     document.push_str("\n---\n");
 
-    for segment in &replay.finalized_segments {
+    for replayed in &replay.finalized_segments {
+        let segment = &replayed.segment;
         document.push('\n');
         document.push_str("## ");
         document.push_str(&format_timestamp(segment.start_ms));
@@ -470,10 +469,26 @@ fn render_transcript(
             AudioSource::Microphone => "Microphone",
             AudioSource::SystemOutput => "System output",
         });
+        if replayed.important {
+            document.push_str(" ★");
+        }
         document.push_str("\n\n");
-        document.push_str(&segment.text);
-        if !segment.text.ends_with('\n') {
+        let text = replayed.effective_text();
+        document.push_str(text);
+        if !text.ends_with('\n') {
             document.push('\n');
+        }
+        // A correction changes what the transcript reads as, never what it
+        // recorded. The original is written into the document itself, not only
+        // into the journal, so someone holding just this folder — or just this
+        // file — can still see what was actually transcribed.
+        if replayed.corrected() {
+            document.push_str("\n> Original transcription:\n");
+            for line in replayed.original_text().split('\n') {
+                document.push_str("> ");
+                document.push_str(line);
+                document.push('\n');
+            }
         }
         document.push_str("\n<!--\nsegment_id: ");
         document.push_str(&segment.id.to_string());
@@ -488,6 +503,17 @@ fn render_transcript(
         document.push_str(&segment.end_ms.to_string());
         document.push_str("\nstatus: final\nlanguage: ");
         document.push_str(&json_scalar(&segment.language)?);
+        // Written only when true. `render_transcript` is also what verifies an
+        // existing document, so emitting these unconditionally would make every
+        // transcript written before corrections existed fail verification and
+        // fall into recovery. A segment nobody annotated renders exactly as it
+        // always did.
+        if replayed.corrected() {
+            document.push_str("\ncorrected: true");
+        }
+        if replayed.important {
+            document.push_str("\nimportant: true");
+        }
         document.push_str("\n-->\n");
     }
     if document.len() as u64 > MAX_TRANSCRIPT_BYTES {

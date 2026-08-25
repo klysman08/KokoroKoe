@@ -2,8 +2,9 @@ use tauri::{State, WebviewWindow};
 
 use crate::{
     domain::{
-        AppError, CommandError, ProjectId, SessionId, TranscriptPage, TranscriptPageRequest,
-        TranscriptSearchPageView, TranscriptSearchQuery,
+        AnnotateTranscriptSegmentRequest, AppError, CommandError, ProjectId, SessionId,
+        TranscriptPage, TranscriptPageRequest, TranscriptSearchPageView, TranscriptSearchQuery,
+        TranscriptSegmentView,
     },
     logging,
     persistence::TranscriptService,
@@ -56,6 +57,19 @@ pub(crate) async fn search_transcript<R: tauri::Runtime>(
     })
     .await
     .map_err(record_error)
+}
+
+#[tauri::command]
+pub(crate) async fn annotate_transcript_segment<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, TranscriptService>,
+    request: AnnotateTranscriptSegmentRequest,
+) -> Result<TranscriptSegmentView, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.annotate_segment(request))
+        .await
+        .map_err(record_error)
 }
 
 fn authorized<T>(label: &str, operation: impl FnOnce() -> T) -> Result<T, AppError> {

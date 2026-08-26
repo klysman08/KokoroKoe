@@ -16,6 +16,7 @@ fn main() {
             "set_default_transcription_model",
             "annotate_transcript_segment",
             "get_transcript_segment_history",
+            "mark_transcript_segment",
             "ask_manual_question",
             "generate_recent_insights",
             "get_session_summary",

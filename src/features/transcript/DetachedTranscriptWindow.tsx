@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
+import { Star } from "lucide-react"
 import type { UnlistenFn } from "@tauri-apps/api/event"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -20,10 +22,13 @@ import type {
   SessionTranscriptionPartial,
 } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { markTranscriptSegmentRequestSchema } from "@/contracts/transcripts"
 import {
+  markableSegmentId,
   reduceLiveRecords,
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
+import { markTranscriptSegment } from "@/lib/tauri/transcripts"
 import type { DetachedWindowAppearance } from "@/contracts/windows"
 import {
   listenToSessionTranscriptionFinals,
@@ -44,15 +49,23 @@ type ScopedTranscriptEvent =
 /**
  * The detached live-transcript window.
  *
- * This surface runs in its own webview whose capability grants event
- * subscription only: it invokes no command and reads no file. It shows records
- * that arrive while it is open, so opening it mid-Session does not replay
- * earlier speech; the saved transcript remains the record of the whole Session.
+ * This surface runs in its own webview. Its capability grants event
+ * subscription and exactly one command — marking a finalized segment important
+ * — because the window exists to be watched while the main window is hidden,
+ * so an action taken here cannot be routed through a window that may not be
+ * there. ADR 0010 records that decision; the window still reads no file and
+ * holds nothing that can write text into the record.
+ *
+ * It shows records that arrive while it is open, so opening it mid-Session does
+ * not replay earlier speech; the saved transcript remains the record of the
+ * whole Session.
  */
 export function DetachedTranscriptWindow() {
   const [records, setRecords] = useState<TranscriptRecord[]>([])
-  const [scope, setScope] = useState<{ sessionId: string }>()
+  const [scope, setScope] = useState<{ projectId: string; sessionId: string }>()
   const [error, setError] = useState<ApplicationError>()
+  const [marked, setMarked] = useState<Record<string, boolean>>({})
+  const [markingId, setMarkingId] = useState<string>()
   const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
   const [clickThrough, setClickThrough] = useState(false)
 
@@ -94,7 +107,7 @@ export function DetachedTranscriptWindow() {
       setScope((current) =>
         current?.sessionId === event.sessionId
           ? current
-          : { sessionId: event.sessionId },
+          : { projectId: event.projectId, sessionId: event.sessionId },
       )
       setRecords((current) => reduceLiveRecords(current, event.event))
     }
@@ -117,6 +130,36 @@ export function DetachedTranscriptWindow() {
       unlisteners.forEach((unlisten) => unlisten())
     }
   }, [])
+
+  /**
+   * Flags the moment the user just heard.
+   *
+   * The scope comes from the events this window received, never from anything
+   * it composed, so it can only ever name the Session it is displaying.
+   */
+  async function mark(segmentId: string, important: boolean) {
+    if (!scope) return
+    const request = markTranscriptSegmentRequestSchema.safeParse({
+      projectId: scope.projectId,
+      sessionId: scope.sessionId,
+      segmentId,
+      important,
+    })
+    if (!request.success) return
+    setMarkingId(segmentId)
+    setError(undefined)
+    try {
+      const updated = await markTranscriptSegment(request.data)
+      setMarked((current) => ({
+        ...current,
+        [segmentId]: updated.important === true,
+      }))
+    } catch (caught: unknown) {
+      setError(toApplicationError(caught))
+    } finally {
+      setMarkingId(undefined)
+    }
+  }
 
   const compact = appearance?.compact ?? false
   // Only the background carries the alpha. Text and borders stay fully opaque
@@ -186,7 +229,19 @@ export function DetachedTranscriptWindow() {
                             : record.id
                         }
                       >
-                        <DetachedRecord compact={compact} record={record} />
+                        <DetachedRecord
+                          compact={compact}
+                          important={
+                            record.kind === "segment" &&
+                            marked[record.segment.id] === true
+                          }
+                          marking={
+                            record.kind === "segment" &&
+                            markingId === record.segment.id
+                          }
+                          onMark={mark}
+                          record={record}
+                        />
                       </MessageScrollerItem>
                     ))}
                   </MessageScrollerContent>
@@ -203,15 +258,22 @@ export function DetachedTranscriptWindow() {
 
 function DetachedRecord({
   compact,
+  important,
+  marking,
+  onMark,
   record,
 }: {
   compact: boolean
+  important: boolean
+  marking: boolean
+  onMark: (segmentId: string, important: boolean) => void
   record: TranscriptRecord
 }) {
   const source =
     record.kind === "segment" ? record.segment.source : record.source
   const startMs =
     record.kind === "segment" ? record.segment.startMs : record.startMs
+  const markable = markableSegmentId(record)
   return (
     <article className={cn(compact ? "space-y-0.5" : "space-y-1")}>
       <div className="text-muted-foreground flex items-center gap-2 text-xs">
@@ -236,6 +298,20 @@ function DetachedRecord({
         <p className="text-muted-foreground rounded-md border border-dashed px-2 py-1 text-xs">
           Audio gap ({record.code.replaceAll("_", " ")})
         </p>
+      )}
+      {markable !== undefined && (
+        <Button
+          aria-pressed={important}
+          className={cn(important && "border-primary")}
+          disabled={marking}
+          onClick={() => onMark(markable, !important)}
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          <Star aria-hidden="true" data-icon="inline-start" />
+          {important ? "Important" : "Mark important"}
+        </Button>
       )}
     </article>
   )

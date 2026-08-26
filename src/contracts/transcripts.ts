@@ -186,3 +186,22 @@ export type TranscriptSegmentHistory = z.infer<
 export type TranscriptSegmentHistoryRequest = z.infer<
   typeof transcriptSegmentHistoryRequestSchema
 >
+
+/**
+ * A request to flag one finalized segment, and nothing else.
+ *
+ * Deliberately not an annotation request. The detached transcript window is
+ * authorized for the command that takes this, so the shape is the boundary:
+ * three identifiers and a flag, with no field through which that window could
+ * write text into the meeting record.
+ */
+export const markTranscriptSegmentRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+  segmentId: segmentIdSchema,
+  important: z.boolean(),
+})
+
+export type MarkTranscriptSegmentRequest = z.infer<
+  typeof markTranscriptSegmentRequestSchema
+>

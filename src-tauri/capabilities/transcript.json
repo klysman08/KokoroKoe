@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "transcript",
-  "description": "Event-subscription-only capability for the detached KokoroKoe transcript window. It grants no command, filesystem, HTTP, shell, process, or window-management permission.",
+  "description": "Event-subscription capability for the detached KokoroKoe transcript window, plus the single mark-only command ADR 0010 grants it. It holds no other command and no filesystem, HTTP, shell, process, or window-management permission.",
   "windows": ["transcript"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-mark-transcript-segment"
+  ]
 }

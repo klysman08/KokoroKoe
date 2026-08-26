@@ -7,6 +7,7 @@ import {
 } from "@/contracts/app-error"
 import {
   annotateTranscriptSegmentRequestSchema,
+  markTranscriptSegmentRequestSchema,
   transcriptPageRequestSchema,
   transcriptPageSchema,
   transcriptSegmentSchema,
@@ -15,6 +16,7 @@ import {
   transcriptSegmentHistoryRequestSchema,
   transcriptSegmentHistorySchema,
   type AnnotateTranscriptSegmentRequest,
+  type MarkTranscriptSegmentRequest,
   type TranscriptSegmentHistory,
   type TranscriptSegmentHistoryRequest,
   type TranscriptPage,
@@ -139,4 +141,24 @@ export async function getTranscriptSegmentHistory(
   )
     throw createContractApplicationError()
   return history
+}
+
+/**
+ * Flags one finalized segment from a window that may do nothing else.
+ *
+ * This is the transcript window's only command. It is kept separate from
+ * `annotateTranscriptSegment` rather than sharing it, because the narrowness of
+ * the request is the reason the window is allowed to make it at all.
+ */
+export async function markTranscriptSegment(
+  value: MarkTranscriptSegmentRequest,
+): Promise<TranscriptSegment> {
+  const validated = request(markTranscriptSegmentRequestSchema, value)
+  const segment = await call(
+    "mark_transcript_segment",
+    { request: validated },
+    transcriptSegmentSchema,
+  )
+  if (segment.id !== validated.segmentId) throw createContractApplicationError()
+  return segment
 }

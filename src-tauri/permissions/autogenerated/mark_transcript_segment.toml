@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mark-transcript-segment"
+description = "Enables the mark_transcript_segment command without any pre-configured scope."
+commands.allow = ["mark_transcript_segment"]
+
+[[permission]]
+identifier = "deny-mark-transcript-segment"
+description = "Denies the mark_transcript_segment command without any pre-configured scope."
+commands.deny = ["mark_transcript_segment"]

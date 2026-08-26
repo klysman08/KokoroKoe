@@ -6,6 +6,7 @@ import { transcriptReadingFixtureSchema } from "@/contracts/transcripts"
 import {
   getTranscriptPage,
   getTranscriptSegmentHistory,
+  markTranscriptSegment,
   searchTranscript,
 } from "./transcripts"
 
@@ -95,5 +96,62 @@ describe("transcript segment history adapter", () => {
         getTranscriptSegmentHistory(contracts.historyRequest),
       ).rejects.toMatchObject({ details: { code: "invalid_backend_contract" } })
     }
+  })
+})
+
+describe("transcript segment marking adapter", () => {
+  beforeEach(() => vi.mocked(invoke).mockReset())
+
+  /// This is the transcript window's only command, so what it can carry is the
+  /// boundary: three identifiers and a flag, and nothing that writes text.
+  it("sends only identifiers and a flag", async () => {
+    const request = {
+      projectId: contracts.historyRequest.projectId,
+      sessionId: contracts.historyRequest.sessionId,
+      segmentId: contracts.historyRequest.segmentId,
+      important: true,
+    }
+    vi.mocked(invoke).mockResolvedValue(contracts.page.items[0])
+
+    await expect(markTranscriptSegment(request)).resolves.toEqual(
+      contracts.page.items[0],
+    )
+
+    expect(invoke).toHaveBeenCalledWith("mark_transcript_segment", { request })
+    expect(Object.keys(request)).toEqual([
+      "projectId",
+      "sessionId",
+      "segmentId",
+      "important",
+    ])
+  })
+
+  it("refuses a request carrying anything beyond the flag", async () => {
+    await expect(
+      markTranscriptSegment({
+        projectId: contracts.historyRequest.projectId,
+        sessionId: contracts.historyRequest.sessionId,
+        segmentId: contracts.historyRequest.segmentId,
+        important: true,
+        text: "an injected rewrite",
+      } as never),
+    ).rejects.toMatchObject({ details: { code: "invalid_request_contract" } })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("refuses an answer about a different segment", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      ...contracts.page.items[0],
+      id: "44444444-4444-4444-8444-444444444444",
+    })
+
+    await expect(
+      markTranscriptSegment({
+        projectId: contracts.historyRequest.projectId,
+        sessionId: contracts.historyRequest.sessionId,
+        segmentId: contracts.historyRequest.segmentId,
+        important: false,
+      }),
+    ).rejects.toMatchObject({ details: { code: "invalid_backend_contract" } })
   })
 })

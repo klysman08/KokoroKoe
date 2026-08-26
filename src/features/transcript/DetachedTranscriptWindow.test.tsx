@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import sessionLifecycleFixture from "../../../fixtures/contracts/session-lifecycle-v1.json"
@@ -116,5 +117,111 @@ describe("DetachedTranscriptWindow", () => {
       ).not.toBeInTheDocument(),
     )
     expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("DetachedTranscriptWindow marking", () => {
+  const scoped = sessionLifecycleFixture.finalEvent
+  const segment = scoped.event.payload.segment
+
+  beforeEach(() => {
+    listeners.clear()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(listen).mockReset()
+    vi.mocked(listen).mockImplementation(
+      async (event: string, handler: unknown) => {
+        listeners.set(event, handler as Handler)
+        return () => listeners.delete(event)
+      },
+    )
+  })
+
+  /// The one command this window holds. The scope comes from the events it
+  /// received, and the request carries a flag and three identifiers -- there is
+  /// no field through which this window could write text into the record.
+  it("marks a finalized segment through the single command it holds", async () => {
+    const user = userEvent.setup()
+    // Rust answers with the saved-transcript view of the segment, not the live
+    // record, so the adapter validates it against that contract.
+    vi.mocked(invoke).mockResolvedValue({
+      id: segment.id,
+      projectId: scoped.projectId,
+      sessionId: scoped.sessionId,
+      source: segment.source,
+      startMs: segment.startMs,
+      endMs: segment.endMs,
+      text: segment.text,
+      status: "final",
+      language: segment.language,
+      important: true,
+    })
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+    listeners.get("session-transcription-final")?.({ payload: scoped })
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getByRole("button", { name: /mark important/i }))
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("mark_transcript_segment", {
+        request: {
+          projectId: scoped.projectId,
+          sessionId: scoped.sessionId,
+          segmentId: segment.id,
+          important: true,
+        },
+      }),
+    )
+    expect(vi.mocked(invoke).mock.calls).toHaveLength(1)
+    expect(JSON.stringify(vi.mocked(invoke).mock.calls[0])).not.toContain(
+      segment.text,
+    )
+    expect(
+      await screen.findByRole("button", { name: "Important" }),
+    ).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("offers nothing to mark on a partial or a gap", async () => {
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+
+    listeners.get("session-transcription-partial")?.({
+      payload: sessionLifecycleFixture.partialEvent,
+    })
+    listeners.get("session-transcription-gap")?.({
+      payload: sessionLifecycleFixture.gapEvent,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByText(/receiving/i)).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole("button", { name: /mark important/i }),
+    ).not.toBeInTheDocument()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it("surfaces a sanitized failure when a mark is refused", async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoke).mockRejectedValue({
+      error: {
+        code: "command_not_authorized",
+        userMessage: "KokoroKoe blocked an unauthorized request.",
+        technicalDetail: "command_not_authorized",
+        severity: "error",
+        retryable: false,
+        correlationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      },
+    })
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+    listeners.get("session-transcription-final")?.({ payload: scoped })
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getByRole("button", { name: /mark important/i }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /blocked an unauthorized request/i,
+    )
   })
 })

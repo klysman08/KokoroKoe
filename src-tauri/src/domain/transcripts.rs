@@ -475,3 +475,63 @@ fn valid_segment_text(value: &str) -> bool {
 fn valid_timestamp(value: &str) -> bool {
     value.len() >= 20 && value.len() <= 64 && OffsetDateTime::parse(value, &Rfc3339).is_ok()
 }
+
+/// A request to flag one finalized segment, and nothing else.
+///
+/// This is deliberately not an `AnnotateTranscriptSegmentRequest`. The detached
+/// transcript window is authorized for the command that takes this, so the type
+/// itself is the boundary: it carries a flag and three identifiers, and there is
+/// no field through which a window could write text into the meeting record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MarkTranscriptSegmentRequest {
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) segment_id: Uuid,
+    pub(crate) important: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawMarkTranscriptSegmentRequest {
+    project_id: ProjectId,
+    session_id: SessionId,
+    segment_id: Uuid,
+    important: bool,
+}
+
+impl<'de> Deserialize<'de> for MarkTranscriptSegmentRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawMarkTranscriptSegmentRequest::deserialize(deserializer)?;
+        let request = Self {
+            project_id: raw.project_id,
+            session_id: raw.session_id,
+            segment_id: raw.segment_id,
+            important: raw.important,
+        };
+        request.validate().map_err(serde::de::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl MarkTranscriptSegmentRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.project_id.as_uuid().is_nil()
+            || self.session_id.as_uuid().is_nil()
+            || self.segment_id.is_nil()
+        {
+            return Err("transcript_annotation_invalid");
+        }
+        Ok(())
+    }
+
+    /// The only annotation this request can become.
+    pub(crate) const fn annotation(&self) -> SegmentAnnotation {
+        SegmentAnnotation::Importance {
+            important: self.important,
+        }
+    }
+}

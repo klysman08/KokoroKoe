@@ -16,7 +16,7 @@ use crate::domain::{
 use super::{
     JournalAppend, JournalMutation, ProjectCatalog, SegmentCorrection, SegmentImportance,
     SessionCatalog, SessionJournal, SessionLocator, SettingsService, TranscriptSearchCatalog,
-    TranscriptSearchRequest, TranscriptStore,
+    TranscriptSearchRequest, TranscriptSnapshotFingerprint, TranscriptStore,
 };
 
 const READ_CURSOR_PREFIX: &str = "r1:";
@@ -25,6 +25,9 @@ const MANUAL_QUESTION_NEIGHBORS_PER_SIDE: usize = 4;
 const RECENT_INSIGHT_SEGMENTS: usize = 12;
 const SUMMARY_SAMPLE_SEGMENTS: usize = 64;
 const SUMMARY_CLOSING_SEGMENTS: usize = 24;
+/// One retry is enough: it is taken only against a document that verified as a
+/// projection of this journal, so it converges rather than spinning.
+const ANNOTATION_PUBLISH_RETRIES: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManualQuestionContext {
@@ -165,16 +168,25 @@ impl TranscriptService {
                 .map_err(|error| AppError::transcript_error(error.code))?;
             let store = TranscriptStore::open(workspace)
                 .map_err(|error| AppError::transcript_error(error.code))?;
-            let snapshot = store
-                .read_transcript(&locator)
+            let journal = SessionJournal::open(workspace)
                 .map_err(|error| AppError::transcript_error(error.code))?;
-            if !snapshot
-                .segments
+            // The segment is resolved against the journal rather than the
+            // document. A running session publishes on a cadence, so the
+            // newest finalized segments are journaled but not yet rendered —
+            // and refusing to annotate them would mean the moment a user most
+            // wants to mark is the one moment they cannot.
+            if !journal
+                .replay(&locator)
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .finalized_segments
                 .iter()
                 .any(|segment| segment.segment.id == request.segment_id)
             {
                 return Err(AppError::transcript_error("transcript_segment_not_found"));
             }
+            let snapshot = store
+                .read_transcript(&locator)
+                .map_err(|error| AppError::transcript_error(error.code))?;
 
             let mutation = match &request.annotation {
                 SegmentAnnotation::Correction { text } => {
@@ -191,24 +203,18 @@ impl TranscriptService {
                 }
             };
             let recorded_at = now_rfc3339()?;
-            SessionJournal::open(workspace)
-                .and_then(|journal| {
-                    journal.append(
-                        &locator,
-                        JournalAppend {
-                            event_id: uuid::Uuid::new_v4(),
-                            recorded_at,
-                            mutation,
-                        },
-                    )
-                })
+            journal
+                .append(
+                    &locator,
+                    JournalAppend {
+                        event_id: uuid::Uuid::new_v4(),
+                        recorded_at,
+                        mutation,
+                    },
+                )
                 .map_err(|error| AppError::transcript_error(error.code))?;
 
-            // The document is republished from the journal, and the fingerprint
-            // guards against another writer having moved it underneath us.
-            store
-                .materialize(&locator, Some(snapshot.fingerprint))
-                .map_err(|error| AppError::transcript_error(error.code))?;
+            publish_annotation(&store, &locator, snapshot.fingerprint)?;
             let updated = store
                 .read_transcript(&locator)
                 .map_err(|error| AppError::transcript_error(error.code))?;
@@ -582,6 +588,38 @@ impl ReadCursor {
 
 /// Picks at most `limit` evenly spaced indexes over `total`, always including
 /// the first and last so a sample still spans the whole Session.
+/// Republishes the document from the journal after an annotation.
+///
+/// The fingerprint guards against something else having moved the document
+/// underneath us. While a session is running that something is usually the
+/// run's own writer, publishing on its cadence — not a foreign edit — so one
+/// retry against the fingerprint that actually landed is warranted. Both
+/// writers render the same journal, so a retry cannot lose the annotation, and
+/// an edit that does not verify still fails rather than being overwritten.
+fn publish_annotation(
+    store: &TranscriptStore,
+    locator: &SessionLocator,
+    expected: TranscriptSnapshotFingerprint,
+) -> Result<(), AppError> {
+    let mut expected = expected;
+    for attempt in 0..=ANNOTATION_PUBLISH_RETRIES {
+        match store.materialize(locator, Some(expected)) {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if error.code == "transcript_snapshot_conflict"
+                    && attempt < ANNOTATION_PUBLISH_RETRIES =>
+            {
+                expected = store
+                    .read_transcript(locator)
+                    .map_err(|error| AppError::transcript_error(error.code))?
+                    .fingerprint;
+            }
+            Err(error) => return Err(AppError::transcript_error(error.code)),
+        }
+    }
+    Err(AppError::transcript_error("transcript_snapshot_conflict"))
+}
+
 fn evenly_spaced_indexes(total: usize, limit: usize) -> Vec<usize> {
     if total == 0 || limit == 0 {
         return Vec::new();
@@ -915,6 +953,94 @@ mod tests {
         assert_eq!(error.code, "transcript_segment_not_found");
     }
 
+    /// A running session publishes its document on a cadence, so the newest
+    /// finalized segments are in the journal but not yet rendered. Resolving an
+    /// annotation against the document would refuse exactly those — the moment
+    /// a user most wants to mark is the one they just heard.
+    #[test]
+    fn a_segment_journaled_but_not_yet_published_can_still_be_annotated() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let journal = SessionJournal::open(&workspace).unwrap();
+        let published = uuid::Uuid::new_v4();
+        journal
+            .append(&locator, finalized(published, 0, "Already published."))
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        // The run has journaled another final but has not flushed yet.
+        let unpublished = uuid::Uuid::new_v4();
+        journal
+            .append(&locator, finalized(unpublished, 1_000, "Just said aloud."))
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+
+        let marked = service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                unpublished,
+                serde_json::json!({ "kind": "importance", "important": true }),
+            ))
+            .unwrap();
+
+        assert!(marked.important);
+        assert_eq!(marked.text, "Just said aloud.");
+        // Publishing the annotation brought the pending segment with it.
+        let document =
+            std::fs::read_to_string(transcript_path(&workspace, &project, &session)).unwrap();
+        assert!(document.contains("Just said aloud."));
+    }
+
+    /// The run's writer publishes on its own cadence, so the document can move
+    /// between reading its fingerprint and replacing it. That is KokoroKoe's
+    /// own write, not a foreign edit, so the annotation still lands.
+    #[test]
+    fn publishing_an_annotation_survives_the_document_moving_underneath_it() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let journal = SessionJournal::open(&workspace).unwrap();
+        journal
+            .append(&locator, finalized(uuid::Uuid::new_v4(), 0, "First."))
+            .unwrap();
+        let store = TranscriptStore::open(&workspace).unwrap();
+        let stale = store.materialize(&locator, None).unwrap().fingerprint;
+        // The run flushes again before the annotation gets to publish.
+        journal
+            .append(&locator, finalized(uuid::Uuid::new_v4(), 1_000, "Second."))
+            .unwrap();
+        store.materialize(&locator, Some(stale)).unwrap();
+
+        super::publish_annotation(&store, &locator, stale).unwrap();
+
+        let document =
+            std::fs::read_to_string(transcript_path(&workspace, &project, &session)).unwrap();
+        assert!(document.contains("First."));
+        assert!(document.contains("Second."));
+    }
+
     /// A segment nobody has corrected still has a history: what was
     /// transcribed, and nothing since.
     #[test]
@@ -996,6 +1122,27 @@ mod tests {
             "annotation": annotation,
         }))
         .unwrap()
+    }
+
+    fn finalized(
+        segment_id: uuid::Uuid,
+        start_ms: u64,
+        text: &str,
+    ) -> crate::persistence::JournalAppend {
+        crate::persistence::JournalAppend {
+            event_id: uuid::Uuid::new_v4(),
+            recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+            mutation: crate::persistence::JournalMutation::FinalizedTranscriptSegment(
+                crate::persistence::FinalizedTranscriptSegment {
+                    id: segment_id,
+                    source: crate::audio::AudioSource::Microphone,
+                    start_ms,
+                    end_ms: start_ms + 800,
+                    text: text.to_owned(),
+                    language: "en-US".to_owned(),
+                },
+            ),
+        }
     }
 
     fn history_request(

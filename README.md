@@ -33,7 +33,8 @@ to OpenRouter, and only when you ask for it.
   important, and corrected — a correction is recorded as a new journal event, so the transcription
   it replaced stays readable in the document and the app. A corrected segment can show its whole
   history: what was transcribed, every wording since, and when each was recorded, with any of them
-  restorable into the correction box.
+  restorable into the correction box. A finalized segment can also be marked important from the
+  live transcript during the meeting, the moment it is heard.
 - **Final session summary.** Once a Session is finished, generate an executive summary with main
   topics, decisions, action items (with owners and deadlines), risks, open questions, and next
   steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much

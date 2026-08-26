@@ -222,10 +222,20 @@ impl PersistedSessionWriter {
     }
 
     fn flush_projection(&mut self, fault: Option<WriterFault>) -> Result<(), SessionWriterError> {
-        match self
+        let mut attempt = self
             .transcripts
-            .materialize(&self.locator, self.snapshot_fingerprint)
+            .materialize(&self.locator, self.snapshot_fingerprint);
+        if attempt
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.code == "transcript_snapshot_conflict")
+            && self.adopt_own_projection()
         {
+            attempt = self
+                .transcripts
+                .materialize(&self.locator, self.snapshot_fingerprint);
+        }
+        match attempt {
             Ok(snapshot) => {
                 self.snapshot_fingerprint = Some(snapshot.fingerprint);
                 self.checkpoint_sequence = snapshot.checkpoint_sequence;
@@ -240,6 +250,30 @@ impl PersistedSessionWriter {
                 self.snapshot_error = Some(error.code);
                 Ok(())
             }
+        }
+    }
+
+    /// Whether the document that moved underneath us is one of our own.
+    ///
+    /// A transcript names the journal prefix it projects, and `read_transcript`
+    /// verifies that naming, so a document that reads back as-is was written
+    /// from this very journal — an annotation published while the run was in
+    /// progress — rather than edited by something outside KokoroKoe. Adopting
+    /// it lets the run keep publishing; a document that only reads back after
+    /// recovery, or not at all, is never adopted, which is what keeps a foreign
+    /// edit from being silently overwritten.
+    ///
+    /// Without this a single correction during a meeting freezes the document
+    /// and the search index for the rest of the run: the cached fingerprint
+    /// would stay stale forever and every later flush would conflict against it.
+    fn adopt_own_projection(&mut self) -> bool {
+        match self.transcripts.read_transcript(&self.locator) {
+            Ok(snapshot) if !snapshot.recovered_from_backup => {
+                self.snapshot_fingerprint = Some(snapshot.fingerprint);
+                self.checkpoint_sequence = snapshot.checkpoint_sequence;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -322,7 +356,7 @@ mod tests {
         domain::{Project, Session, SessionState},
         persistence::{
             FinalizedTranscriptSegment, JournalMutation, LifecycleChange, ProjectStore,
-            SessionStore, TranscriptSearchRequest,
+            SegmentCorrection, SessionStore, TranscriptSearchRequest,
         },
     };
 
@@ -622,6 +656,66 @@ mod tests {
                 .last_sequence,
             5
         );
+    }
+
+    /// An annotation published during a run is KokoroKoe's own write through
+    /// its own journal, not a foreign edit. Before this was handled, one
+    /// correction mid-meeting froze the document and the search index for the
+    /// rest of the run: the writer's cached fingerprint stayed stale and every
+    /// later flush conflicted against it forever.
+    #[test]
+    fn an_annotation_published_mid_run_does_not_freeze_the_projection() {
+        let fixture = Fixture::new();
+        let mut writer = fixture.writer(0);
+        for index in 0..5 {
+            writer
+                .append(segment(index + 1, index as u64 * 1_000, "spoken"), 1)
+                .unwrap();
+        }
+        let store = TranscriptStore::open(fixture.workspace.path()).unwrap();
+        let before = store.read_transcript(&fixture.locator).unwrap();
+
+        // Exactly what annotating a segment does while the session is running.
+        SessionJournal::open(fixture.workspace.path())
+            .unwrap()
+            .append(
+                &fixture.locator,
+                JournalAppend {
+                    event_id: Uuid::from_u128(9_000),
+                    recorded_at: "2026-08-12T10:00:00Z".to_owned(),
+                    mutation: JournalMutation::SegmentCorrection(SegmentCorrection {
+                        segment_id: Uuid::from_u128(101),
+                        text: "corrected by the user".to_owned(),
+                    }),
+                },
+            )
+            .unwrap();
+        store
+            .materialize(&fixture.locator, Some(before.fingerprint))
+            .unwrap();
+
+        for index in 5..10 {
+            writer
+                .append(segment(index + 1, index as u64 * 1_000, "spoken"), 2)
+                .unwrap();
+        }
+
+        assert!(matches!(
+            writer.projection(),
+            SessionWriterProjection::Current { .. }
+        ));
+        assert_eq!(
+            writer
+                .journal
+                .replay(&fixture.locator)
+                .unwrap()
+                .last_sequence,
+            11
+        );
+        let document = fs::read_to_string(fixture.transcript_path()).unwrap();
+        // The run kept publishing, and it published the user's correction too.
+        assert!(document.contains("corrected by the user"));
+        assert!(document.contains("journal_sequence: 11"));
     }
 
     #[test]

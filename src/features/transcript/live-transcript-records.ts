@@ -51,3 +51,18 @@ export function reduceLiveRecords(
   }
   return next.slice(-MAX_TRANSCRIPT_RECORDS)
 }
+
+/**
+ * Whether a live record names something the journal has recorded.
+ *
+ * Only a finalized segment does. A partial is a guess that will be replaced,
+ * and carries no journal record to annotate; a gap is not speech at all. This
+ * is what keeps a live action from naming a segment Rust would have to refuse.
+ */
+export function markableSegmentId(
+  record: TranscriptRecord,
+): string | undefined {
+  return record.kind === "segment" && record.segment.status === "final"
+    ? record.segment.id
+    : undefined
+}

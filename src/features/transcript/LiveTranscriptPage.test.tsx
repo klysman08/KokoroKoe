@@ -6,6 +6,7 @@ import { liveTranscriptionFixtureSchema } from "@/contracts/transcription"
 import { requestIdSchema } from "@/contracts/models"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
 import {
+  markableSegmentId,
   reduceLiveRecords,
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
@@ -126,5 +127,42 @@ describe("LiveTranscriptPage", () => {
       })
     }
     expect(records).toHaveLength(500)
+  })
+})
+
+describe("live segment addressability", () => {
+  const parsedFixture = liveTranscriptionFixtureSchema.parse(fixture)
+
+  /// A finalized live segment carries the same id the journal recorded it
+  /// under, so it can be marked the moment it appears. A partial is a guess
+  /// that will be replaced and names no journal record; a gap is not speech.
+  it("addresses finalized segments and nothing else", () => {
+    // A partial is superseded by the final that carries its id, so the order
+    // here is the order the run produces.
+    const records = [
+      parsedFixture.partialEvent,
+      parsedFixture.gapEvent,
+      parsedFixture.finalEvent,
+    ].reduce<TranscriptRecord[]>(
+      (current, event, index) =>
+        reduceLiveRecords(current, {
+          ...event,
+          eventId: crypto.randomUUID(),
+          sessionSequence: index + 1,
+        }),
+      [],
+    )
+
+    const addressable = records
+      .map(markableSegmentId)
+      .filter((id) => id !== undefined)
+
+    expect(addressable).toEqual([parsedFixture.finalEvent.payload.segment.id])
+  })
+
+  it("addresses nothing while a segment is still a partial", () => {
+    const records = reduceLiveRecords([], parsedFixture.partialEvent)
+
+    expect(records.map(markableSegmentId)).toEqual([undefined])
   })
 })

@@ -7,6 +7,7 @@ import {
   Play,
   Plus,
   Square,
+  Star,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
@@ -31,7 +32,10 @@ import {
 } from "@/components/ui/message-scroller"
 import { type Project, type Session } from "@/contracts/projects"
 import { type AppSettings } from "@/contracts/settings"
-import { type ApplicationError } from "@/contracts/app-error"
+import {
+  type ApplicationError,
+  toApplicationError,
+} from "@/contracts/app-error"
 import { type AudioDeviceList } from "@/contracts/audio"
 import { requestIdSchema } from "@/contracts/models"
 import { type PersistenceStatus } from "@/contracts/session-lifecycle"
@@ -47,7 +51,11 @@ import {
 } from "@/features/sessions/use-sessions"
 import { listAudioDevices } from "@/lib/tauri/audio"
 import { SavedTranscript } from "@/features/transcript/SavedTranscript"
+import { annotateTranscriptSegmentRequestSchema } from "@/contracts/transcripts"
+import { annotateTranscriptSegment } from "@/lib/tauri/transcripts"
+import { cn } from "@/lib/utils"
 import {
+  markableSegmentId,
   reduceLiveRecords,
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
@@ -405,6 +413,7 @@ export function ProjectSessions({
                       session.state === "paused") && (
                       <>
                         <SessionLiveTranscript
+                          project={project}
                           records={liveRecords[session.id] ?? []}
                           session={session}
                         />
@@ -452,12 +461,49 @@ export function ProjectSessions({
 }
 
 function SessionLiveTranscript({
+  project,
   records,
   session,
 }: {
+  project: Project
   records: TranscriptRecord[]
   session: Session
 }) {
+  /**
+   * Which live segments the user has marked, and which mark is in flight.
+   *
+   * A finalized live segment carries the same id the journal recorded it
+   * under, so it can be marked the moment it appears — before the run has
+   * published it to `transcript.md`. Rust resolves the segment against the
+   * journal for exactly that reason.
+   */
+  const [marked, setMarked] = useState<Record<string, boolean>>({})
+  const [markingId, setMarkingId] = useState<string>()
+  const [markError, setMarkError] = useState<ApplicationError>()
+
+  async function mark(segmentId: string, important: boolean) {
+    const request = annotateTranscriptSegmentRequestSchema.safeParse({
+      projectId: project.id,
+      sessionId: session.id,
+      segmentId,
+      annotation: { kind: "importance", important },
+    })
+    if (!request.success) return
+    setMarkingId(segmentId)
+    setMarkError(undefined)
+    try {
+      const updated = await annotateTranscriptSegment(request.data)
+      setMarked((current) => ({
+        ...current,
+        [segmentId]: updated.important === true,
+      }))
+    } catch (caught: unknown) {
+      setMarkError(toApplicationError(caught))
+    } finally {
+      setMarkingId(undefined)
+    }
+  }
+
   return (
     <section aria-label={`Live transcript for ${session.title}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -493,7 +539,18 @@ function SessionLiveTranscript({
                           : record.id
                       }
                     >
-                      <TranscriptMessage record={record} />
+                      <TranscriptMessage
+                        important={
+                          record.kind === "segment" &&
+                          marked[record.segment.id] === true
+                        }
+                        marking={
+                          record.kind === "segment" &&
+                          markingId === record.segment.id
+                        }
+                        onMark={mark}
+                        record={record}
+                      />
                     </MessageScrollerItem>
                   ))}
                 </MessageScrollerContent>
@@ -503,16 +560,36 @@ function SessionLiveTranscript({
           </MessageScrollerProvider>
         )}
       </div>
+      {markError && <SanitizedErrorPanel error={markError} />}
     </section>
   )
 }
 
-function TranscriptMessage({ record }: { record: TranscriptRecord }) {
+/**
+ * One live record.
+ *
+ * Marking is offered on finalized segments only. A partial has no journal
+ * record to name, so there is nothing to mark; correcting is deliberately left
+ * to the reading view, where the text can be seen and edited properly rather
+ * than typed into a scrolling pane during a meeting.
+ */
+function TranscriptMessage({
+  important,
+  marking,
+  onMark,
+  record,
+}: {
+  important: boolean
+  marking: boolean
+  onMark: (segmentId: string, important: boolean) => void
+  record: TranscriptRecord
+}) {
   const source =
     record.kind === "segment" ? record.segment.source : record.source
   const startMs =
     record.kind === "segment" ? record.segment.startMs : record.startMs
   const status = record.kind === "segment" ? record.segment.status : "gap"
+  const markable = markableSegmentId(record)
   return (
     <Message align={source === "microphone" ? "start" : "end"}>
       <MessageContent>
@@ -530,6 +607,20 @@ function TranscriptMessage({ record }: { record: TranscriptRecord }) {
               : `Audio gap: ${record.code}`}
           </BubbleContent>
         </Bubble>
+        {markable !== undefined && (
+          <Button
+            aria-pressed={important}
+            className={cn("self-start", important && "border-primary")}
+            disabled={marking}
+            onClick={() => onMark(markable, !important)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <Star aria-hidden="true" data-icon="inline-start" />
+            {important ? "Important" : "Mark important"}
+          </Button>
+        )}
       </MessageContent>
     </Message>
   )

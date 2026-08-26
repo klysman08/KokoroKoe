@@ -37,6 +37,8 @@ const MAX_SEGMENT_TEXT_BYTES: usize = 32 * 1024;
 const MAX_LANGUAGE_BYTES: usize = 64;
 /// How many recorded rewrites of one segment a history read returns.
 const MAX_SEGMENT_REVISIONS: usize = 64;
+/// A bookmark label is one scannable line, not a note.
+const MAX_BOOKMARK_LABEL_BYTES: usize = 120;
 const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +148,43 @@ impl SegmentImportance {
     }
 }
 
+/// A place the user wants to come back to.
+///
+/// This is not importance under another name. Marking says a segment matters;
+/// a bookmark says "return here", which is why it may carry a label — the label
+/// is what makes a list of them worth scanning. Removing a bookmark carries no
+/// label, because there is nothing left to name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SegmentBookmark {
+    pub(crate) segment_id: Uuid,
+    pub(crate) bookmarked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
+}
+
+impl SegmentBookmark {
+    fn validate(&self) -> Result<(), SessionJournalError> {
+        let label_usable = self
+            .label
+            .as_ref()
+            .is_none_or(|label| self.bookmarked && valid_bookmark_label(label));
+        if self.segment_id.is_nil() || !label_usable {
+            return Err(SessionJournalError::new("session_journal_mutation_invalid"));
+        }
+        Ok(())
+    }
+}
+
+/// A label is one line in a list, not prose: it renders on a single line in
+/// `transcript.md` and in a scannable list, so a newline or a tab would break
+/// the shape rather than carry meaning.
+fn valid_bookmark_label(label: &str) -> bool {
+    !label.trim().is_empty()
+        && label.len() <= MAX_BOOKMARK_LABEL_BYTES
+        && !label.chars().any(char::is_control)
+}
+
 /// The same bounds a transcribed segment must satisfy. A correction is read
 /// back and rendered exactly where the original was, so it cannot be allowed to
 /// carry anything the original could not.
@@ -164,6 +203,7 @@ pub(crate) enum JournalMutation {
     LifecycleChange(LifecycleChange),
     SegmentCorrection(SegmentCorrection),
     SegmentImportance(SegmentImportance),
+    SegmentBookmark(SegmentBookmark),
 }
 
 impl JournalMutation {
@@ -173,6 +213,7 @@ impl JournalMutation {
             Self::LifecycleChange(change) => change.validate(),
             Self::SegmentCorrection(correction) => correction.validate(),
             Self::SegmentImportance(importance) => importance.validate(),
+            Self::SegmentBookmark(bookmark) => bookmark.validate(),
         }
     }
 }
@@ -215,6 +256,10 @@ pub(crate) struct ReplayedSegment {
     pub(crate) segment: FinalizedTranscriptSegment,
     pub(crate) corrected_text: Option<String>,
     pub(crate) important: bool,
+    pub(crate) bookmarked: bool,
+    /// Present only while bookmarked. Removing a bookmark clears it, because a
+    /// label names a place the user is no longer keeping.
+    pub(crate) bookmark_label: Option<String>,
 }
 
 impl ReplayedSegment {
@@ -650,6 +695,8 @@ fn replay_records(
                     segment: segment.clone(),
                     corrected_text: None,
                     important: false,
+                    bookmarked: false,
+                    bookmark_label: None,
                 });
             }
             JournalMutation::LifecycleChange(change) => {
@@ -673,6 +720,14 @@ fn replay_records(
             JournalMutation::SegmentImportance(importance) => {
                 let position = annotated(&positions, importance.segment_id)?;
                 segments[position].important = importance.important;
+            }
+            JournalMutation::SegmentBookmark(bookmark) => {
+                let position = annotated(&positions, bookmark.segment_id)?;
+                segments[position].bookmarked = bookmark.bookmarked;
+                segments[position].bookmark_label = bookmark
+                    .bookmarked
+                    .then(|| bookmark.label.clone())
+                    .flatten();
             }
         }
     }
@@ -904,6 +959,23 @@ mod tests {
         }
     }
 
+    fn bookmark(
+        event_id: Uuid,
+        segment_id: Uuid,
+        bookmarked: bool,
+        label: Option<&str>,
+    ) -> JournalAppend {
+        JournalAppend {
+            event_id,
+            recorded_at: "2026-08-11T10:00:05Z".to_owned(),
+            mutation: JournalMutation::SegmentBookmark(SegmentBookmark {
+                segment_id,
+                bookmarked,
+                label: label.map(str::to_owned),
+            }),
+        }
+    }
+
     fn importance(event_id: Uuid, segment_id: Uuid, important: bool) -> JournalAppend {
         JournalAppend {
             event_id,
@@ -1114,6 +1186,89 @@ mod tests {
                 .map(|revision| revision.text.as_str())
                 .collect::<Vec<_>>(),
             ["Theirs."]
+        );
+    }
+
+    /// The distinction the feature rests on: a bookmark says "come back here"
+    /// and a mark says "this matters". They are separate events, so setting one
+    /// never sets or clears the other.
+    #[test]
+    fn a_bookmark_and_a_mark_are_independent_of_each_other() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+
+        journal
+            .append(
+                &locator,
+                bookmark(Uuid::new_v4(), segment_id, true, Some("pricing decision")),
+            )
+            .unwrap();
+        let replayed = &journal.replay(&locator).unwrap().finalized_segments[0];
+        assert!(replayed.bookmarked);
+        assert_eq!(replayed.bookmark_label.as_deref(), Some("pricing decision"));
+        assert!(!replayed.important, "a bookmark must not imply importance");
+
+        journal
+            .append(&locator, importance(Uuid::new_v4(), segment_id, true))
+            .unwrap();
+        let replayed = &journal.replay(&locator).unwrap().finalized_segments[0];
+        assert!(replayed.important);
+        assert!(replayed.bookmarked, "marking must not disturb a bookmark");
+        assert_eq!(replayed.bookmark_label.as_deref(), Some("pricing decision"));
+
+        journal
+            .append(&locator, bookmark(Uuid::new_v4(), segment_id, false, None))
+            .unwrap();
+        let replayed = &journal.replay(&locator).unwrap().finalized_segments[0];
+        assert!(!replayed.bookmarked);
+        // Removing the pin removes its name; there is nothing left to name.
+        assert!(replayed.bookmark_label.is_none());
+        assert!(replayed.important, "unbookmarking must not unmark");
+    }
+
+    /// A label is one scannable line, and it only means anything on a bookmark
+    /// that exists. Both are refused before they reach the file.
+    #[test]
+    fn an_unusable_bookmark_label_is_refused_at_append() {
+        let (_workspace, _project, _session, locator, journal) = workspace_with_session();
+        let segment_id = Uuid::new_v4();
+        journal
+            .append(&locator, segment(Uuid::new_v4(), segment_id))
+            .unwrap();
+
+        for (bookmarked, label) in [
+            (true, Some("")),
+            (true, Some("   ")),
+            (true, Some("two\nlines")),
+            (true, Some("a\ttab")),
+            // A name for a bookmark that is being removed.
+            (false, Some("orphaned name")),
+        ] {
+            let error = journal
+                .append(
+                    &locator,
+                    bookmark(Uuid::new_v4(), segment_id, bookmarked, label),
+                )
+                .expect_err("must refuse an unusable label");
+            assert_eq!(error.code, "session_journal_mutation_invalid");
+        }
+        let long = "x".repeat(MAX_BOOKMARK_LABEL_BYTES + 1);
+        assert!(
+            journal
+                .append(
+                    &locator,
+                    bookmark(Uuid::new_v4(), segment_id, true, Some(&long))
+                )
+                .is_err()
+        );
+        // An unlabelled bookmark is perfectly ordinary.
+        assert!(
+            journal
+                .append(&locator, bookmark(Uuid::new_v4(), segment_id, true, None))
+                .is_ok()
         );
     }
 

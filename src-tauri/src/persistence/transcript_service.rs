@@ -6,17 +6,18 @@ use std::{
 use serde::Serialize;
 
 use crate::domain::{
-    AnnotateTranscriptSegmentRequest, AppError, Project, ProjectId, SegmentAnnotation, Session,
-    SessionId, TranscriptPage, TranscriptPageRequest, TranscriptSearchHit,
-    TranscriptSearchPageView, TranscriptSearchQuery, TranscriptSegmentHistoryRequest,
-    TranscriptSegmentHistoryView, TranscriptSegmentRevision, TranscriptSegmentStatus,
-    TranscriptSegmentView, now_rfc3339,
+    AnnotateTranscriptSegmentRequest, AppError, MAX_TRANSCRIPT_BOOKMARKS, Project, ProjectId,
+    SegmentAnnotation, Session, SessionId, TranscriptBookmarkList, TranscriptBookmarkListRequest,
+    TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
+    TranscriptSearchQuery, TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView,
+    TranscriptSegmentRevision, TranscriptSegmentStatus, TranscriptSegmentView, now_rfc3339,
 };
 
 use super::{
-    JournalAppend, JournalMutation, ProjectCatalog, SegmentCorrection, SegmentImportance,
-    SessionCatalog, SessionJournal, SessionLocator, SettingsService, TranscriptSearchCatalog,
-    TranscriptSearchRequest, TranscriptSnapshotFingerprint, TranscriptStore,
+    JournalAppend, JournalMutation, ProjectCatalog, SegmentBookmark, SegmentCorrection,
+    SegmentImportance, SessionCatalog, SessionJournal, SessionLocator, SettingsService,
+    TranscriptSearchCatalog, TranscriptSearchRequest, TranscriptSnapshotFingerprint,
+    TranscriptStore,
 };
 
 const READ_CURSOR_PREFIX: &str = "r1:";
@@ -128,6 +129,8 @@ impl TranscriptService {
                         .corrected()
                         .then(|| segment.original_text().to_owned()),
                     important: segment.important,
+                    bookmarked: segment.bookmarked,
+                    bookmark_label: segment.bookmark_label.clone(),
                 })
                 .collect::<Vec<_>>();
             let next_cursor = (end < snapshot.segments.len()).then(|| {
@@ -201,6 +204,13 @@ impl TranscriptService {
                         important: *important,
                     })
                 }
+                SegmentAnnotation::Bookmark { bookmarked, label } => {
+                    JournalMutation::SegmentBookmark(SegmentBookmark {
+                        segment_id: request.segment_id,
+                        bookmarked: *bookmarked,
+                        label: label.clone(),
+                    })
+                }
             };
             let recorded_at = now_rfc3339()?;
             journal
@@ -237,9 +247,72 @@ impl TranscriptService {
                     .corrected()
                     .then(|| segment.original_text().to_owned()),
                 important: segment.important,
+                bookmarked: segment.bookmarked,
+                bookmark_label: segment.bookmark_label.clone(),
             };
             view.validate().map_err(AppError::transcript_error)?;
             Ok(view)
+        })
+    }
+
+    /// Every place in one Session the reader asked to return to.
+    ///
+    /// Read from the journal rather than the document, for the same reason the
+    /// history is: a bookmark dropped during a run is journaled immediately but
+    /// published on the writer's cadence, and a pin you cannot find until the
+    /// next flush is not a pin.
+    pub(crate) fn list_bookmarks(
+        &self,
+        request: TranscriptBookmarkListRequest,
+    ) -> Result<TranscriptBookmarkList, AppError> {
+        request.validate().map_err(AppError::transcript_error)?;
+        self.with_workspace(|workspace| {
+            let project = ProjectCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_project(request.project_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .project;
+            let session = SessionCatalog::open(workspace, self.app_data_directory.clone())
+                .and_then(|catalog| catalog.read_session(request.project_id, request.session_id))
+                .map_err(|error| AppError::transcript_error(error.code))?
+                .session;
+            let locator = SessionLocator::from_records(&project, &session)
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let replay = SessionJournal::open(workspace)
+                .and_then(|journal| journal.replay(&locator))
+                .map_err(|error| AppError::transcript_error(error.code))?;
+            let bookmarked = replay
+                .finalized_segments
+                .iter()
+                .filter(|segment| segment.bookmarked)
+                .collect::<Vec<_>>();
+            // The earliest are kept: a reader scanning their own pins reads
+            // down the meeting, so losing the tail is less disorienting than
+            // losing the start.
+            let truncated = bookmarked.len() > MAX_TRANSCRIPT_BOOKMARKS;
+            let items = bookmarked
+                .into_iter()
+                .take(MAX_TRANSCRIPT_BOOKMARKS)
+                .map(|segment| TranscriptSegmentView {
+                    id: segment.segment.id,
+                    project_id: request.project_id,
+                    session_id: request.session_id,
+                    source: segment.segment.source,
+                    start_ms: segment.segment.start_ms,
+                    end_ms: segment.segment.end_ms,
+                    text: segment.effective_text().to_owned(),
+                    status: TranscriptSegmentStatus::Final,
+                    language: segment.segment.language.clone(),
+                    original_text: segment
+                        .corrected()
+                        .then(|| segment.original_text().to_owned()),
+                    important: segment.important,
+                    bookmarked: segment.bookmarked,
+                    bookmark_label: segment.bookmark_label.clone(),
+                })
+                .collect::<Vec<_>>();
+            let list = TranscriptBookmarkList { items, truncated };
+            list.validate().map_err(AppError::transcript_error)?;
+            Ok(list)
         })
     }
 
@@ -343,6 +416,8 @@ impl TranscriptService {
                         .corrected()
                         .then(|| segment.original_text().to_owned()),
                     important: segment.important,
+                    bookmarked: segment.bookmarked,
+                    bookmark_label: segment.bookmark_label.clone(),
                 })
                 .collect::<Vec<_>>();
             let selected_segment = neighboring_segments[selected_index - start].clone();
@@ -405,6 +480,8 @@ impl TranscriptService {
                         .corrected()
                         .then(|| segment.original_text().to_owned()),
                     important: segment.important,
+                    bookmarked: segment.bookmarked,
+                    bookmark_label: segment.bookmark_label.clone(),
                 })
                 .collect::<Vec<_>>();
             Ok(RecentInsightContext {
@@ -461,6 +538,8 @@ impl TranscriptService {
                     .corrected()
                     .then(|| segment.original_text().to_owned()),
                 important: segment.important,
+                bookmarked: segment.bookmarked,
+                bookmark_label: segment.bookmark_label.clone(),
             };
             let total_segments = snapshot.segments.len();
             let sampled_segments = evenly_spaced_indexes(total_segments, SUMMARY_SAMPLE_SEGMENTS)
@@ -1041,6 +1120,149 @@ mod tests {
         assert!(document.contains("Second."));
     }
 
+    /// A bookmark is a way back, so the whole set has to be readable at once.
+    /// This also pins the distinction from importance: a marked segment is not
+    /// a bookmarked one, and the list says so.
+    #[test]
+    fn bookmarks_are_listed_together_and_marking_is_not_bookmarking() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let journal = SessionJournal::open(&workspace).unwrap();
+        let pinned = uuid::Uuid::new_v4();
+        let marked = uuid::Uuid::new_v4();
+        let untouched = uuid::Uuid::new_v4();
+        journal
+            .append(&locator, finalized(pinned, 0, "The decision we reached."))
+            .unwrap();
+        journal
+            .append(&locator, finalized(marked, 1_000, "Something notable."))
+            .unwrap();
+        journal
+            .append(&locator, finalized(untouched, 2_000, "Ordinary talk."))
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+        service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                pinned,
+                serde_json::json!({
+                    "kind": "bookmark", "bookmarked": true, "label": "pricing decision",
+                }),
+            ))
+            .unwrap();
+        service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                marked,
+                serde_json::json!({ "kind": "importance", "important": true }),
+            ))
+            .unwrap();
+
+        let bookmarks = service
+            .list_bookmarks(bookmark_request(project.id, session.id))
+            .unwrap();
+
+        assert!(!bookmarks.truncated);
+        assert_eq!(bookmarks.items.len(), 1, "only the bookmark is a bookmark");
+        assert_eq!(bookmarks.items[0].id, pinned);
+        assert_eq!(
+            bookmarks.items[0].bookmark_label.as_deref(),
+            Some("pricing decision")
+        );
+        assert_eq!(bookmarks.items[0].text, "The decision we reached.");
+
+        // The portable folder carries the pin and its name, not just the flag.
+        let document =
+            std::fs::read_to_string(transcript_path(&workspace, &project, &session)).unwrap();
+        assert!(document.contains("> Bookmark: pricing decision"));
+        assert!(document.contains("bookmark_label: \"pricing decision\""));
+        assert!(document.contains("bookmarked: true"));
+
+        // Taking the pin out takes its name with it, and leaves the list empty.
+        service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                pinned,
+                serde_json::json!({ "kind": "bookmark", "bookmarked": false }),
+            ))
+            .unwrap();
+        assert!(
+            service
+                .list_bookmarks(bookmark_request(project.id, session.id))
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        let document =
+            std::fs::read_to_string(transcript_path(&workspace, &project, &session)).unwrap();
+        assert!(!document.contains("pricing decision"));
+    }
+
+    /// A pin dropped during a run has to be findable straight away, so the list
+    /// reads the journal rather than waiting for the writer's next flush.
+    #[test]
+    fn a_bookmark_is_listed_before_the_run_has_published_it() {
+        let root = tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = settings(&workspace, &app_data);
+        let project = ProjectService::new(settings.clone(), app_data.clone())
+            .create_project(project_input())
+            .unwrap();
+        let session = SessionService::new(settings.clone(), app_data.clone())
+            .create_session(project.id, session_input())
+            .unwrap();
+        let locator = super::SessionLocator::from_records(&project, &session).unwrap();
+        let journal = SessionJournal::open(&workspace).unwrap();
+        let published = uuid::Uuid::new_v4();
+        journal
+            .append(&locator, finalized(published, 0, "Already published."))
+            .unwrap();
+        TranscriptStore::open(&workspace)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+        let pending = uuid::Uuid::new_v4();
+        journal
+            .append(&locator, finalized(pending, 1_000, "Just said aloud."))
+            .unwrap();
+        let service = TranscriptService::new(settings, app_data);
+
+        service
+            .annotate_segment(annotation(
+                project.id,
+                session.id,
+                pending,
+                serde_json::json!({ "kind": "bookmark", "bookmarked": true }),
+            ))
+            .unwrap();
+
+        let bookmarks = service
+            .list_bookmarks(bookmark_request(project.id, session.id))
+            .unwrap();
+        assert_eq!(bookmarks.items.len(), 1);
+        assert_eq!(bookmarks.items[0].id, pending);
+        assert!(bookmarks.items[0].bookmark_label.is_none());
+    }
+
     /// A segment nobody has corrected still has a history: what was
     /// transcribed, and nothing since.
     #[test]
@@ -1143,6 +1365,17 @@ mod tests {
                 },
             ),
         }
+    }
+
+    fn bookmark_request(
+        project_id: crate::domain::ProjectId,
+        session_id: crate::domain::SessionId,
+    ) -> crate::domain::TranscriptBookmarkListRequest {
+        serde_json::from_value(serde_json::json!({
+            "projectId": project_id,
+            "sessionId": session_id,
+        }))
+        .unwrap()
     }
 
     fn history_request(

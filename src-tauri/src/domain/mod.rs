@@ -47,10 +47,11 @@ pub(crate) use transcription::{
     TranscriptionGapPayload, TranscriptionPartialPayload,
 };
 pub(crate) use transcripts::{
-    AnnotateTranscriptSegmentRequest, MarkTranscriptSegmentRequest, SegmentAnnotation,
-    TranscriptPage, TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView,
-    TranscriptSearchQuery, TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView,
-    TranscriptSegmentRevision, TranscriptSegmentStatus, TranscriptSegmentView,
+    AnnotateTranscriptSegmentRequest, MAX_TRANSCRIPT_BOOKMARKS, MarkTranscriptSegmentRequest,
+    SegmentAnnotation, TranscriptBookmarkList, TranscriptBookmarkListRequest, TranscriptPage,
+    TranscriptPageRequest, TranscriptSearchHit, TranscriptSearchPageView, TranscriptSearchQuery,
+    TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView, TranscriptSegmentRevision,
+    TranscriptSegmentStatus, TranscriptSegmentView,
 };
 pub(crate) use windows::{
     DetachedWindow, DetachedWindowAppearance, DetachedWindowGeometry, DetachedWindowInteraction,

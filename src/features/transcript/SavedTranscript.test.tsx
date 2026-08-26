@@ -530,3 +530,113 @@ describe("SavedTranscript", () => {
     expect(screen.queryByText("Copied")).toBeNull()
   })
 })
+
+describe("SavedTranscript bookmarks", () => {
+  const segment = scopedPage().items[0]!
+
+  beforeEach(() => {
+    invokeMock.mockReset()
+  })
+
+  /// The distinction the feature rests on: a bookmark is a way back, so it is
+  /// read as a set. Marking says a segment matters and is not part of that set.
+  it("bookmarks a segment with a name and lists it apart from the transcript", async () => {
+    const user = userEvent.setup()
+    const bookmarked = {
+      ...segment,
+      bookmarked: true,
+      bookmarkLabel: "pricing decision",
+    }
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "annotate_transcript_segment") {
+        const request = annotateTranscriptSegmentRequestSchema.parse(
+          (args as { request: unknown }).request,
+        )
+        expect(request.annotation).toEqual({
+          kind: "bookmark",
+          bookmarked: true,
+          label: "pricing decision",
+        })
+        return bookmarked
+      }
+      if (command === "list_transcript_bookmarks")
+        return { items: [bookmarked] }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getAllByRole("button", { name: "Bookmark" })[0]!)
+    const box = await screen.findByRole("textbox", { name: "Bookmark name" })
+    await user.type(box, "pricing decision")
+    await user.click(screen.getByRole("button", { name: /save bookmark/i }))
+
+    expect(
+      await screen.findByRole("button", { name: "Bookmarked" }),
+    ).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText("pricing decision")).toBeInTheDocument()
+
+    // The set is read on demand, and only then.
+    await user.click(screen.getByRole("button", { name: "Bookmarks" }))
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("list_transcript_bookmarks", {
+        request: {
+          projectId: scope.project.id,
+          sessionId: scope.session.id,
+        },
+      }),
+    )
+    expect(
+      await screen.findByRole("button", { name: "All segments" }),
+    ).toBeInTheDocument()
+  })
+
+  /// A pin can be dropped without a name. The meeting is still running, and
+  /// naming every one of them would be the wrong thing to demand.
+  it("saves an unnamed bookmark without a label field", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "annotate_transcript_segment") {
+        const request = annotateTranscriptSegmentRequestSchema.parse(
+          (args as { request: unknown }).request,
+        )
+        expect(request.annotation).toEqual({
+          kind: "bookmark",
+          bookmarked: true,
+        })
+        return { ...segment, bookmarked: true }
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getAllByRole("button", { name: "Bookmark" })[0]!)
+    await user.click(
+      await screen.findByRole("button", { name: /save bookmark/i }),
+    )
+
+    expect(
+      await screen.findByRole("button", { name: "Bookmarked" }),
+    ).toBeInTheDocument()
+  })
+
+  it("says so when a session has nothing bookmarked", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_transcript_page") return scopedPage()
+      if (command === "list_transcript_bookmarks") return { items: [] }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderTranscript()
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getByRole("button", { name: "Bookmarks" }))
+
+    expect(
+      await screen.findByText(/nothing is bookmarked in this session yet/i),
+    ).toBeInTheDocument()
+  })
+})

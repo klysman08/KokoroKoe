@@ -16,6 +16,11 @@ pub(crate) const MAX_TRANSCRIPT_LANGUAGE_BYTES: usize = 64;
 pub(crate) const MAX_TRANSCRIPT_CURSOR_BYTES: usize = 256;
 /// Must match the journal's own history bound, which is what fills this view.
 pub(crate) const MAX_TRANSCRIPT_SEGMENT_REVISIONS: usize = 64;
+/// Must match the journal's own label bound.
+pub(crate) const MAX_BOOKMARK_LABEL_BYTES: usize = 120;
+/// How many bookmarks one Session reports. A pin the reader cannot find in a
+/// list is not a pin, so this is a browsing bound rather than a storage one.
+pub(crate) const MAX_TRANSCRIPT_BOOKMARKS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +47,12 @@ pub(crate) struct TranscriptSegmentView {
     pub(crate) original_text: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) important: bool,
+    /// A place the reader wanted to return to. Marking says a segment matters;
+    /// this says come back here, which is why it may carry a name.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) bookmarked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bookmark_label: Option<String>,
 }
 
 const fn is_false(value: &bool) -> bool {
@@ -275,6 +286,12 @@ pub(crate) enum SegmentAnnotation {
     Correction { text: String },
     #[serde(rename_all = "camelCase")]
     Importance { important: bool },
+    #[serde(rename_all = "camelCase")]
+    Bookmark {
+        bookmarked: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -284,6 +301,12 @@ enum RawSegmentAnnotation {
     Correction { text: String },
     #[serde(rename_all = "camelCase")]
     Importance { important: bool },
+    #[serde(rename_all = "camelCase")]
+    Bookmark {
+        bookmarked: bool,
+        #[serde(default)]
+        label: Option<String>,
+    },
 }
 
 impl<'de> Deserialize<'de> for SegmentAnnotation {
@@ -294,6 +317,9 @@ impl<'de> Deserialize<'de> for SegmentAnnotation {
         let annotation = match RawSegmentAnnotation::deserialize(deserializer)? {
             RawSegmentAnnotation::Correction { text } => Self::Correction { text },
             RawSegmentAnnotation::Importance { important } => Self::Importance { important },
+            RawSegmentAnnotation::Bookmark { bookmarked, label } => {
+                Self::Bookmark { bookmarked, label }
+            }
         };
         annotation.validate().map_err(serde::de::Error::custom)?;
         Ok(annotation)
@@ -301,21 +327,38 @@ impl<'de> Deserialize<'de> for SegmentAnnotation {
 }
 
 impl SegmentAnnotation {
-    /// A correction is rendered exactly where the transcription was, so it
-    /// obeys the same bounds a transcription does.
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        let Self::Correction { text } = self else {
-            return Ok(());
-        };
-        if text.trim().is_empty()
-            || text.len() > MAX_TRANSCRIPT_TEXT_BYTES
-            || text.chars().any(|value| {
-                value == '\r' || (value.is_control() && value != '\n' && value != '\t')
-            })
-        {
-            return Err("transcript_annotation_invalid");
+        match self {
+            // A correction is rendered exactly where the transcription was, so
+            // it obeys the same bounds a transcription does.
+            Self::Correction { text } => {
+                if text.trim().is_empty()
+                    || text.len() > MAX_TRANSCRIPT_TEXT_BYTES
+                    || text.chars().any(|value| {
+                        value == '\r' || (value.is_control() && value != '\n' && value != '\t')
+                    })
+                {
+                    return Err("transcript_annotation_invalid");
+                }
+                Ok(())
+            }
+            Self::Importance { .. } => Ok(()),
+            // A label is one scannable line, and removing a bookmark carries
+            // none, because there is nothing left to name.
+            Self::Bookmark { bookmarked, label } => {
+                let usable = label.as_ref().is_none_or(|label| {
+                    *bookmarked
+                        && !label.trim().is_empty()
+                        && label.len() <= MAX_BOOKMARK_LABEL_BYTES
+                        && !label.chars().any(char::is_control)
+                });
+                if usable {
+                    Ok(())
+                } else {
+                    Err("transcript_annotation_invalid")
+                }
+            }
         }
-        Ok(())
     }
 }
 
@@ -533,5 +576,72 @@ impl MarkTranscriptSegmentRequest {
         SegmentAnnotation::Importance {
             important: self.important,
         }
+    }
+}
+
+/// Every place in one Session the reader asked to return to.
+///
+/// A bookmark is only useful if the whole set can be seen at once, so this is
+/// read as a list rather than found by paging through the transcript. The items
+/// are ordinary segment views, so a bookmark reads and behaves exactly like the
+/// segment it names — it is a way back to the transcript, not a copy of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptBookmarkListRequest {
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawTranscriptBookmarkListRequest {
+    project_id: ProjectId,
+    session_id: SessionId,
+}
+
+impl<'de> Deserialize<'de> for TranscriptBookmarkListRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawTranscriptBookmarkListRequest::deserialize(deserializer)?;
+        let request = Self {
+            project_id: raw.project_id,
+            session_id: raw.session_id,
+        };
+        request.validate().map_err(serde::de::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl TranscriptBookmarkListRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.project_id.as_uuid().is_nil() || self.session_id.as_uuid().is_nil() {
+            return Err("transcript_bookmark_request_invalid");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptBookmarkList {
+    pub(crate) items: Vec<TranscriptSegmentView>,
+    /// Set when the Session holds more bookmarks than one list reports. The
+    /// earliest are kept, because a reader scanning their own pins reads down.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) truncated: bool,
+}
+
+impl TranscriptBookmarkList {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.items.len() > MAX_TRANSCRIPT_BOOKMARKS
+            || self.items.iter().any(|item| !item.bookmarked)
+        {
+            return Err("transcript_bookmark_result_invalid");
+        }
+        self.items
+            .iter()
+            .try_for_each(TranscriptSegmentView::validate)
     }
 }

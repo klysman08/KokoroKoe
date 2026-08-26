@@ -8,6 +8,8 @@ import {
 import {
   annotateTranscriptSegmentRequestSchema,
   markTranscriptSegmentRequestSchema,
+  transcriptBookmarkListRequestSchema,
+  transcriptBookmarkListSchema,
   transcriptPageRequestSchema,
   transcriptPageSchema,
   transcriptSegmentSchema,
@@ -17,6 +19,8 @@ import {
   transcriptSegmentHistorySchema,
   type AnnotateTranscriptSegmentRequest,
   type MarkTranscriptSegmentRequest,
+  type TranscriptBookmarkList,
+  type TranscriptBookmarkListRequest,
   type TranscriptSegmentHistory,
   type TranscriptSegmentHistoryRequest,
   type TranscriptPage,
@@ -161,4 +165,30 @@ export async function markTranscriptSegment(
   )
   if (segment.id !== validated.segmentId) throw createContractApplicationError()
   return segment
+}
+
+/**
+ * Every place in one Session the reader asked to return to.
+ *
+ * Rust reads the journal, so a bookmark dropped during a run is listed before
+ * the run has published it. It writes nothing.
+ */
+export async function listTranscriptBookmarks(
+  value: TranscriptBookmarkListRequest,
+): Promise<TranscriptBookmarkList> {
+  const validated = request(transcriptBookmarkListRequestSchema, value)
+  const list = await call(
+    "list_transcript_bookmarks",
+    { request: validated },
+    transcriptBookmarkListSchema,
+  )
+  if (
+    list.items.some(
+      (item) =>
+        item.projectId !== validated.projectId ||
+        item.sessionId !== validated.sessionId,
+    )
+  )
+    throw createContractApplicationError()
+  return list
 }

@@ -3,9 +3,9 @@ use tauri::{State, WebviewWindow};
 use crate::{
     domain::{
         AnnotateTranscriptSegmentRequest, AppError, CommandError, MarkTranscriptSegmentRequest,
-        ProjectId, SessionId, TranscriptPage, TranscriptPageRequest, TranscriptSearchPageView,
-        TranscriptSearchQuery, TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView,
-        TranscriptSegmentView,
+        ProjectId, SessionId, TranscriptBookmarkList, TranscriptBookmarkListRequest,
+        TranscriptPage, TranscriptPageRequest, TranscriptSearchPageView, TranscriptSearchQuery,
+        TranscriptSegmentHistoryRequest, TranscriptSegmentHistoryView, TranscriptSegmentView,
     },
     logging,
     persistence::TranscriptService,
@@ -83,6 +83,20 @@ pub(crate) async fn get_transcript_segment_history<R: tauri::Runtime>(
     let service =
         authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
     run_blocking(move || service.get_segment_history(request))
+        .await
+        .map_err(record_error)
+}
+
+/// Every place in one Session the reader asked to return to. Nothing is written.
+#[tauri::command]
+pub(crate) async fn list_transcript_bookmarks<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, TranscriptService>,
+    request: TranscriptBookmarkListRequest,
+) -> Result<TranscriptBookmarkList, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.list_bookmarks(request))
         .await
         .map_err(record_error)
 }

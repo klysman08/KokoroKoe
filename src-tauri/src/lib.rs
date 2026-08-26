@@ -183,6 +183,7 @@ pub fn run() {
             commands::transcripts::annotate_transcript_segment,
             commands::transcripts::get_transcript_segment_history,
             commands::transcripts::mark_transcript_segment,
+            commands::transcripts::list_transcript_bookmarks,
             commands::models::list_transcription_models,
             commands::models::download_transcription_model,
             commands::models::cancel_model_download,

@@ -473,6 +473,17 @@ fn render_transcript(
             document.push_str(" ★");
         }
         document.push_str("\n\n");
+        // A bookmark is a place the reader wanted to return to, so it belongs
+        // in the document rather than only in the metadata: someone holding
+        // just this folder should be able to find their own pins.
+        if replayed.bookmarked {
+            document.push_str("> Bookmark");
+            if let Some(label) = &replayed.bookmark_label {
+                document.push_str(": ");
+                document.push_str(label);
+            }
+            document.push_str("\n\n");
+        }
         let text = replayed.effective_text();
         document.push_str(text);
         if !text.ends_with('\n') {
@@ -513,6 +524,13 @@ fn render_transcript(
         }
         if replayed.important {
             document.push_str("\nimportant: true");
+        }
+        if replayed.bookmarked {
+            document.push_str("\nbookmarked: true");
+            if let Some(label) = &replayed.bookmark_label {
+                document.push_str("\nbookmark_label: ");
+                document.push_str(&json_scalar(label)?);
+            }
         }
         document.push_str("\n-->\n");
     }

@@ -5,6 +5,8 @@ import {
   transcriptReadingFixtureSchema,
   transcriptSearchRequestSchema,
   transcriptSegmentHistorySchema,
+  segmentAnnotationSchema,
+  transcriptBookmarkListSchema,
 } from "./transcripts"
 
 describe("transcript contracts", () => {
@@ -62,5 +64,49 @@ describe("transcript segment history contract", () => {
         revisions: [],
       }).success,
     ).toBe(true)
+  })
+})
+
+describe("bookmark contract", () => {
+  /// A bookmark says "come back here". Removing one carries no name, because
+  /// there is nothing left to name.
+  it("refuses a name on a bookmark being removed, and an unusable name", () => {
+    for (const annotation of [
+      { kind: "bookmark", bookmarked: false, label: "orphaned name" },
+      { kind: "bookmark", bookmarked: true, label: "" },
+      { kind: "bookmark", bookmarked: true, label: "   " },
+      { kind: "bookmark", bookmarked: true, label: "two\nlines" },
+      { kind: "bookmark", bookmarked: true, label: "x".repeat(121) },
+    ]) {
+      expect(segmentAnnotationSchema.safeParse(annotation).success).toBe(false)
+    }
+  })
+
+  it("accepts a named and an unnamed bookmark, and its removal", () => {
+    for (const annotation of [
+      { kind: "bookmark", bookmarked: true, label: "pricing decision" },
+      { kind: "bookmark", bookmarked: true },
+      { kind: "bookmark", bookmarked: false },
+    ]) {
+      expect(segmentAnnotationSchema.safeParse(annotation).success).toBe(true)
+    }
+  })
+
+  /// The list is a way back into the transcript, so every item in it has to
+  /// actually be a bookmark.
+  it("refuses a list carrying a segment that is not bookmarked", () => {
+    const bookmarked = {
+      ...fixture.page.items[0],
+      bookmarked: true,
+      bookmarkLabel: "pricing decision",
+    }
+    expect(
+      transcriptBookmarkListSchema.safeParse({ items: [bookmarked] }).success,
+    ).toBe(true)
+    expect(
+      transcriptBookmarkListSchema.safeParse({
+        items: [fixture.page.items[0]],
+      }).success,
+    ).toBe(false)
   })
 })

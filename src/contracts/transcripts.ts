@@ -30,6 +30,18 @@ const transcriptTextSchema = z
     }),
   )
 
+/**
+ * One scannable line naming a bookmark, not a note.
+ *
+ * It renders on a single line both in `transcript.md` and in the bookmark
+ * list, so a newline or a tab would break the shape rather than carry meaning.
+ */
+const bookmarkLabelSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0)
+  .refine((value) => new TextEncoder().encode(value).length <= 120)
+  .refine(controlFree)
+
 export const transcriptSegmentSchema = z
   .strictObject({
     id: segmentIdSchema,
@@ -44,6 +56,9 @@ export const transcriptSegmentSchema = z
     /** Present only when the user rewrote this segment. */
     originalText: transcriptTextSchema.optional(),
     important: z.boolean().optional(),
+    /** A place the reader wanted to return to, optionally named. */
+    bookmarked: z.boolean().optional(),
+    bookmarkLabel: bookmarkLabelSchema.optional(),
   })
   .refine((value) => value.endMs > value.startMs)
 
@@ -163,6 +178,18 @@ export type TranscriptSearchPage = z.infer<typeof transcriptSearchPageSchema>
 export const segmentAnnotationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("correction"), text: transcriptTextSchema }),
   z.strictObject({ kind: z.literal("importance"), important: z.boolean() }),
+  /**
+   * A place to come back to, not a judgement that the segment matters. That is
+   * why it may carry a name — and why removing it carries none, since there is
+   * nothing left to name.
+   */
+  z
+    .strictObject({
+      kind: z.literal("bookmark"),
+      bookmarked: z.boolean(),
+      label: bookmarkLabelSchema.optional(),
+    })
+    .refine((value) => value.bookmarked || value.label === undefined),
 ])
 
 export const annotateTranscriptSegmentRequestSchema = z.strictObject({
@@ -204,4 +231,32 @@ export const markTranscriptSegmentRequestSchema = z.strictObject({
 
 export type MarkTranscriptSegmentRequest = z.infer<
   typeof markTranscriptSegmentRequestSchema
+>
+
+/**
+ * Every place in one Session the reader asked to return to.
+ *
+ * The items are ordinary segments, so a bookmark reads and behaves exactly
+ * like the segment it names: this is a way back into the transcript, not a
+ * second copy of it. `truncated` says the Session holds more than one list
+ * reports, never that a bookmark was lost.
+ */
+export const transcriptBookmarkListRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+})
+
+export const transcriptBookmarkListSchema = z.strictObject({
+  items: z
+    .array(transcriptSegmentSchema)
+    .max(100)
+    .refine((items) => items.every((item) => item.bookmarked === true)),
+  truncated: z.boolean().optional(),
+})
+
+export type TranscriptBookmarkListRequest = z.infer<
+  typeof transcriptBookmarkListRequestSchema
+>
+export type TranscriptBookmarkList = z.infer<
+  typeof transcriptBookmarkListSchema
 >

@@ -2,6 +2,7 @@ import {
   Copy,
   MessageCircleQuestion,
   PencilLine,
+  Bookmark,
   Search,
   ShieldCheck,
   Star,
@@ -45,6 +46,7 @@ import {
   annotateTranscriptSegmentRequestSchema,
   transcriptSearchRequestSchema,
   type SegmentAnnotation,
+  type TranscriptBookmarkList,
   type TranscriptSegment,
   type TranscriptSegmentHistory,
 } from "@/contracts/transcripts"
@@ -62,6 +64,7 @@ import { askManualQuestion } from "@/lib/tauri/manual-question"
 import {
   annotateTranscriptSegment,
   getTranscriptSegmentHistory,
+  listTranscriptBookmarks,
 } from "@/lib/tauri/transcripts"
 
 type QuestionTarget = {
@@ -93,6 +96,11 @@ export function SavedTranscript({
   const [annotations, setAnnotations] = useState<
     Record<string, TranscriptSegment>
   >({})
+  /** The open bookmark box, and the name it opened with. */
+  const [naming, setNaming] = useState<{ id: string; label: string }>()
+  const [showingBookmarks, setShowingBookmarks] = useState(false)
+  const [bookmarks, setBookmarks] = useState<TranscriptBookmarkList>()
+  const [bookmarksPending, setBookmarksPending] = useState(false)
   const transcriptQuery = useSavedTranscript(project.id, session.id)
   const search = useTranscriptSearch(project.id, session.id, searchQuery)
   const segments =
@@ -129,11 +137,45 @@ export function SavedTranscript({
       const updated = await annotateTranscriptSegment(request.data)
       setAnnotations((current) => ({ ...current, [segmentId]: updated }))
       setCorrecting(undefined)
+      setNaming(undefined)
+      // A pin that has moved makes the list of pins stale.
+      if (annotation.kind === "bookmark" && showingBookmarks)
+        await loadBookmarks()
     } catch (caught: unknown) {
       setAnnotationError(toApplicationError(caught))
     } finally {
       setAnnotatingId(undefined)
     }
+  }
+
+  /**
+   * Reads every pin in this Session.
+   *
+   * Bookmarks are read as a set rather than found by paging, because a way
+   * back is only useful if the whole set can be seen at once.
+   */
+  async function loadBookmarks() {
+    setBookmarksPending(true)
+    setAnnotationError(undefined)
+    try {
+      setBookmarks(
+        await listTranscriptBookmarks({
+          projectId: project.id,
+          sessionId: session.id,
+        }),
+      )
+    } catch (caught: unknown) {
+      setBookmarks(undefined)
+      setAnnotationError(toApplicationError(caught))
+    } finally {
+      setBookmarksPending(false)
+    }
+  }
+
+  async function toggleBookmarkView() {
+    const next = !showingBookmarks
+    setShowingBookmarks(next)
+    if (next) await loadBookmarks()
   }
 
   async function copySegment(segment: {
@@ -174,6 +216,110 @@ export function SavedTranscript({
     setValidationMessage(undefined)
     setSearchQuery(parsed.data.query)
   }
+
+  const renderSegment = (segment: TranscriptSegment) => (
+    <article
+      className="flex flex-col gap-2 rounded-lg border p-3"
+      key={segment.id}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SegmentHeader
+          language={segment.language}
+          source={segment.source}
+          startMs={segment.startMs}
+        />
+        <SegmentActions
+          bookmarked={annotated(segment).bookmarked === true}
+          copied={copiedSegmentId === segment.id}
+          onAsk={(question) =>
+            setQuestionTarget({
+              id: segment.id,
+              source: segment.source,
+              startMs: segment.startMs,
+              question,
+            })
+          }
+          important={annotated(segment).important === true}
+          onBookmark={() =>
+            annotated(segment).bookmarked === true
+              ? void annotate(segment.id, {
+                  kind: "bookmark",
+                  bookmarked: false,
+                })
+              : setNaming({
+                  id: segment.id,
+                  label: annotated(segment).bookmarkLabel ?? "",
+                })
+          }
+          onCopy={() => void copySegment(segment)}
+          onCorrect={() =>
+            setCorrecting({
+              id: segment.id,
+              text: annotated(segment).text,
+            })
+          }
+          onMark={() =>
+            void annotate(segment.id, {
+              kind: "importance",
+              important: annotated(segment).important !== true,
+            })
+          }
+        />
+      </div>
+      {annotated(segment).bookmarked === true && (
+        <p className="text-muted-foreground text-xs">
+          <Bookmark aria-hidden="true" className="inline size-3 align-[-2px]" />{" "}
+          {annotated(segment).bookmarkLabel ?? "Bookmarked"}
+        </p>
+      )}
+      {naming?.id === segment.id && (
+        <BookmarkNameForm
+          initialLabel={naming.label}
+          onCancel={() => setNaming(undefined)}
+          onSubmit={(label) =>
+            void annotate(segment.id, {
+              kind: "bookmark",
+              bookmarked: true,
+              ...(label.trim().length > 0 ? { label: label.trim() } : {}),
+            })
+          }
+          pending={annotatingId === segment.id}
+        />
+      )}
+      {correcting?.id === segment.id ? (
+        <SegmentCorrectionForm
+          // Remounting on a new starting wording is what puts it in
+          // the box; an open form must not keep the previous text.
+          key={correcting.text}
+          initialText={correcting.text}
+          onCancel={() => setCorrecting(undefined)}
+          onSubmit={(text) =>
+            void annotate(segment.id, { kind: "correction", text })
+          }
+          pending={annotatingId === segment.id}
+        />
+      ) : (
+        <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
+          {annotated(segment).text}
+        </p>
+      )}
+      {annotated(segment).originalText && (
+        // A correction changes what the transcript reads as, never
+        // what it recorded, so the transcription stays on screen.
+        <SegmentHistoryDisclosure
+          // A saved correction is a new entry in the log, so the
+          // history this holds is now one wording short; remounting
+          // on the new reading is what makes it ask again.
+          key={annotated(segment).text}
+          onRestore={(text) => setCorrecting({ id: segment.id, text })}
+          originalText={annotated(segment).originalText ?? ""}
+          projectId={project.id}
+          segmentId={segment.id}
+          sessionId={session.id}
+        />
+      )}
+    </article>
+  )
 
   return (
     <Card>
@@ -222,6 +368,16 @@ export function SavedTranscript({
               Clear
             </Button>
           )}
+          <Button
+            aria-pressed={showingBookmarks}
+            className={cn(showingBookmarks && "border-primary")}
+            onClick={() => void toggleBookmarkView()}
+            type="button"
+            variant="outline"
+          >
+            <Bookmark aria-hidden="true" data-icon="inline-start" />
+            {showingBookmarks ? "All segments" : "Bookmarks"}
+          </Button>
         </form>
         {validationMessage && (
           <p className="text-destructive text-sm" role="alert">
@@ -251,7 +407,20 @@ export function SavedTranscript({
           }
           className="flex max-h-[58vh] flex-col gap-3 overflow-y-auto rounded-xl border p-4"
         >
-          {showingSearch ? (
+          {showingBookmarks ? (
+            bookmarksPending ? (
+              <EmptyMessage>
+                Reading this session&apos;s bookmarks…
+              </EmptyMessage>
+            ) : (bookmarks?.items.length ?? 0) === 0 ? (
+              <EmptyMessage>
+                Nothing is bookmarked in this session yet. Bookmark a segment to
+                come back to it.
+              </EmptyMessage>
+            ) : (
+              (bookmarks?.items ?? []).map(renderSegment)
+            )
+          ) : showingSearch ? (
             search.isPending ? (
               <EmptyMessage>Searching the local index…</EmptyMessage>
             ) : hits.length === 0 ? (
@@ -292,101 +461,37 @@ export function SavedTranscript({
               This saved transcript has no finalized segments.
             </EmptyMessage>
           ) : (
-            segments.map((segment) => (
-              <article
-                className="flex flex-col gap-2 rounded-lg border p-3"
-                key={segment.id}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <SegmentHeader
-                    language={segment.language}
-                    source={segment.source}
-                    startMs={segment.startMs}
-                  />
-                  <SegmentActions
-                    copied={copiedSegmentId === segment.id}
-                    onAsk={(question) =>
-                      setQuestionTarget({
-                        id: segment.id,
-                        source: segment.source,
-                        startMs: segment.startMs,
-                        question,
-                      })
-                    }
-                    important={annotated(segment).important === true}
-                    onCopy={() => void copySegment(segment)}
-                    onCorrect={() =>
-                      setCorrecting({
-                        id: segment.id,
-                        text: annotated(segment).text,
-                      })
-                    }
-                    onMark={() =>
-                      void annotate(segment.id, {
-                        kind: "importance",
-                        important: annotated(segment).important !== true,
-                      })
-                    }
-                  />
-                </div>
-                {correcting?.id === segment.id ? (
-                  <SegmentCorrectionForm
-                    // Remounting on a new starting wording is what puts it in
-                    // the box; an open form must not keep the previous text.
-                    key={correcting.text}
-                    initialText={correcting.text}
-                    onCancel={() => setCorrecting(undefined)}
-                    onSubmit={(text) =>
-                      void annotate(segment.id, { kind: "correction", text })
-                    }
-                    pending={annotatingId === segment.id}
-                  />
-                ) : (
-                  <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
-                    {annotated(segment).text}
-                  </p>
-                )}
-                {annotated(segment).originalText && (
-                  // A correction changes what the transcript reads as, never
-                  // what it recorded, so the transcription stays on screen.
-                  <SegmentHistoryDisclosure
-                    // A saved correction is a new entry in the log, so the
-                    // history this holds is now one wording short; remounting
-                    // on the new reading is what makes it ask again.
-                    key={annotated(segment).text}
-                    onRestore={(text) =>
-                      setCorrecting({ id: segment.id, text })
-                    }
-                    originalText={annotated(segment).originalText ?? ""}
-                    projectId={project.id}
-                    segmentId={segment.id}
-                    sessionId={session.id}
-                  />
-                )}
-              </article>
-            ))
+            segments.map(renderSegment)
           )}
         </div>
-
-        {(showingSearch ? search.hasNextPage : transcriptQuery.hasNextPage) && (
-          <div className="flex justify-center">
-            <Button
-              disabled={
-                showingSearch
-                  ? search.isFetchingNextPage
-                  : transcriptQuery.isFetchingNextPage
-              }
-              onClick={() =>
-                void (showingSearch
-                  ? search.fetchNextPage()
-                  : transcriptQuery.fetchNextPage())
-              }
-              variant="outline"
-            >
-              Load more
-            </Button>
-          </div>
+        {bookmarks?.truncated === true && showingBookmarks && (
+          <p className="text-muted-foreground text-xs" role="status">
+            This session holds more bookmarks than are listed here. The earliest
+            are shown; every one of them is still recorded.
+          </p>
         )}
+        {!showingBookmarks &&
+          (showingSearch
+            ? search.hasNextPage
+            : transcriptQuery.hasNextPage) && (
+            <div className="flex justify-center">
+              <Button
+                disabled={
+                  showingSearch
+                    ? search.isFetchingNextPage
+                    : transcriptQuery.isFetchingNextPage
+                }
+                onClick={() =>
+                  void (showingSearch
+                    ? search.fetchNextPage()
+                    : transcriptQuery.fetchNextPage())
+                }
+                variant="outline"
+              >
+                Load more
+              </Button>
+            </div>
+          )}
         <p className="text-muted-foreground text-xs">
           Transcript text is displayed as inert local text. Links, HTML, images,
           and embedded content are never activated.
@@ -404,22 +509,39 @@ export function SavedTranscript({
  * and presses Ask, which is the point of prefilling rather than sending.
  */
 function SegmentActions({
+  bookmarked,
   copied,
   important,
   onAsk,
+  onBookmark,
   onCopy,
   onCorrect,
   onMark,
 }: {
+  bookmarked?: boolean
   copied: boolean
   important?: boolean
   onAsk: (question: string) => void
+  onBookmark?: () => void
   onCopy?: () => void
   onCorrect?: () => void
   onMark?: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
+      {onBookmark && (
+        <Button
+          aria-pressed={bookmarked === true}
+          className={cn(bookmarked && "border-primary")}
+          onClick={onBookmark}
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          <Bookmark aria-hidden="true" data-icon="inline-start" />
+          {bookmarked ? "Bookmarked" : "Bookmark"}
+        </Button>
+      )}
       {onMark && (
         <Button
           aria-pressed={important === true}
@@ -881,6 +1003,64 @@ function SegmentCorrectionForm({
           type="submit"
         >
           {pending ? "Saving…" : "Save correction"}
+        </Button>
+        <Button
+          disabled={pending}
+          onClick={onCancel}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * Names a bookmark, or leaves it unnamed.
+ *
+ * A name is what makes a list of pins worth scanning, so the box asks for one
+ * — but a pin is useful without a name, and the meeting is still running, so
+ * saving unnamed is one click rather than a dead end.
+ */
+function BookmarkNameForm({
+  initialLabel,
+  onCancel,
+  onSubmit,
+  pending,
+}: {
+  initialLabel: string
+  onCancel: () => void
+  onSubmit: (label: string) => void
+  pending: boolean
+}) {
+  const [label, setLabel] = useState(initialLabel)
+
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit(label)
+      }}
+    >
+      <label className="sr-only" htmlFor="segment-bookmark-label">
+        Bookmark name
+      </label>
+      <Input
+        autoFocus
+        disabled={pending}
+        id="segment-bookmark-label"
+        maxLength={120}
+        onChange={(event) => setLabel(event.target.value)}
+        placeholder="What are you coming back for? (optional)"
+        value={label}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={pending} size="sm" type="submit">
+          {pending ? "Saving…" : "Save bookmark"}
         </Button>
         <Button
           disabled={pending}

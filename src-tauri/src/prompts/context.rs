@@ -541,6 +541,8 @@ mod tests {
             language: "en-GB".to_owned(),
             original_text: None,
             important: false,
+            bookmarked: false,
+            bookmark_label: None,
         }
     }
 

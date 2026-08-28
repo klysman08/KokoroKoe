@@ -16,6 +16,13 @@
         "content": "The participants agreed that the authoritative transcript remains local Markdown.",
         "rationale": "Two speakers restated the local-only requirement without disagreement.",
         "relatedSegmentIds": ["44444444-4444-4444-8444-444444444444"],
+        "relatedMoments": [
+          {
+            "segmentId": "44444444-4444-4444-8444-444444444444",
+            "source": "microphone",
+            "startMs": 1200
+          }
+        ],
         "confidence": 0.82
       },
       {

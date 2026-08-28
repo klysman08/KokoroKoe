@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use uuid::Uuid;
 
+use crate::audio::AudioSource;
+
 use super::{InsightType, ProjectId, RequestId, SessionId};
 
 const MAX_INSIGHTS: usize = 8;
@@ -8,6 +10,7 @@ const MAX_TITLE_UTF16: usize = 160;
 const MAX_CONTENT_UTF16: usize = 2_000;
 const MAX_RATIONALE_UTF16: usize = 1_000;
 const MAX_RELATED_SEGMENTS: usize = 16;
+const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,6 +49,25 @@ impl InsightUsage {
     }
 }
 
+/// Where in the meeting an insight came from.
+///
+/// Rust resolves this from the very segments the model was shown, so it is a
+/// statement about the transcript rather than a claim the model made. A batch
+/// citing anything outside that window is refused before it becomes an
+/// insight, so every moment here names a place that really exists.
+///
+/// It carries a place, not the speech at that place. A timecode and a speaker
+/// are enough to find the moment in the transcript, and keeping the text out
+/// means publishing an insight adds no meeting content to the event beyond
+/// what the insight itself already says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct InsightMoment {
+    pub(crate) segment_id: Uuid,
+    pub(crate) source: AudioSource,
+    pub(crate) start_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RecentInsight {
@@ -55,6 +77,10 @@ pub(crate) struct RecentInsight {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) rationale: Option<String>,
     pub(crate) related_segment_ids: Vec<Uuid>,
+    /// The subset of `related_segment_ids` that names a segment the model was
+    /// actually shown, with the place it occupies in the meeting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) related_moments: Vec<InsightMoment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) confidence: Option<f64>,
 }
@@ -68,6 +94,8 @@ struct RawRecentInsight {
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     rationale: Option<String>,
     related_segment_ids: Vec<Uuid>,
+    #[serde(default)]
+    related_moments: Vec<InsightMoment>,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     confidence: Option<f64>,
 }
@@ -84,6 +112,7 @@ impl<'de> Deserialize<'de> for RecentInsight {
             content: raw.content,
             rationale: raw.rationale,
             related_segment_ids: raw.related_segment_ids,
+            related_moments: raw.related_moments,
             confidence: raw.confidence,
         };
         insight.validate().map_err(D::Error::custom)?;
@@ -102,6 +131,21 @@ impl RecentInsight {
             || self.related_segment_ids.len() > MAX_RELATED_SEGMENTS
             || self.related_segment_ids.iter().any(Uuid::is_nil)
             || has_duplicates(&self.related_segment_ids)
+            || self.related_moments.len() > self.related_segment_ids.len()
+            // A moment that does not name one of this insight's own citations
+            // would be a place the insight never claimed to come from.
+            || self.related_moments.iter().any(|moment| {
+                moment.segment_id.is_nil()
+                    || moment.start_ms > JSON_SAFE_INTEGER_MAX
+                    || !self.related_segment_ids.contains(&moment.segment_id)
+            })
+            || has_duplicates(
+                &self
+                    .related_moments
+                    .iter()
+                    .map(|moment| moment.segment_id)
+                    .collect::<Vec<_>>(),
+            )
             || self
                 .confidence
                 .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))

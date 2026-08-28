@@ -257,3 +257,47 @@ describe("DetachedInsightsWindow", () => {
     expect(screen.getByText(/waiting for insights/i)).toBeInTheDocument()
   })
 })
+
+describe("DetachedInsightsWindow provenance", () => {
+  beforeEach(() => {
+    listeners.clear()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(listen).mockReset()
+    vi.mocked(listen).mockImplementation(
+      async (event: string, handler: unknown) => {
+        listeners.set(event, handler as Handler)
+        return () => listeners.delete(event)
+      },
+    )
+  })
+
+  /// The window cannot read the transcript, so a count told the reader nothing
+  /// they could act on. A speaker and a timecode name a place they can find in
+  /// the transcript window beside it.
+  it("names where an insight came from instead of counting segments", async () => {
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.size).toBe(3))
+
+    listeners.get("session-insights")?.({ payload: publication() })
+
+    expect(await screen.findByText("From You at 00:01")).toBeInTheDocument()
+    // It carries the place, never the speech at that place.
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  /// An insight whose citations Rust could not resolve still says how many it
+  /// made, rather than silently claiming it came from nowhere.
+  it("falls back to a count when no moment resolved", async () => {
+    const user = userEvent.setup()
+    render(<DetachedInsightsWindow />)
+    await waitFor(() => expect(listeners.size).toBe(3))
+    listeners.get("session-insights")?.({ payload: publication() })
+    await screen.findByText("From You at 00:01")
+
+    await user.click(screen.getByRole("button", { name: /next/i }))
+
+    expect(
+      await screen.findByText("From 2 transcript segments"),
+    ).toBeInTheDocument()
+  })
+})

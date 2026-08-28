@@ -14,6 +14,10 @@ import {
 import type { Project, Session } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
+import {
+  formatInsightMoment,
+  navigableMoments,
+} from "@/features/insights/insight-moments"
 import { generateRecentInsights } from "@/lib/tauri/insights"
 import { openDetachedWindow } from "@/lib/tauri/windows"
 
@@ -117,6 +121,17 @@ export function SessionInsightsPanel({
                   {insight.rationale && (
                     <p className="text-muted-foreground mt-1 text-xs break-words">
                       {insight.rationale}
+                    </p>
+                  )}
+                  {navigableMoments(insight.relatedMoments).length > 0 && (
+                    // Which moments this came from. Rust resolved these against
+                    // the segments the model was shown, so each one names a
+                    // place that is really in the transcript.
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      From{" "}
+                      {navigableMoments(insight.relatedMoments)
+                        .map(formatInsightMoment)
+                        .join(", ")}
                     </p>
                   )}
                 </li>

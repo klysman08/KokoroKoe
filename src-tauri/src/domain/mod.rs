@@ -14,8 +14,8 @@ mod windows;
 pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
 pub(crate) use error::{AppError, CommandError};
 pub(crate) use insights::{
-    GenerateRecentInsightsRequest, InsightUsage, RecentInsight, RecentInsightsResponse,
-    SessionInsightsPublication,
+    GenerateRecentInsightsRequest, InsightMoment, InsightUsage, RecentInsight,
+    RecentInsightsResponse, SessionInsightsPublication,
 };
 pub(crate) use manual_question::{
     AskManualQuestionRequest, ManualQuestionResponse, ManualQuestionUsage,

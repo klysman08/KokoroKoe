@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        AppError, GenerateRecentInsightsRequest, InsightUsage, RecentInsight,
+        AppError, GenerateRecentInsightsRequest, InsightMoment, InsightUsage, RecentInsight,
         RecentInsightsResponse, RequestId,
     },
     persistence::TranscriptService,
@@ -88,12 +88,33 @@ impl InsightService {
                     .map(|value| Uuid::parse_str(value))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| AppError::insight_error("insight_response_invalid"))?;
+                // Resolved against the very segments the model was shown. A
+                // batch citing anything outside that window is already refused
+                // before it reaches here, so in practice this lookup always
+                // finds its segment; skipping a miss is defence in depth, not
+                // the mechanism, and it keeps a place the reader could not go
+                // from being offered as one.
+                let related_moments = related_segment_ids
+                    .iter()
+                    .filter_map(|id| {
+                        context
+                            .recent_segments
+                            .iter()
+                            .find(|segment| segment.id == *id)
+                            .map(|segment| InsightMoment {
+                                segment_id: segment.id,
+                                source: segment.source,
+                                start_ms: segment.start_ms,
+                            })
+                    })
+                    .collect();
                 Ok(RecentInsight {
                     r#type: insight.r#type,
                     title: insight.title,
                     content: insight.content,
                     rationale: insight.rationale,
                     related_segment_ids,
+                    related_moments,
                     confidence: insight.confidence,
                 })
             })
@@ -516,6 +537,12 @@ mod tests {
         assert!(response.repaired);
         assert_eq!(response.insights.len(), 1);
         assert_eq!(response.insights[0].related_segment_ids, [expected_segment]);
+        // The citation resolves to a place in the meeting, taken from the
+        // segment the model was actually shown rather than from its answer.
+        let moments = &response.insights[0].related_moments;
+        assert_eq!(moments.len(), 1);
+        assert_eq!(moments[0].segment_id, expected_segment);
+        assert!(moments[0].start_ms > 0);
         assert_eq!(response.primary_usage.input_tokens, 400);
         assert_eq!(response.repair_usage.unwrap().input_tokens, 100);
 
@@ -556,5 +583,56 @@ mod tests {
         assert!(repair_text.contains("{broken"));
         assert!(!repair_text.contains("verified recent context"));
         assert!(!repair_text.contains(TEST_KEY));
+    }
+
+    /// The reason resolving a citation is a plain lookup: a batch citing a
+    /// segment outside the window the model was shown is refused before it ever
+    /// becomes an insight, so every citation that survives names something the
+    /// context holds. One repair is attempted and the invented id is refused
+    /// again, rather than being quietly carried into the reply.
+    #[test]
+    fn a_citation_outside_the_shown_window_never_becomes_an_insight() {
+        let invented = "70000000-0000-4000-8000-999999999999";
+        let batch = json!({
+            "insights":[{
+                "type":"decision",
+                "title":"Cited something it never saw",
+                "content":"The citation names a segment outside the recent window.",
+                "relatedSegmentIds":[invented]
+            }]
+        })
+        .to_string();
+        let fixture = fixture(vec![
+            completion_plan(&batch, 100, 30),
+            completion_plan(&batch, 100, 30),
+        ]);
+
+        let error = fixture
+            .service
+            .generate_recent(request(fixture.project_id, fixture.session_id))
+            .unwrap_err();
+
+        assert_eq!(error.code, "insight_response_invalid");
+    }
+
+    /// A moment must belong to a citation the insight actually made, so a
+    /// payload naming a place the insight never claimed is refused.
+    #[test]
+    fn a_moment_outside_the_insights_own_citations_is_refused() {
+        let cited = "70000000-0000-4000-8000-000000000001";
+        let other = "70000000-0000-4000-8000-000000000002";
+        let insight = json!({
+            "type":"decision",
+            "title":"A decision",
+            "content":"Some content.",
+            "relatedSegmentIds":[cited],
+            "relatedMoments":[{
+                "segmentId": other,
+                "source":"microphone",
+                "startMs":1200
+            }]
+        });
+
+        assert!(serde_json::from_value::<RecentInsight>(insight).is_err());
     }
 }

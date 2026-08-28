@@ -12,6 +12,10 @@ import type { DetachedWindowAppearance } from "@/contracts/windows"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
 import {
+  formatInsightMoment,
+  navigableMoments,
+} from "@/features/insights/insight-moments"
+import {
   dismissInsight,
   EMPTY_INSIGHT_BOARD,
   focusInsight,
@@ -267,11 +271,25 @@ function InsightCardView({
           {insight.rationale}
         </p>
       )}
-      {insight.relatedSegmentIds.length > 0 && (
+      {/*
+        A place beats a count. The window cannot read the transcript, but a
+        speaker and a timecode are enough to find the moment in the one that is
+        already on screen beside it.
+      */}
+      {navigableMoments(insight.relatedMoments).length > 0 ? (
         <p className="text-muted-foreground text-xs">
-          From {insight.relatedSegmentIds.length} transcript{" "}
-          {insight.relatedSegmentIds.length === 1 ? "segment" : "segments"}
+          From{" "}
+          {navigableMoments(insight.relatedMoments)
+            .map(formatInsightMoment)
+            .join(", ")}
         </p>
+      ) : (
+        insight.relatedSegmentIds.length > 0 && (
+          <p className="text-muted-foreground text-xs">
+            From {insight.relatedSegmentIds.length} transcript{" "}
+            {insight.relatedSegmentIds.length === 1 ? "segment" : "segments"}
+          </p>
+        )
       )}
     </article>
   )

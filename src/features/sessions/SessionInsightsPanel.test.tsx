@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import projectSessionFixture from "../../../fixtures/contracts/project-session-v1.json"
 import recentInsightsFixture from "../../../fixtures/contracts/recent-insights-v1.json"
-import { generateRecentInsightsRequestSchema } from "@/contracts/insights"
+import {
+  generateAlternativeInsightRequestSchema,
+  generateRecentInsightsRequestSchema,
+} from "@/contracts/insights"
 import { projectSessionFixtureSchema } from "@/contracts/projects"
 import { SessionInsightsPanel } from "./SessionInsightsPanel"
 
@@ -138,6 +141,98 @@ describe("SessionInsightsPanel", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(
         /could not open the transcript window/i,
       ),
+    )
+  })
+})
+
+describe("SessionInsightsPanel alternatives", () => {
+  const insight = recentInsightsFixture.response.insights[0]!
+
+  beforeEach(() => {
+    invokeMock.mockReset()
+  })
+
+  /// An alternative asks again about the insight's own moments: it names the
+  /// type and the segments it cited, and carries none of the model's earlier
+  /// text — the transcript is the input, not what the model said before.
+  it("asks again about one insight's own moments and keeps the original", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command, args) => {
+      const request = (args as { request: Record<string, unknown> }).request
+      if (command === "generate_recent_insights")
+        return {
+          ...recentInsightsFixture.response,
+          requestId: request.requestId,
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+        }
+      if (command === "generate_alternative_insight") {
+        const parsed = generateAlternativeInsightRequestSchema.parse(request)
+        expect(parsed.insightType).toBe(insight.type)
+        expect(parsed.segmentIds).toEqual(insight.relatedSegmentIds)
+        expect(JSON.stringify(request)).not.toContain(insight.content)
+        return {
+          ...recentInsightsFixture.response,
+          requestId: parsed.requestId,
+          projectId: parsed.projectId,
+          sessionId: parsed.sessionId,
+          insights: [
+            {
+              ...insight,
+              title: "A second reading",
+              content: "Another way to read the same moment.",
+            },
+          ],
+          sessionActualCostUsd: "0.001500000000",
+          availableBudgetUsd: "0.998500000000",
+        }
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    renderPanel()
+    await user.click(screen.getByRole("button", { name: /generate insights/i }))
+    await screen.findByText(insight.title)
+
+    await user.click(screen.getAllByRole("button", { name: /ask again/i })[0]!)
+
+    expect(await screen.findByText("A second reading")).toBeInTheDocument()
+    // The original is still there to compare against.
+    expect(screen.getByText(insight.title)).toBeInTheDocument()
+    // Asking again costs money, so the figures move with it.
+    expect(screen.getByText(/0\.001500000000 session cost/)).toBeInTheDocument()
+  })
+
+  it("surfaces a sanitized failure when asking again is refused", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation(async (command, args) => {
+      const request = (args as { request: Record<string, unknown> }).request
+      if (command === "generate_recent_insights")
+        return {
+          ...recentInsightsFixture.response,
+          requestId: request.requestId,
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+        }
+      throw {
+        error: {
+          code: "insight_moment_unavailable",
+          userMessage:
+            "That moment is no longer in the recent transcript window.",
+          technicalDetail: "insight_moment_unavailable",
+          severity: "info",
+          retryable: false,
+          correlationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        },
+      }
+    })
+    renderPanel()
+    await user.click(screen.getByRole("button", { name: /generate insights/i }))
+    await screen.findByText(insight.title)
+
+    await user.click(screen.getAllByRole("button", { name: /ask again/i })[0]!)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /no longer in the recent transcript window/i,
     )
   })
 })

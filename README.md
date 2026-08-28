@@ -28,8 +28,10 @@ to OpenRouter, and only when you ask for it.
 - **Questions and insights.** Ask a question about a saved transcript segment — freehand, or with a
   one-click **Explain**, **Suggest a response**, or **Summarize** that fills the question box for
   you to read and edit before sending — or generate insights over the recent transcript of a running
-  Session. Both are explicit, per-request user actions that return transient, validated, typed
-  results with their token and cost accounting. Transcript segments can also be copied, marked
+  Session. Each insight says which moments of the meeting it came from, and can be asked again for a
+  second reading of those same moments, kept beside the first. All of these are explicit,
+  per-request user actions that return transient, validated, typed results with their token and cost
+  accounting. Transcript segments can also be copied, marked
   important, and corrected — a correction is recorded as a new journal event, so the transcription
   it replaced stays readable in the document and the app. A corrected segment can show its whole
   history: what was transcribed, every wording since, and when each was recorded, with any of them

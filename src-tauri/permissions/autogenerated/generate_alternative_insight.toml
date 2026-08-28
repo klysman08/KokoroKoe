@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-alternative-insight"
+description = "Enables the generate_alternative_insight command without any pre-configured scope."
+commands.allow = ["generate_alternative_insight"]
+
+[[permission]]
+identifier = "deny-generate-alternative-insight"
+description = "Denies the generate_alternative_insight command without any pre-configured scope."
+commands.deny = ["generate_alternative_insight"]

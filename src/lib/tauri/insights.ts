@@ -7,9 +7,11 @@ import {
   toApplicationError,
 } from "@/contracts/app-error"
 import {
+  generateAlternativeInsightRequestSchema,
   generateRecentInsightsRequestSchema,
   recentInsightsResponseSchema,
   sessionInsightsPublicationSchema,
+  type GenerateAlternativeInsightRequest,
   type GenerateRecentInsightsRequest,
   type RecentInsightsResponse,
   type SessionInsightsPublication,
@@ -58,4 +60,35 @@ export function listenToSessionInsights(
     )
     if (publication.success) onEvent(publication.data)
   })
+}
+
+/**
+ * Asks again about one insight's own moments.
+ *
+ * Rust narrows the same versioned prompt to that insight's type and the
+ * segments it cited. This spends money and reaches OpenRouter like any other
+ * generation, so it stays a main-window command.
+ */
+export async function generateAlternativeInsight(
+  value: GenerateAlternativeInsightRequest,
+): Promise<RecentInsightsResponse> {
+  const request = generateAlternativeInsightRequestSchema.safeParse(value)
+  if (!request.success) throw createRequestContractApplicationError()
+  let raw: unknown
+  try {
+    raw = await invoke<unknown>("generate_alternative_insight", {
+      request: request.data,
+    })
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const response = recentInsightsResponseSchema.safeParse(raw)
+  if (!response.success) throw createContractApplicationError()
+  if (
+    response.data.requestId !== request.data.requestId ||
+    response.data.projectId !== request.data.projectId ||
+    response.data.sessionId !== request.data.sessionId
+  )
+    throw createContractApplicationError()
+  return response.data
 }

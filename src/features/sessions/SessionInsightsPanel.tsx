@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Lightbulb, PanelRightOpen } from "lucide-react"
+import { Lightbulb, PanelRightOpen, RefreshCw } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -8,7 +8,9 @@ import {
   type ApplicationError,
 } from "@/contracts/app-error"
 import {
+  generateAlternativeInsightRequestSchema,
   generateRecentInsightsRequestSchema,
+  type RecentInsight,
   type RecentInsightsResponse,
 } from "@/contracts/insights"
 import type { Project, Session } from "@/contracts/projects"
@@ -18,7 +20,10 @@ import {
   formatInsightMoment,
   navigableMoments,
 } from "@/features/insights/insight-moments"
-import { generateRecentInsights } from "@/lib/tauri/insights"
+import {
+  generateAlternativeInsight,
+  generateRecentInsights,
+} from "@/lib/tauri/insights"
 import { openDetachedWindow } from "@/lib/tauri/windows"
 
 /**
@@ -38,6 +43,55 @@ export function SessionInsightsPanel({
   const [response, setResponse] = useState<RecentInsightsResponse>()
   const [error, setError] = useState<ApplicationError>()
   const [pending, setPending] = useState(false)
+  /**
+   * Second readings, kept beside the insight they came from.
+   *
+   * An alternative is another opinion about the same moment, so it belongs
+   * next to the original rather than replacing it: the user asked to compare,
+   * and throwing the first one away would answer a question they did not ask.
+   */
+  const [alternatives, setAlternatives] = useState<
+    Record<string, RecentInsight[]>
+  >({})
+  const [alternativeFor, setAlternativeFor] = useState<string>()
+  /** The newest money figures, whichever generation produced them. */
+  const [spend, setSpend] = useState<{
+    sessionActualCostUsd: string
+    availableBudgetUsd: string
+  }>()
+
+  const insightKey = (insight: RecentInsight) =>
+    `${insight.type} ${insight.title}`
+
+  async function generateAlternative(insight: RecentInsight) {
+    const key = insightKey(insight)
+    const request = generateAlternativeInsightRequestSchema.safeParse({
+      requestId: globalThis.crypto.randomUUID(),
+      projectId: project.id,
+      sessionId: session.id,
+      insightType: insight.type,
+      segmentIds: insight.relatedSegmentIds,
+    })
+    if (!request.success) return
+
+    setError(undefined)
+    setAlternativeFor(key)
+    try {
+      const another = await generateAlternativeInsight(request.data)
+      setAlternatives((current) => ({
+        ...current,
+        [key]: [...(current[key] ?? []), ...another.insights],
+      }))
+      setSpend({
+        sessionActualCostUsd: another.sessionActualCostUsd,
+        availableBudgetUsd: another.availableBudgetUsd,
+      })
+    } catch (caught: unknown) {
+      setError(toApplicationError(caught))
+    } finally {
+      setAlternativeFor(undefined)
+    }
+  }
 
   async function generate() {
     const request = generateRecentInsightsRequestSchema.safeParse({
@@ -49,9 +103,15 @@ export function SessionInsightsPanel({
 
     setError(undefined)
     setResponse(undefined)
+    setAlternatives({})
     setPending(true)
     try {
-      setResponse(await generateRecentInsights(request.data))
+      const batch = await generateRecentInsights(request.data)
+      setResponse(batch)
+      setSpend({
+        sessionActualCostUsd: batch.sessionActualCostUsd,
+        availableBudgetUsd: batch.availableBudgetUsd,
+      })
     } catch (caught: unknown) {
       setError(toApplicationError(caught))
     } finally {
@@ -134,6 +194,48 @@ export function SessionInsightsPanel({
                         .join(", ")}
                     </p>
                   )}
+                  {insight.relatedSegmentIds.length > 0 && (
+                    <Button
+                      className="mt-2"
+                      disabled={alternativeFor !== undefined}
+                      onClick={() => void generateAlternative(insight)}
+                      size="xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <RefreshCw aria-hidden="true" data-icon="inline-start" />
+                      {alternativeFor === insightKey(insight)
+                        ? "Asking again…"
+                        : "Ask again"}
+                    </Button>
+                  )}
+                  {(alternatives[insightKey(insight)] ?? []).map(
+                    (alternative, index) => (
+                      <div
+                        className="mt-2 border-l-2 pl-3"
+                        key={`${alternative.title} ${index}`}
+                      >
+                        <p className="text-muted-foreground text-xs">
+                          Another reading
+                        </p>
+                        <p className="text-sm font-medium">
+                          {alternative.title}
+                        </p>
+                        <p className="text-sm leading-6 break-words whitespace-pre-wrap">
+                          {alternative.content}
+                        </p>
+                        {navigableMoments(alternative.relatedMoments).length >
+                          0 && (
+                          <p className="text-muted-foreground mt-1 text-xs">
+                            From{" "}
+                            {navigableMoments(alternative.relatedMoments)
+                              .map(formatInsightMoment)
+                              .join(", ")}
+                          </p>
+                        )}
+                      </div>
+                    ),
+                  )}
                 </li>
               ))}
             </ul>
@@ -147,11 +249,18 @@ export function SessionInsightsPanel({
             {response.repaired && (
               <Badge variant="secondary">JSON repaired</Badge>
             )}
+            {/*
+              The newest figures, whichever generation produced them. Asking
+              again costs money too, so showing the batch's original numbers
+              afterwards would understate what the session has spent.
+            */}
             <Badge variant="outline">
-              ${response.sessionActualCostUsd} session cost
+              ${spend?.sessionActualCostUsd ?? response.sessionActualCostUsd}{" "}
+              session cost
             </Badge>
             <Badge variant="outline">
-              ${response.availableBudgetUsd} remaining
+              ${spend?.availableBudgetUsd ?? response.availableBudgetUsd}{" "}
+              remaining
             </Badge>
           </div>
         </div>

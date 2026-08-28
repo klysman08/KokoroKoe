@@ -156,6 +156,7 @@ pub fn run() {
             commands::openrouter::list_openrouter_models,
             commands::manual_question::ask_manual_question,
             commands::insights::generate_recent_insights,
+            commands::insights::generate_alternative_insight,
             commands::summaries::get_session_summary,
             commands::summaries::generate_session_summary,
             commands::windows::open_detached_window,

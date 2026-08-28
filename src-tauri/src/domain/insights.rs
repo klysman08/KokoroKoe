@@ -32,6 +32,68 @@ impl GenerateRecentInsightsRequest {
     }
 }
 
+/// A request for another reading of one insight's own moments.
+///
+/// It names a type and the segments that insight cited, so an alternative is
+/// a second opinion about a moment rather than a fresh sweep of the meeting.
+/// It carries no insight text: what the model said before is not the input,
+/// the transcript is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GenerateAlternativeInsightRequest {
+    pub(crate) request_id: RequestId,
+    pub(crate) project_id: ProjectId,
+    pub(crate) session_id: SessionId,
+    pub(crate) insight_type: InsightType,
+    pub(crate) segment_ids: Vec<Uuid>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawGenerateAlternativeInsightRequest {
+    request_id: RequestId,
+    project_id: ProjectId,
+    session_id: SessionId,
+    insight_type: InsightType,
+    segment_ids: Vec<Uuid>,
+}
+
+impl<'de> Deserialize<'de> for GenerateAlternativeInsightRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawGenerateAlternativeInsightRequest::deserialize(deserializer)?;
+        let request = Self {
+            request_id: raw.request_id,
+            project_id: raw.project_id,
+            session_id: raw.session_id,
+            insight_type: raw.insight_type,
+            segment_ids: raw.segment_ids,
+        };
+        request.validate().map_err(D::Error::custom)?;
+        Ok(request)
+    }
+}
+
+impl GenerateAlternativeInsightRequest {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.request_id.as_uuid().is_nil()
+            || self.project_id.as_uuid().is_nil()
+            || self.session_id.as_uuid().is_nil()
+            // An alternative to nothing is a fresh generation wearing the wrong
+            // name, so the moments it is about are required.
+            || self.segment_ids.is_empty()
+            || self.segment_ids.len() > MAX_RELATED_SEGMENTS
+            || self.segment_ids.iter().any(Uuid::is_nil)
+            || has_duplicates(&self.segment_ids)
+        {
+            return Err("insight_invalid");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct InsightUsage {

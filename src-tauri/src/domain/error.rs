@@ -278,6 +278,11 @@ impl AppError {
                 ErrorSeverity::Info,
                 true,
             ),
+            "insight_moment_unavailable" => (
+                "That moment has scrolled out of the recent transcript window, so it cannot be asked about again.",
+                ErrorSeverity::Info,
+                false,
+            ),
             "insight_model_required" => (
                 "Choose an insights model for this Session before generating insights.",
                 ErrorSeverity::Warning,

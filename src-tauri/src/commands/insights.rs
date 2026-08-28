@@ -2,8 +2,8 @@ use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
     domain::{
-        AppError, CommandError, GenerateRecentInsightsRequest, RecentInsightsResponse,
-        SessionInsightsPublication,
+        AppError, CommandError, GenerateAlternativeInsightRequest, GenerateRecentInsightsRequest,
+        RecentInsightsResponse, SessionInsightsPublication,
     },
     llm::InsightService,
     logging,
@@ -26,12 +26,39 @@ pub(crate) async fn generate_recent_insights<R: tauri::Runtime>(
     let response = run_blocking(move || service.generate_recent(request))
         .await
         .map_err(record_error)?;
-    // A failed publish must not fail the generation: the main window already
-    // has the result, and the detached window is an optional second view.
+    publish(&app, &response);
+    Ok(response)
+}
+
+/// Another reading of one insight's own moments.
+///
+/// It stays exact-`main` like every other generation. ADR 0010 admitted one
+/// command to the transcript window because its request could carry nothing but
+/// a flag; this one spends money and reaches OpenRouter, so that reasoning does
+/// not extend to it and the insights window stays display-only.
+#[tauri::command]
+pub(crate) async fn generate_alternative_insight<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    app: AppHandle<R>,
+    state: State<'_, InsightService>,
+    request: GenerateAlternativeInsightRequest,
+) -> Result<RecentInsightsResponse, CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    let response = run_blocking(move || service.generate_alternative(request))
+        .await
+        .map_err(record_error)?;
+    publish(&app, &response);
+    Ok(response)
+}
+
+/// A failed publish must not fail the generation: the main window already has
+/// the result, and the detached window is an optional second view.
+fn publish<R: tauri::Runtime>(app: &AppHandle<R>, response: &RecentInsightsResponse) {
     if app
         .emit(
             SESSION_INSIGHTS_EVENT,
-            SessionInsightsPublication::from_response(&response),
+            SessionInsightsPublication::from_response(response),
         )
         .is_err()
     {
@@ -39,7 +66,6 @@ pub(crate) async fn generate_recent_insights<R: tauri::Runtime>(
         // payload is model output about the meeting.
         tracing::warn!("the generated insights could not be published");
     }
-    Ok(response)
 }
 
 fn authorized<T>(label: &str, operation: impl FnOnce() -> T) -> Result<T, AppError> {

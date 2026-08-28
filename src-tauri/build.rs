@@ -20,6 +20,7 @@ fn main() {
             "list_transcript_bookmarks",
             "ask_manual_question",
             "generate_recent_insights",
+            "generate_alternative_insight",
             "get_session_summary",
             "generate_session_summary",
             "open_detached_window",

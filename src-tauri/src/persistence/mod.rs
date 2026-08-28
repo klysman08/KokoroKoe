@@ -48,7 +48,7 @@ pub(crate) use summary_store::{SummaryPublication, SummaryStore, SummaryStoreErr
 pub(crate) use transcript_index::{
     TranscriptSearchCatalog, TranscriptSearchPage, TranscriptSearchRequest, TranscriptSearchResult,
 };
-pub(crate) use transcript_service::TranscriptService;
+pub(crate) use transcript_service::{RecentInsightContext, TranscriptService};
 #[allow(unused_imports)]
 pub(crate) use transcript_store::{
     TranscriptSnapshot, TranscriptSnapshotFingerprint, TranscriptStore, TranscriptStoreError,

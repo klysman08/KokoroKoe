@@ -34,6 +34,7 @@
     "allow-list-transcript-bookmarks",
     "allow-ask-manual-question",
     "allow-generate-recent-insights",
+    "allow-generate-alternative-insight",
     "allow-get-session-summary",
     "allow-generate-session-summary",
     "allow-open-detached-window",

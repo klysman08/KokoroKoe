@@ -4,10 +4,11 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        AppError, GenerateRecentInsightsRequest, InsightMoment, InsightUsage, RecentInsight,
-        RecentInsightsResponse, RequestId,
+        AppError, GenerateAlternativeInsightRequest, GenerateRecentInsightsRequest, InsightMoment,
+        InsightType, InsightUsage, RecentInsight, RecentInsightsResponse, RequestId,
+        TranscriptSegmentView,
     },
-    persistence::TranscriptService,
+    persistence::{RecentInsightContext, TranscriptService},
     prompts::{PromptContextRequest, PromptTask, build_prompt_context},
 };
 
@@ -44,25 +45,72 @@ impl InsightService {
             return Err(AppError::insight_error("insight_types_required"));
         }
         let requested_types = context.session.preset.insight_types.clone();
+        let relevant = context.recent_segments.clone();
+        self.complete(request.request_id, &context, &requested_types, &relevant)
+    }
+
+    /// Another reading of one insight's own moments.
+    ///
+    /// It is the same versioned prompt, narrowed twice: to the single type the
+    /// user asked to see again, and to the segments that insight cited. The
+    /// recent window still travels as surrounding context, so an alternative is
+    /// a second opinion about a moment rather than a fresh sweep of the meeting.
+    pub(crate) fn generate_alternative(
+        &self,
+        request: GenerateAlternativeInsightRequest,
+    ) -> Result<RecentInsightsResponse, AppError> {
+        request.validate().map_err(AppError::insight_error)?;
+        let context = self
+            .transcripts
+            .get_recent_insight_context(request.project_id, request.session_id)?;
+        if !context
+            .session
+            .preset
+            .insight_types
+            .contains(&request.insight_type)
+        {
+            return Err(AppError::insight_error("insight_types_required"));
+        }
+        // The meeting moves on. A segment the original cited may have fallen out
+        // of the recent window since, and generating over what is left of it
+        // would answer about a different moment than the one the user pointed
+        // at — so an alternative with nothing of its subject left is refused.
+        let relevant = context
+            .recent_segments
+            .iter()
+            .filter(|segment| request.segment_ids.contains(&segment.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if relevant.is_empty() {
+            return Err(AppError::insight_error("insight_moment_unavailable"));
+        }
+        self.complete(
+            request.request_id,
+            &context,
+            &[request.insight_type],
+            &relevant,
+        )
+    }
+
+    fn complete(
+        &self,
+        request_id: RequestId,
+        context: &RecentInsightContext,
+        requested_types: &[InsightType],
+        relevant_segments: &[TranscriptSegmentView],
+    ) -> Result<RecentInsightsResponse, AppError> {
         let envelope = build_prompt_context(PromptContextRequest {
             project: &context.project,
             session: &context.session,
-            task: PromptTask::Insight {
-                requested_types: &requested_types,
-            },
-            relevant_segments: &context.recent_segments,
+            task: PromptTask::Insight { requested_types },
+            relevant_segments,
             recent_segments: &context.recent_segments,
         })
         .map_err(|error| map_prompt_error(error.code))?;
         let cancellation = Arc::new(AtomicBool::new(false));
         let primary = self
             .openrouter
-            .complete_with_retry(
-                request.request_id,
-                &context.session,
-                &envelope,
-                &cancellation,
-            )
+            .complete_with_retry(request_id, &context.session, &envelope, &cancellation)
             .map_err(map_completion_error)?;
         let primary_attempts = primary.attempts;
         let validated = self
@@ -125,9 +173,9 @@ impl InsightService {
             .unwrap_or(&validated.primary_usage);
         let response = RecentInsightsResponse {
             schema_version: 1,
-            request_id: request.request_id,
-            project_id: request.project_id,
-            session_id: request.session_id,
+            request_id,
+            project_id: context.project.id,
+            session_id: context.session.id,
             insights,
             primary_attempts,
             repaired: validated.repaired,
@@ -634,5 +682,106 @@ mod tests {
         });
 
         assert!(serde_json::from_value::<RecentInsight>(insight).is_err());
+    }
+
+    fn alternative_request(
+        project_id: crate::domain::ProjectId,
+        session_id: crate::domain::SessionId,
+        segment_ids: &[Uuid],
+    ) -> GenerateAlternativeInsightRequest {
+        serde_json::from_value(json!({
+            "requestId":"80000000-0000-4000-8000-000000000002",
+            "projectId":project_id,
+            "sessionId":session_id,
+            "insightType":"decision",
+            "segmentIds":segment_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
+        }))
+        .unwrap()
+    }
+
+    /// An alternative narrows the same versioned prompt twice: to one type, and
+    /// to the moments the original insight cited. The recent window still
+    /// travels as surrounding context, so it is a second opinion about a moment
+    /// rather than a fresh sweep of the meeting.
+    #[test]
+    fn an_alternative_asks_again_about_one_insights_own_moments() {
+        let cited = Uuid::parse_str(&format!(
+            "70000000-0000-4000-8000-{:012}",
+            OLDEST_SEGMENTS + 2
+        ))
+        .unwrap();
+        let batch = json!({
+            "insights":[{
+                "type":"decision",
+                "title":"A second reading",
+                "content":"Another way to read the same moment.",
+                "relatedSegmentIds":[cited.to_string()]
+            }]
+        })
+        .to_string();
+        let fixture = fixture(vec![completion_plan(&batch, 100, 30)]);
+
+        let response = fixture
+            .service
+            .generate_alternative(alternative_request(
+                fixture.project_id,
+                fixture.session_id,
+                &[cited],
+            ))
+            .unwrap();
+
+        assert_eq!(response.insights.len(), 1);
+        assert_eq!(response.insights[0].related_moments.len(), 1);
+
+        let body: serde_json::Value = serde_json::from_slice(
+            &fixture
+                .requests
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+        )
+        .unwrap();
+        let serialized = body.to_string();
+        // Only the one type was asked for, and the distant window still never
+        // travels, exactly as a full generation.
+        assert!(serialized.contains("decision"));
+        assert!(!serialized.contains("DISTANT-SECRET-CANARY"));
+        assert!(!serialized.contains(TEST_KEY));
+        assert_eq!(body["provider"]["zdr"], true);
+        assert_eq!(body["provider"]["data_collection"], "deny");
+    }
+
+    /// The meeting moves on. Asking again about a moment that has since fallen
+    /// out of the recent window would answer about different speech than the
+    /// one the user pointed at, so it is refused instead — and nothing is spent.
+    #[test]
+    fn an_alternative_about_a_moment_that_has_scrolled_away_is_refused() {
+        let distant = Uuid::parse_str("70000000-0000-4000-8000-000000000001").unwrap();
+        let fixture = fixture(vec![]);
+
+        let error = fixture
+            .service
+            .generate_alternative(alternative_request(
+                fixture.project_id,
+                fixture.session_id,
+                &[distant],
+            ))
+            .unwrap_err();
+
+        assert_eq!(error.code, "insight_moment_unavailable");
+        assert!(fixture.requests.try_recv().is_err(), "nothing was sent");
+    }
+
+    /// An alternative to nothing is a fresh generation wearing the wrong name.
+    #[test]
+    fn an_alternative_must_name_the_moments_it_is_about() {
+        let rejected = json!({
+            "requestId":"80000000-0000-4000-8000-000000000002",
+            "projectId":"22222222-2222-4222-8222-222222222222",
+            "sessionId":"33333333-3333-4333-8333-333333333333",
+            "insightType":"decision",
+            "segmentIds":[]
+        });
+
+        assert!(serde_json::from_value::<GenerateAlternativeInsightRequest>(rejected).is_err());
     }
 }

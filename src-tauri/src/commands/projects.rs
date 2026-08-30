@@ -83,6 +83,23 @@ pub(crate) async fn update_project<R: tauri::Runtime>(
         .map_err(record_error)
 }
 
+/// Removes one project from the application, keeping its files.
+///
+/// The folder moves to `trash/` in the workspace rather than being destroyed,
+/// so a mis-click costs a drag back and never a meeting.
+#[tauri::command]
+pub(crate) async fn delete_project<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, ProjectService>,
+    project_id: ProjectId,
+) -> Result<(), CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.delete_project(project_id))
+        .await
+        .map_err(record_error)
+}
+
 fn authorized<T>(label: &str, operation: impl FnOnce() -> T) -> Result<T, AppError> {
     authorize_main_window(label)?;
     Ok(operation())

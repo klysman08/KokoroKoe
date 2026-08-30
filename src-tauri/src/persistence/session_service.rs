@@ -5,7 +5,7 @@ use std::{
 
 use crate::domain::{
     AppError, CreateSessionSnapshotInput, PageRequest, ProjectId, Session, SessionId, SessionPage,
-    UpdateSessionInput, now_rfc3339,
+    SessionState, UpdateSessionInput, now_rfc3339,
 };
 
 use super::{ProjectCatalog, SessionCatalog, SettingsService};
@@ -96,6 +96,31 @@ impl SessionService {
         })
     }
 
+    /// Removes one session from the application, keeping its files.
+    ///
+    /// A run in progress is refused: the writer owns that folder and is still
+    /// appending to the journal inside it, so moving it would strand a live
+    /// session. Stop the session first, then remove it.
+    pub(crate) fn delete_session(
+        &self,
+        project_id: ProjectId,
+        session_id: SessionId,
+    ) -> Result<(), AppError> {
+        self.with_catalogs(|projects, sessions| {
+            let project = projects
+                .read_project(project_id)
+                .map_err(|error| super::SessionStoreError::new(error.code))?
+                .project;
+            let session = sessions.read_session(project_id, session_id)?.session;
+            if session_is_running(session.state) {
+                return Err(super::SessionStoreError::new(
+                    "session_delete_while_running",
+                ));
+            }
+            sessions.delete_session(&project, &session)
+        })
+    }
+
     fn with_catalogs<T>(
         &self,
         operation: impl FnOnce(&ProjectCatalog, &SessionCatalog) -> Result<T, super::SessionStoreError>,
@@ -112,6 +137,24 @@ impl SessionService {
             operation(&projects, &sessions).map_err(|error| AppError::session_error(error.code))
         })
     }
+}
+
+/// Whether a session may still have a writer appending to its folder.
+///
+/// Only a finished run can be removed. `Idle` is included as removable because
+/// nothing has started; every state from `Preparing` onwards may hold an open
+/// journal, and `Failed` is a stopped run whose files are exactly what the user
+/// might want to keep or discard.
+pub(super) const fn session_is_running(state: SessionState) -> bool {
+    matches!(
+        state,
+        SessionState::Preparing
+            | SessionState::Capturing
+            | SessionState::Transcribing
+            | SessionState::Paused
+            | SessionState::Stopping
+            | SessionState::ProcessingSummary
+    )
 }
 
 #[cfg(test)]
@@ -249,5 +292,100 @@ mod tests {
                 .items
                 .is_empty()
         );
+    }
+
+    /// Deleting removes a session from the application, not from the disk: the
+    /// transcript and the journal have to still be there afterwards.
+    #[test]
+    fn deleting_a_session_moves_it_to_the_trash_intact() {
+        let app_data = tempfile::tempdir().unwrap();
+        let documents = tempfile::tempdir().unwrap();
+        let settings = SettingsService::open(
+            app_data.path().to_path_buf(),
+            documents.path().to_path_buf(),
+        )
+        .unwrap();
+        let projects = ProjectService::new(settings.clone(), app_data.path().to_path_buf());
+        let sessions = SessionService::new(settings.clone(), app_data.path().to_path_buf());
+        let project = projects.create_project(project_input()).unwrap();
+        let created = sessions
+            .create_session(project.id, session_input())
+            .unwrap();
+        let root =
+            std::path::Path::new(settings.get_settings().unwrap().workspace_path()).to_path_buf();
+        let live = root
+            .join("projects")
+            .join(&project.folder_name)
+            .join("sessions")
+            .join(&created.folder_name);
+        let before = std::fs::read_to_string(live.join("session.md")).unwrap();
+
+        sessions.delete_session(project.id, created.id).unwrap();
+
+        assert!(!live.exists(), "it left the project");
+        assert_eq!(
+            sessions
+                .list_sessions(
+                    project.id,
+                    PageRequest {
+                        cursor: None,
+                        limit: 12,
+                    },
+                )
+                .unwrap()
+                .items,
+            vec![]
+        );
+        // The project itself is untouched.
+        assert_eq!(projects.get_project(project.id).unwrap().id, project.id);
+
+        // Kept under the project it came from, so putting it back is a drag.
+        let trashed = std::fs::read_dir(
+            root.join("trash")
+                .join(&project.folder_name)
+                .join("sessions"),
+        )
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(trashed[0].join("session.md")).unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(test)]
+mod running_state_tests {
+    use crate::domain::SessionState;
+
+    use super::session_is_running;
+
+    /// Only a run that is over may be removed. Getting this wrong in either
+    /// direction is bad: too strict and a finished meeting cannot be deleted,
+    /// too loose and a folder moves out from under a live writer.
+    #[test]
+    fn only_a_finished_run_may_be_removed() {
+        for running in [
+            SessionState::Preparing,
+            SessionState::Capturing,
+            SessionState::Transcribing,
+            SessionState::Paused,
+            SessionState::Stopping,
+            SessionState::ProcessingSummary,
+        ] {
+            assert!(session_is_running(running), "{running:?} must be refused");
+        }
+        for removable in [
+            SessionState::Idle,
+            SessionState::Completed,
+            SessionState::Failed,
+        ] {
+            assert!(
+                !session_is_running(removable),
+                "{removable:?} must be removable"
+            );
+        }
     }
 }

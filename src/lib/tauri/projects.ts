@@ -82,3 +82,18 @@ export async function updateProject(
     projectSchema,
   )
 }
+
+/**
+ * Removes one project from the application.
+ *
+ * Rust moves its folder to `trash/` in the workspace rather than destroying
+ * it, so this is reversible outside the app: nothing about a meeting is lost.
+ */
+export async function deleteProject(projectId: string): Promise<void> {
+  const validated = request(projectIdSchema, projectId)
+  try {
+    await invoke<unknown>("delete_project", { projectId: validated })
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+}

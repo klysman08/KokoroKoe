@@ -150,6 +150,39 @@ impl SessionCatalog {
         Ok(session.clone())
     }
 
+    /// Moves a session to the trash and takes it out of the index.
+    ///
+    /// The verification is the mirror of a write: after the rebuild the session
+    /// must be **absent** from discovery, which is what proves the folder
+    /// really left the project rather than the index merely being told it had.
+    pub(crate) fn delete_session(
+        &self,
+        project: &Project,
+        session: &Session,
+    ) -> Result<(), SessionStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SessionStoreError::new("session_index_unavailable"))?;
+        let locator = SessionLocator::from_records(project, session)?;
+        self.invalidate_projection_locked()?;
+        self.store.trash_session(&locator)?;
+        // The inner rebuild: this already holds the operation lock, and taking
+        // it again would deadlock rather than fail.
+        let report = self
+            .rebuild_index_with_fault(None)
+            .map_err(|_| SessionStoreError::new("session_projection_refresh_pending"))?;
+        if report
+            .discovery
+            .sessions
+            .iter()
+            .any(|discovered| discovered.snapshot.session.id == session.id)
+        {
+            return Err(SessionStoreError::new("session_projection_refresh_pending"));
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     fn create_session_with_refresh_fault(
         &self,

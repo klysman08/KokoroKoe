@@ -12,10 +12,12 @@ import {
 } from "@/components/ui/card"
 import { type Project } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { DeleteConfirm } from "@/features/projects/DeleteConfirm"
 import { ProjectForm } from "@/features/projects/ProjectForm"
 import { ProjectSessions } from "@/features/sessions/ProjectSessions"
 import {
   useCreateProjectMutation,
+  useDeleteProjectMutation,
   useProjectsQuery,
   useUpdateProjectMutation,
 } from "@/features/projects/use-projects"
@@ -26,11 +28,13 @@ export function HomePage() {
   const settingsQuery = useSettingsQuery()
   const createMutation = useCreateProjectMutation()
   const updateMutation = useUpdateProjectMutation()
+  const deleteProject = useDeleteProjectMutation()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Project>()
   const [sessionsProject, setSessionsProject] = useState<Project>()
   const projects = projectsQuery.data?.pages.flatMap((page) => page.items) ?? []
-  const mutationError = createMutation.error ?? updateMutation.error
+  const mutationError =
+    createMutation.error ?? updateMutation.error ?? deleteProject.error
   const busy = createMutation.isPending || updateMutation.isPending
 
   const closeForm = () => {
@@ -172,13 +176,24 @@ export function HomePage() {
                     Revision {project.revision} · {project.participants.length}{" "}
                     participants
                   </p>
-                  <Button
-                    onClick={() => setSessionsProject(project)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <CalendarClock /> Manage sessions
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      onClick={() => setSessionsProject(project)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <CalendarClock /> Manage sessions
+                    </Button>
+                    <DeleteConfirm
+                      busy={
+                        deleteProject.isPending &&
+                        deleteProject.variables === project.id
+                      }
+                      label={`Delete project ${project.name}`}
+                      onDelete={() => deleteProject.mutate(project.id)}
+                      what="project and every session in it"
+                    />
+                  </div>
                 </CardContent>
               </Card>
             ))}

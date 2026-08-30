@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{PageRequest, Project, ProjectId, ProjectPage};
 
-use super::project_store::{ProjectDiscoveryReport, ProjectStore, ProjectStoreError};
+use super::project_store::{
+    ProjectDiscoveryReport, ProjectLocator, ProjectStore, ProjectStoreError,
+};
 
 const PROJECT_INDEX_MIGRATION: &str = include_str!("../../migrations/project_index_v1.sql");
 const PROJECT_INDEX_WORKSPACE_MIGRATION: &str =
@@ -235,6 +237,35 @@ impl ProjectCatalog {
         } else {
             Err(ProjectStoreError::new("project_projection_refresh_pending"))
         }
+    }
+
+    /// Moves a project to the trash and takes it out of the index.
+    ///
+    /// The verification is the mirror of a write: after the rebuild the project
+    /// must be **absent** from discovery. That is what proves the folder really
+    /// left `projects/` rather than the index merely being told it had.
+    pub(crate) fn delete_project(&self, project_id: ProjectId) -> Result<(), ProjectStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| ProjectStoreError::new("project_index_unavailable"))?;
+        let locator = ProjectLocator::from_project(&self.read_project_locked(project_id)?.project)?;
+        self.invalidate_projection_locked()?;
+        self.store.trash_project(&locator)?;
+        // The inner rebuild: this already holds the operation lock, and taking
+        // it again would deadlock rather than fail.
+        let report = self
+            .rebuild_index_with_fault(None)
+            .map_err(|_| ProjectStoreError::new("project_projection_refresh_pending"))?;
+        if report
+            .discovery
+            .projects
+            .iter()
+            .any(|snapshot| snapshot.project.id == project_id)
+        {
+            return Err(ProjectStoreError::new("project_projection_refresh_pending"));
+        }
+        Ok(())
     }
 
     fn list_projects_locked(

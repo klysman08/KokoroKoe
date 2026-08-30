@@ -175,6 +175,34 @@ impl SessionStore {
         )
     }
 
+    /// Moves one session out of the workspace, without destroying it.
+    ///
+    /// It lands under `trash/<project folder>/sessions/`, mirroring the layout
+    /// it came from, so putting it back is a drag rather than a puzzle. The
+    /// transcript, the journal, and the retained audio all travel together:
+    /// this removes a meeting from the application, not from the disk.
+    pub(crate) fn trash_session(
+        &self,
+        locator: &SessionLocator,
+    ) -> Result<PathBuf, SessionStoreError> {
+        let source = {
+            // Opened without share-delete, so the handle must be released
+            // before the directory can move.
+            let session = self.open_existing_session(locator)?;
+            session.path().to_owned()
+        };
+        let destination = self
+            .projects
+            .reserve_trash_path(
+                &[locator.project.folder_name(), "sessions"],
+                &locator.folder_name,
+            )
+            .map_err(map_project_error)?;
+        fs::rename(&source, &destination)
+            .map_err(|_| SessionStoreError::new("session_trash_failed"))?;
+        Ok(destination)
+    }
+
     pub(crate) fn discover_sessions(&self) -> Result<SessionDiscoveryReport, SessionStoreError> {
         let projects = self
             .projects

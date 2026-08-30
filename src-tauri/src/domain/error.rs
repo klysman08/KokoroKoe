@@ -652,6 +652,16 @@ impl AppError {
                 ErrorSeverity::Warning,
                 false,
             ),
+            "session_delete_while_running" => (
+                "Stop this session before deleting it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "session_trash_failed" => (
+                "The session folder could not be moved to the workspace Trash. Close anything using it and try again.",
+                ErrorSeverity::Error,
+                true,
+            ),
             "session_lifecycle_invalid" => (
                 "That session cannot perform this lifecycle action in its current state.",
                 ErrorSeverity::Warning,
@@ -712,6 +722,16 @@ impl AppError {
                 "The project changed since it was loaded. Reload it and try again.",
                 ErrorSeverity::Warning,
                 false,
+            ),
+            "project_delete_while_running" => (
+                "Stop the running session in this project before deleting it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "project_trash_failed" => (
+                "The project folder could not be moved to the workspace Trash. Close anything using it and try again.",
+                ErrorSeverity::Error,
+                true,
             ),
             "project_page_stale" => (
                 "The project list changed. Reload the list to continue.",

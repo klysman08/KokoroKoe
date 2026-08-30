@@ -12,6 +12,7 @@ import {
   sessionPageRequestSchema,
   sessionPageSchema,
   sessionSchema,
+  sessionDeleteRequestSchema,
   sessionUpdateRequestSchema,
   type Session,
   type SessionCreateRequest,
@@ -202,4 +203,25 @@ function listenParsed<Output>(
     const parsed = schema.safeParse(payload)
     if (parsed.success) onEvent(parsed.data)
   })
+}
+
+/**
+ * Removes one session from the application.
+ *
+ * Rust moves its folder to `trash/` in the workspace rather than destroying
+ * it, and refuses while the session is running.
+ */
+export async function deleteSession(
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  const validated = request(sessionDeleteRequestSchema, {
+    projectId,
+    sessionId,
+  })
+  try {
+    await invoke<unknown>("delete_session", validated)
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
 }

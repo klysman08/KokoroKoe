@@ -252,6 +252,24 @@ fn emit_persisted_event<R: tauri::Runtime>(
     }
 }
 
+/// Removes one session from the application, keeping its files.
+///
+/// The folder moves to `trash/` in the workspace rather than being destroyed,
+/// and a run in progress is refused rather than moved underneath its writer.
+#[tauri::command]
+pub(crate) async fn delete_session<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, SessionService>,
+    project_id: ProjectId,
+    session_id: SessionId,
+) -> Result<(), CommandError> {
+    let service =
+        authorized(webview_window.label(), || state.inner().clone()).map_err(record_error)?;
+    run_blocking(move || service.delete_session(project_id, session_id))
+        .await
+        .map_err(record_error)
+}
+
 fn authorized<T>(label: &str, operation: impl FnOnce() -> T) -> Result<T, AppError> {
     authorize_main_window(label)?;
     Ok(operation())

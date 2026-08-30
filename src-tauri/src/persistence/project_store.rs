@@ -33,6 +33,8 @@ const TEMP_PROJECT_DOCUMENT: &str = ".project.md.tmp";
 const BACKUP_PROJECT_DOCUMENT: &str = "project.md.bak";
 const MAX_PROJECT_DOCUMENT_BYTES: u64 = 128 * 1024;
 const MAX_DISCOVERY_ENTRIES: usize = 4_096;
+/// Enough to disambiguate repeated removals within the same second.
+const MAX_TRASH_NAME_ATTEMPTS: usize = 100;
 const MAX_DISCOVERY_ISSUES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,10 @@ impl ProjectLocator {
 
     pub(super) fn from_discovered(id: ProjectId, folder_name: String) -> Self {
         Self { id, folder_name }
+    }
+
+    pub(super) fn folder_name(&self) -> &str {
+        &self.folder_name
     }
 }
 
@@ -150,6 +156,68 @@ impl ProjectStore {
         expected_fingerprint: ProjectSnapshotFingerprint,
     ) -> Result<ProjectSnapshot, ProjectStoreError> {
         self.update_project_with_fault(updated, expected_revision, expected_fingerprint, None)
+    }
+
+    /// Moves one project out of the workspace, without destroying it.
+    ///
+    /// The meeting record is the user's, and this application keeps what it is
+    /// given: a correction never overwrites a transcription, and deleting a
+    /// project never shreds one. The folder moves to `trash/` beside
+    /// `projects/`, which discovery does not scan, so the project leaves the
+    /// application immediately while every file stays where the user can read
+    /// it, drag it back, or remove it themselves.
+    pub(crate) fn trash_project(
+        &self,
+        locator: &ProjectLocator,
+    ) -> Result<PathBuf, ProjectStoreError> {
+        let source = {
+            // The pinned handle proves the path is the project it claims to be
+            // and carries no reparse point. It is opened without share-delete,
+            // so it must be released before the directory can move.
+            let project = self.open_existing_project(locator)?;
+            project.path().to_owned()
+        };
+        let destination = self.reserve_trash_path(&["projects"], &locator.folder_name)?;
+        fs::rename(&source, &destination)
+            .map_err(|_| ProjectStoreError::new("project_trash_failed"))?;
+        Ok(destination)
+    }
+
+    /// A free path under `trash/`, named after what is being removed.
+    ///
+    /// The stamp keeps a second removal of the same name from colliding with
+    /// the first, and keeps the trash readable: a person looking at the folder
+    /// can tell what it was and roughly when it left.
+    pub(super) fn reserve_trash_path(
+        &self,
+        segments: &[&str],
+        folder_name: &str,
+    ) -> Result<PathBuf, ProjectStoreError> {
+        self.workspace.revalidate()?;
+        let mut directory = self.workspace.path.join("trash");
+        for segment in segments {
+            directory = directory.join(segment);
+        }
+        fs::create_dir_all(&directory)
+            .map_err(|_| ProjectStoreError::new("project_trash_failed"))?;
+        let stamp = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .map_err(|_| ProjectStoreError::new("project_trash_failed"))?
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        for attempt in 0..MAX_TRASH_NAME_ATTEMPTS {
+            let suffix = if attempt == 0 {
+                String::new()
+            } else {
+                format!("-{attempt}")
+            };
+            let candidate = directory.join(format!("{folder_name}--{stamp}{suffix}"));
+            if !candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+        Err(ProjectStoreError::new("project_trash_failed"))
     }
 
     pub(crate) fn discover_projects(&self) -> Result<ProjectDiscoveryReport, ProjectStoreError> {

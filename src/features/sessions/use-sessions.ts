@@ -25,6 +25,7 @@ import {
   resumePersistedSession,
   startPersistedSession,
   stopPersistedSession,
+  deleteSession,
   updateSession,
 } from "@/lib/tauri/sessions"
 import { useActiveSessionStore } from "@/stores/active-session-store"
@@ -108,6 +109,26 @@ export function useSessionLifecycleMutation(projectId: ProjectId) {
     onSuccess: (session) => {
       useActiveSessionStore.getState().syncSession(session)
     },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: sessionsQueryKey(projectId),
+      })
+    },
+  })
+}
+
+/**
+ * Removes one session from the application.
+ *
+ * Rust moves the folder to the workspace Trash and refuses while the session
+ * is running.
+ */
+export function useDeleteSessionMutation(projectId: ProjectId) {
+  const queryClient = useQueryClient()
+  return useMutation<void, ApplicationError, { sessionId: string }>({
+    mutationFn: ({ sessionId }) => deleteSession(projectId, sessionId),
+    retry: false,
+    gcTime: 0,
     onSettled: async () => {
       await queryClient.invalidateQueries({
         queryKey: sessionsQueryKey(projectId),

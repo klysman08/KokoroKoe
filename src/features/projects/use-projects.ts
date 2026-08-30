@@ -14,6 +14,7 @@ import {
 import {
   createProject,
   listProjects,
+  deleteProject,
   updateProject,
 } from "@/lib/tauri/projects"
 
@@ -55,6 +56,24 @@ export function useUpdateProjectMutation() {
   const queryClient = useQueryClient()
   return useMutation<Project, ApplicationError, ProjectUpdateRequest>({
     mutationFn: updateProject,
+    retry: false,
+    gcTime: 0,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey })
+    },
+  })
+}
+
+/**
+ * Removes one project from the application.
+ *
+ * Rust moves the folder to the workspace Trash, so this is reversible outside
+ * the app; the list refreshes either way.
+ */
+export function useDeleteProjectMutation() {
+  const queryClient = useQueryClient()
+  return useMutation<void, ApplicationError, string>({
+    mutationFn: deleteProject,
     retry: false,
     gcTime: 0,
     onSettled: async () => {

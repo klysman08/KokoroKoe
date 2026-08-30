@@ -40,11 +40,13 @@ import { type AudioDeviceList } from "@/contracts/audio"
 import { requestIdSchema } from "@/contracts/models"
 import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
+import { DeleteConfirm } from "@/features/projects/DeleteConfirm"
 import { SessionForm } from "@/features/sessions/SessionForm"
 import { SessionInsightsPanel } from "@/features/sessions/SessionInsightsPanel"
 import { SessionSummaryPanel } from "@/features/sessions/SessionSummaryPanel"
 import {
   useCreateSessionMutation,
+  useDeleteSessionMutation,
   useSessionLifecycleMutation,
   useSessionsQuery,
   useUpdateSessionMutation,
@@ -85,6 +87,7 @@ export function ProjectSessions({
   const createMutation = useCreateSessionMutation(project.id)
   const updateMutation = useUpdateSessionMutation(project.id)
   const lifecycleMutation = useSessionLifecycleMutation(project.id)
+  const deleteSession = useDeleteSessionMutation(project.id)
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Session>()
@@ -241,13 +244,15 @@ export function ProjectSessions({
           {(sessionsQuery.error ||
             createMutation.error ||
             updateMutation.error ||
-            lifecycleMutation.error) && (
+            lifecycleMutation.error ||
+            deleteSession.error) && (
             <SanitizedErrorPanel
               error={
                 (sessionsQuery.error ??
                   createMutation.error ??
                   updateMutation.error ??
-                  lifecycleMutation.error)!
+                  lifecycleMutation.error ??
+                  deleteSession.error)!
               }
             />
           )}
@@ -298,6 +303,17 @@ export function ProjectSessions({
                     >
                       <FileText aria-hidden="true" /> View transcript
                     </Button>
+                    <DeleteConfirm
+                      busy={
+                        deleteSession.isPending &&
+                        deleteSession.variables?.sessionId === session.id
+                      }
+                      label={`Delete session ${session.title}`}
+                      onDelete={() =>
+                        deleteSession.mutate({ sessionId: session.id })
+                      }
+                      what="session"
+                    />
                   </div>
                   <div className="mt-3 space-y-2 border-t pt-3">
                     {(session.state === "idle" ||

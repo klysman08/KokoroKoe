@@ -366,6 +366,18 @@ export const sessionUpdateRequestSchema = z.strictObject({
   value: updateSessionInputSchema,
 })
 
+/**
+ * Names one session to remove from the application.
+ *
+ * Rust moves the folder to the workspace Trash rather than destroying it, so
+ * this request carries an identity and nothing else -- there is no shape of it
+ * that could ask for a permanent deletion.
+ */
+export const sessionDeleteRequestSchema = z.strictObject({
+  projectId: projectIdSchema,
+  sessionId: sessionIdSchema,
+})
+
 export const sessionManagementFixtureSchema = z.strictObject({
   pageRequest: sessionPageRequestSchema,
   page: sessionPageSchema,

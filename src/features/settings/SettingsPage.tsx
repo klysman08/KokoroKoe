@@ -5,6 +5,7 @@ import {
   Database,
   Download,
   FolderOpen,
+  RefreshCw,
   HardDrive,
   ShieldCheck,
 } from "lucide-react"
@@ -50,6 +51,7 @@ import { listOpenRouterModels } from "@/lib/tauri/openrouter"
 import {
   useChooseWorkspaceMutation,
   useOpenWorkspaceFolderMutation,
+  useRescanWorkspaceMutation,
   useUpdateSettingsMutation,
 } from "@/features/settings/use-settings-mutations"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
@@ -67,6 +69,7 @@ export function SettingsPage() {
   const settingsQuery = useSettingsQuery()
   const workspaceMutation = useChooseWorkspaceMutation()
   const openWorkspaceMutation = useOpenWorkspaceFolderMutation()
+  const rescanMutation = useRescanWorkspaceMutation()
   const workspaceCancelled =
     workspaceMutation.error?.details.code === "workspace_selection_cancelled"
 
@@ -133,7 +136,43 @@ export function SettingsPage() {
             >
               <FolderOpen data-icon="inline-start" /> Open workspace
             </Button>
+            <Button
+              type="button"
+              disabled={!settingsQuery.data || rescanMutation.isPending}
+              onClick={() => rescanMutation.mutate()}
+              variant="outline"
+            >
+              <RefreshCw data-icon="inline-start" />
+              {rescanMutation.isPending ? "Scanning…" : "Rescan workspace"}
+            </Button>
           </div>
+          <p className="text-muted-foreground text-sm">
+            Markdown in the workspace is the source of truth; the databases are
+            a rebuildable index. Rescan after restoring something from the Trash
+            folder or editing a document in another editor.
+          </p>
+          {rescanMutation.isSuccess && (
+            <div aria-live="polite" className="text-sm" role="status">
+              <p className="font-medium">
+                Found {rescanMutation.data.projects} projects,{" "}
+                {rescanMutation.data.sessions} sessions, and{" "}
+                {rescanMutation.data.transcripts} transcripts (
+                {rescanMutation.data.segments} segments).
+              </p>
+              {rescanMutation.data.issues > 0 && (
+                <p className="text-muted-foreground mt-1">
+                  {rescanMutation.data.issues}{" "}
+                  {rescanMutation.data.issues === 1 ? "folder" : "folders"}{" "}
+                  could not be read and{" "}
+                  {rescanMutation.data.issues === 1 ? "was" : "were"} skipped.
+                  Nothing was changed on disk.
+                </p>
+              )}
+            </div>
+          )}
+          {rescanMutation.isError && (
+            <SanitizedErrorPanel error={rescanMutation.error} />
+          )}
           {workspaceMutation.isSuccess && (
             <div role="status" aria-live="polite" className="text-sm">
               <p className="font-medium">Workspace is writable and saved.</p>

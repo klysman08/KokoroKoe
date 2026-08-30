@@ -8,7 +8,9 @@ import {
 import {
   appSettingsSchema,
   versionedAppSettingsUpdateSchema,
+  workspaceRescanReportSchema,
   workspaceStatusSchema,
+  type WorkspaceRescanReport,
   type AppSettings,
   type VersionedAppSettingsUpdate,
   type WorkspaceStatus,
@@ -74,4 +76,25 @@ export async function openWorkspaceFolder(): Promise<void> {
   } catch (error: unknown) {
     throw toApplicationError(error)
   }
+}
+
+/**
+ * Rebuilds the derived indexes from the workspace on disk.
+ *
+ * Markdown is the source of truth and the databases are a rebuildable index.
+ * This is what makes that true from the user's side: a folder restored from the
+ * Trash, or a document edited in another editor, is picked up when they ask.
+ */
+export async function rescanWorkspace(): Promise<WorkspaceRescanReport> {
+  let response: unknown
+  try {
+    response = await invoke("rescan_workspace")
+  } catch (error: unknown) {
+    throw toApplicationError(error)
+  }
+  const parsed = workspaceRescanReportSchema.safeParse(response)
+  if (!parsed.success) {
+    throw createContractApplicationError()
+  }
+  return parsed.data
 }

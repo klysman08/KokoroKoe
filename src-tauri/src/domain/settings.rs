@@ -627,3 +627,34 @@ mod tests {
         }
     }
 }
+
+/// What a workspace rescan found.
+///
+/// Markdown is the source of truth and the databases are a rebuildable index,
+/// which is only true from the user's side if something can rebuild them. This
+/// is that report: what the workspace now holds, and how much of it could not
+/// be read.
+///
+/// `issues` is deliberately a count rather than a list. A discovery issue names
+/// a folder that could not be parsed, and those names are user content; the
+/// number is enough to say "something here needs looking at" without carrying
+/// meeting material into a settings panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkspaceRescanReport {
+    pub(crate) schema_version: u8,
+    pub(crate) projects: u32,
+    pub(crate) sessions: u32,
+    pub(crate) transcripts: u32,
+    pub(crate) segments: u32,
+    pub(crate) issues: u32,
+}
+
+impl WorkspaceRescanReport {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.schema_version != 1 {
+            return Err("workspace_rescan_invalid");
+        }
+        Ok(())
+    }
+}

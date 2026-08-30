@@ -35,7 +35,9 @@ pub(crate) use projects::{
     LlmRoleModels, PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session,
     SessionId, SessionPage, SessionState, UpdateProjectInput, UpdateSessionInput,
 };
-pub(crate) use settings::{AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceStatus};
+pub(crate) use settings::{
+    AppSettings, AppSettingsUpdate, PresetId, Versioned, WorkspaceRescanReport, WorkspaceStatus,
+};
 pub(crate) use summaries::{
     GenerateSessionSummaryRequest, GenerateSessionSummaryResponse, GetSessionSummaryRequest,
     SessionSummaryContent, SessionSummaryDocument, SessionSummaryStatus, SummaryActionItem,

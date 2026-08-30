@@ -5,12 +5,14 @@ import {
   appSettingsSchema,
   type AppSettings,
   type VersionedAppSettingsUpdate,
+  type WorkspaceRescanReport,
   type WorkspaceStatus,
 } from "@/contracts/settings"
 import { settingsQueryKey } from "@/features/settings/use-settings-query"
 import {
   chooseWorkspace,
   openWorkspaceFolder,
+  rescanWorkspace,
   updateSettings,
 } from "@/lib/tauri/settings"
 
@@ -75,5 +77,24 @@ export function useOpenWorkspaceFolderMutation() {
     mutationFn: openWorkspaceFolder,
     retry: false,
     gcTime: 0,
+  })
+}
+
+/**
+ * Rebuilds the derived indexes from the workspace on disk.
+ *
+ * Every list in the application reads one of those indexes, so they are all
+ * invalidated afterwards: a rescan exists precisely because what is on disk
+ * and what the application believes have drifted apart.
+ */
+export function useRescanWorkspaceMutation() {
+  const queryClient = useQueryClient()
+  return useMutation<WorkspaceRescanReport, ApplicationError>({
+    mutationFn: rescanWorkspace,
+    retry: false,
+    gcTime: 0,
+    onSettled: async () => {
+      await queryClient.invalidateQueries()
+    },
   })
 }

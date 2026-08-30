@@ -2,6 +2,7 @@ fn main() {
     let attributes =
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "get_settings",
+            "rescan_workspace",
             "update_settings",
             "choose_workspace",
             "open_workspace_folder",

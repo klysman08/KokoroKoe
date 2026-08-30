@@ -14,6 +14,7 @@ mod summary_store;
 mod transcript_index;
 mod transcript_service;
 mod transcript_store;
+mod workspace_service;
 
 #[allow(unused_imports)]
 pub(crate) use project_index::{ProjectCatalog, ProjectIndexRebuildReport};
@@ -53,3 +54,4 @@ pub(crate) use transcript_service::{RecentInsightContext, TranscriptService};
 pub(crate) use transcript_store::{
     TranscriptSnapshot, TranscriptSnapshotFingerprint, TranscriptStore, TranscriptStoreError,
 };
+pub(crate) use workspace_service::WorkspaceService;

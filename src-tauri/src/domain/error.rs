@@ -706,6 +706,29 @@ impl AppError {
         )
     }
 
+    /// A rescan reads the whole workspace, so it can fail for any reason the
+    /// catalogs can. The codes are theirs; this only gives them a voice.
+    pub(crate) fn workspace_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "workspace_required" => (
+                "Choose a workspace folder before scanning it.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "workspace_rescan_invalid" => (
+                "The workspace scan produced a result KokoroKoe could not use.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            _ => (
+                "KokoroKoe could not finish reading the workspace folder.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn project_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "project_contract_invalid" | "project_update_invalid" | "project_page_invalid" => (

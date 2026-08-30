@@ -79,3 +79,22 @@ export type VersionedAppSettingsUpdate = z.infer<
   typeof versionedAppSettingsUpdateSchema
 >
 export type WorkspaceStatus = z.infer<typeof workspaceStatusSchema>
+
+/**
+ * What a workspace rescan found.
+ *
+ * `issues` is a count rather than a list on purpose: a discovery issue names a
+ * folder that could not be parsed, and those names are the user's own meeting
+ * content. The number says "something here needs looking at" without carrying
+ * meeting material into a settings panel.
+ */
+export const workspaceRescanReportSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  projects: z.number().int().nonnegative().max(4_294_967_295),
+  sessions: z.number().int().nonnegative().max(4_294_967_295),
+  transcripts: z.number().int().nonnegative().max(4_294_967_295),
+  segments: z.number().int().nonnegative().max(4_294_967_295),
+  issues: z.number().int().nonnegative().max(4_294_967_295),
+})
+
+export type WorkspaceRescanReport = z.infer<typeof workspaceRescanReportSchema>

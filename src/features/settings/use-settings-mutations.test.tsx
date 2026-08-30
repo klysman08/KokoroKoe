@@ -10,6 +10,7 @@ import workspaceStatusFixture from "../../../fixtures/contracts/workspace-status
 import { appSettingsSchema } from "@/contracts/settings"
 import {
   useChooseWorkspaceMutation,
+  useRescanWorkspaceMutation,
   useUpdateSettingsMutation,
 } from "@/features/settings/use-settings-mutations"
 import { settingsQueryKey } from "@/features/settings/use-settings-query"
@@ -107,5 +108,49 @@ describe("settings mutations", () => {
       }),
     )
     expect(invokeMock).toHaveBeenCalledWith("choose_workspace")
+  })
+})
+
+describe("useRescanWorkspaceMutation", () => {
+  /// Rebuilding the index is the point, so every list has to be told: a rescan
+  /// exists precisely because what is on disk and what the app believes have
+  /// drifted apart.
+  it("invokes the scan and refreshes what the application is showing", async () => {
+    const report = {
+      schemaVersion: 1,
+      projects: 2,
+      sessions: 5,
+      transcripts: 4,
+      segments: 120,
+      issues: 0,
+    }
+    vi.mocked(invoke).mockResolvedValue(report)
+    const { client, wrapper } = setup()
+    const invalidate = vi.spyOn(client, "invalidateQueries")
+    const { result } = renderHook(() => useRescanWorkspaceMutation(), {
+      wrapper,
+    })
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).resolves.toEqual(report)
+    })
+
+    expect(invoke).toHaveBeenCalledWith("rescan_workspace")
+    await waitFor(() => expect(result.current.data).toEqual(report))
+    expect(invalidate).toHaveBeenCalled()
+  })
+
+  it("refuses a report it cannot trust", async () => {
+    vi.mocked(invoke).mockResolvedValue({ schemaVersion: 1, projects: -1 })
+    const { wrapper } = setup()
+    const { result } = renderHook(() => useRescanWorkspaceMutation(), {
+      wrapper,
+    })
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toMatchObject({
+        details: { code: "invalid_backend_contract" },
+      })
+    })
   })
 })

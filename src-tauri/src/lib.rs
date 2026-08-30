@@ -20,7 +20,9 @@ use llm::{InsightService, ManualQuestionService, OpenRouterService, SummaryServi
 use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
-use persistence::{ProjectService, SessionService, SettingsService, TranscriptService};
+use persistence::{
+    ProjectService, SessionService, SettingsService, TranscriptService, WorkspaceService,
+};
 use security::CredentialService;
 #[cfg(windows)]
 use transcription::LiveTranscriptionService;
@@ -82,6 +84,7 @@ pub fn run() {
             let projects = ProjectService::new(settings.clone(), app_data_directory.clone());
             let sessions = SessionService::new(settings.clone(), app_data_directory.clone());
             let transcripts = TranscriptService::new(settings.clone(), app_data_directory.clone());
+            let workspace = WorkspaceService::new(settings.clone(), app_data_directory.clone());
 
             let credentials = CredentialService::open();
             let openrouter = OpenRouterService::open(credentials.clone())
@@ -102,6 +105,7 @@ pub fn run() {
             app.manage(projects);
             app.manage(sessions);
             app.manage(transcripts);
+            app.manage(workspace);
             app.manage(AudioDeviceTestService::default());
             let detached_windows =
                 DetachedWindowService::new(app.state::<SettingsService>().inner().clone());
@@ -149,6 +153,7 @@ pub fn run() {
             commands::settings::update_settings,
             commands::settings::choose_workspace,
             commands::settings::open_workspace_folder,
+            commands::settings::rescan_workspace,
             commands::credentials::get_openrouter_credential_status,
             commands::credentials::set_openrouter_api_key,
             commands::credentials::delete_openrouter_api_key,

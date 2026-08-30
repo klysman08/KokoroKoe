@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use tauri::{State, WebviewWindow};
 
 use crate::{
-    domain::{AppError, AppSettings, AppSettingsUpdate, CommandError, Versioned, WorkspaceStatus},
+    domain::{
+        AppError, AppSettings, AppSettingsUpdate, CommandError, Versioned, WorkspaceRescanReport,
+        WorkspaceStatus,
+    },
     llm::OpenRouterService,
     logging,
-    persistence::SettingsService,
+    persistence::{SettingsService, WorkspaceService},
     security::{authorize_main_window, probe_workspace},
 };
 
@@ -109,6 +112,23 @@ fn pick_workspace_folder() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Choose a KokoroKoe workspace folder")
         .pick_folder()
+}
+
+/// Rebuilds the derived indexes from the workspace on disk.
+///
+/// Markdown is the source of truth and the databases are a rebuildable index,
+/// which only helps the user if something can rebuild them. This is that
+/// action: it reads the workspace and writes nothing to it.
+#[tauri::command]
+pub(crate) async fn rescan_workspace<R: tauri::Runtime>(
+    webview_window: WebviewWindow<R>,
+    state: State<'_, WorkspaceService>,
+) -> Result<WorkspaceRescanReport, CommandError> {
+    let service = authorize_before_side_effect(webview_window.label(), || state.inner().clone())
+        .map_err(record_error)?;
+    run_blocking(move || service.rescan())
+        .await
+        .map_err(record_error)
 }
 
 fn authorize_before_side_effect<T>(

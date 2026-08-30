@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import sessionLifecycleFixture from "../../../fixtures/contracts/session-lifecycle-v1.json"
+import { useShellStore } from "@/stores/shell-store"
 import { DetachedTranscriptWindow } from "./DetachedTranscriptWindow"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
@@ -223,5 +224,22 @@ describe("DetachedTranscriptWindow marking", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /blocked an unauthorized request/i,
     )
+  })
+})
+
+describe("DetachedTranscriptWindow theme", () => {
+  beforeEach(() => {
+    document.documentElement.classList.remove("dark")
+    useShellStore.setState({ theme: "dark" })
+    vi.mocked(listen).mockReset()
+    vi.mocked(listen).mockImplementation(async () => () => undefined)
+  })
+
+  /// The window renders the same document under a different route, so it has
+  /// to paint itself: nothing else in this webview applies the theme.
+  it("wears the application theme", () => {
+    render(<DetachedTranscriptWindow />)
+
+    expect(document.documentElement).toHaveClass("dark")
   })
 })

@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import recentInsightsFixture from "../../../fixtures/contracts/recent-insights-v1.json"
+import { useShellStore } from "@/stores/shell-store"
 import { DetachedInsightsWindow } from "./DetachedInsightsWindow"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
@@ -299,5 +300,20 @@ describe("DetachedInsightsWindow provenance", () => {
     expect(
       await screen.findByText("From 2 transcript segments"),
     ).toBeInTheDocument()
+  })
+})
+
+describe("DetachedInsightsWindow theme", () => {
+  beforeEach(() => {
+    document.documentElement.classList.remove("dark")
+    useShellStore.setState({ theme: "dark" })
+    vi.mocked(listen).mockReset()
+    vi.mocked(listen).mockImplementation(async () => () => undefined)
+  })
+
+  it("wears the application theme", () => {
+    render(<DetachedInsightsWindow />)
+
+    expect(document.documentElement).toHaveClass("dark")
   })
 })

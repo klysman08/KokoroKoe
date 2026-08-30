@@ -279,49 +279,59 @@ export function OpenRouterCredentialCard() {
                 {pending === "refresh" ? "Refreshing…" : "Refresh models"}
               </Button>
             </div>
-            <Table>
-              <TableCaption>
-                Showing {visibleModels.length} of {models.data.length} validated
-                catalog models. Prices are approximate USD per million tokens.
-              </TableCaption>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Model</TableHead>
-                  <TableHead>Context</TableHead>
-                  <TableHead>Input</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead>Capabilities</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleModels.map((model) => (
-                  <TableRow key={model.id}>
-                    <TableCell className="max-w-72 whitespace-normal">
-                      <p className="font-medium">{model.name}</p>
-                      <p className="text-muted-foreground text-xs">
-                        {model.provider} · {model.id}
-                      </p>
-                    </TableCell>
-                    <TableCell>{contextTokens(model.contextLength)}</TableCell>
-                    <TableCell>
-                      {pricePerMillion(model.promptPricePerToken)}
-                    </TableCell>
-                    <TableCell>
-                      {pricePerMillion(model.completionPricePerToken)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline">Streaming</Badge>
-                        <Badge variant="outline">ZDR</Badge>
-                        {model.supportsStructuredOutputs && (
-                          <Badge variant="outline">Structured</Badge>
-                        )}
-                      </div>
-                    </TableCell>
+            {/*
+              The catalog runs to hundreds of models. Scrolling the table
+              inside its own box keeps the rest of Settings reachable instead
+              of pushing every other card off the page.
+            */}
+            <div className="max-h-[28rem] overflow-y-auto rounded-xl border">
+              <Table>
+                <TableCaption>
+                  Showing {visibleModels.length} of {models.data.length}{" "}
+                  validated catalog models. Prices are approximate USD per
+                  million tokens.
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Model</TableHead>
+                    <TableHead>Context</TableHead>
+                    <TableHead>Input</TableHead>
+                    <TableHead>Output</TableHead>
+                    <TableHead>Capabilities</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {visibleModels.map((model) => (
+                    <TableRow key={model.id}>
+                      <TableCell className="max-w-72 whitespace-normal">
+                        <p className="font-medium">{model.name}</p>
+                        <p className="text-muted-foreground text-xs">
+                          {model.provider} · {model.id}
+                        </p>
+                      </TableCell>
+                      <TableCell>
+                        {contextTokens(model.contextLength)}
+                      </TableCell>
+                      <TableCell>
+                        {pricePerMillion(model.promptPricePerToken)}
+                      </TableCell>
+                      <TableCell>
+                        {pricePerMillion(model.completionPricePerToken)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge variant="outline">Streaming</Badge>
+                          <Badge variant="outline">ZDR</Badge>
+                          {model.supportsStructuredOutputs && (
+                            <Badge variant="outline">Structured</Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         )}
         {status.isError && <SanitizedErrorPanel error={status.error} />}

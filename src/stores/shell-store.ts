@@ -5,6 +5,13 @@ type ShellState = {
   theme: "light" | "dark"
   toggleNavigation: () => void
   toggleTheme: () => void
+  /**
+   * Takes the theme another window has just chosen.
+   *
+   * It does not write storage back: the window that toggled already did, and
+   * echoing it would bounce the choice between windows.
+   */
+  adoptTheme: (theme: "light" | "dark") => void
 }
 
 const THEME_STORAGE_KEY = "kokorokoe-theme"
@@ -37,5 +44,8 @@ export const useShellStore = create<ShellState>((set) => ({
       }
       return { theme }
     })
+  },
+  adoptTheme: (theme) => {
+    set({ theme })
   },
 }))

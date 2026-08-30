@@ -31,6 +31,7 @@ import {
   listenToDetachedWindowAppearance,
   listenToDetachedWindowInteraction,
 } from "@/lib/tauri/windows"
+import { useAppliedTheme } from "@/app/shell/use-applied-theme"
 import { cn } from "@/lib/utils"
 
 type CopyStatus = "idle" | "copied" | "failed"
@@ -54,6 +55,9 @@ export function DetachedInsightsWindow() {
   const [clickThrough, setClickThrough] = useState(false)
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle")
   const [error, setError] = useState<ApplicationError>()
+
+  // A popped-out window is the same application, so it wears the same theme.
+  useAppliedTheme()
 
   useEffect(() => {
     let disposed = false

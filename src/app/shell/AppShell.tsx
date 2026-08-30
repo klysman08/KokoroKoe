@@ -10,13 +10,13 @@ import {
   Square,
   Sun,
 } from "lucide-react"
-import { useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
 import { useSessionLifecycleMutation } from "@/features/sessions/use-sessions"
+import { useAppliedTheme } from "@/app/shell/use-applied-theme"
 import { cn } from "@/lib/utils"
 import { DetachedWindowControls } from "@/features/windows/DetachedWindowControls"
 import {
@@ -45,10 +45,7 @@ export function AppShell() {
   const toggleTheme = useShellStore((state) => state.toggleTheme)
   const activeSession = useActiveSessionStore((state) => state.activeSession)
 
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark")
-    document.documentElement.style.colorScheme = theme
-  }, [theme])
+  useAppliedTheme()
 
   const navigateFromLink = (event: React.MouseEvent, route: AppRoute) => {
     event.preventDefault()

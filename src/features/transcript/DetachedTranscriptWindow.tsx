@@ -39,6 +39,7 @@ import {
   listenToDetachedWindowAppearance,
   listenToDetachedWindowInteraction,
 } from "@/lib/tauri/windows"
+import { useAppliedTheme } from "@/app/shell/use-applied-theme"
 import { cn } from "@/lib/utils"
 
 type ScopedTranscriptEvent =
@@ -68,6 +69,9 @@ export function DetachedTranscriptWindow() {
   const [markingId, setMarkingId] = useState<string>()
   const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
   const [clickThrough, setClickThrough] = useState(false)
+
+  // A popped-out window is the same application, so it wears the same theme.
+  useAppliedTheme()
 
   useEffect(() => {
     let disposed = false

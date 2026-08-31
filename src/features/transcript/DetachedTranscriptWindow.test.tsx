@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import sessionLifecycleFixture from "../../../fixtures/contracts/session-lifecycle-v1.json"
 import { useShellStore } from "@/stores/shell-store"
+import { segmentAsText } from "./segment-actions"
 import { DetachedTranscriptWindow } from "./DetachedTranscriptWindow"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
@@ -241,5 +242,73 @@ describe("DetachedTranscriptWindow theme", () => {
     render(<DetachedTranscriptWindow />)
 
     expect(document.documentElement).toHaveClass("dark")
+  })
+})
+
+describe("DetachedTranscriptWindow copying", () => {
+  const scoped = sessionLifecycleFixture.finalEvent
+  const segment = scoped.event.payload.segment
+
+  beforeEach(() => {
+    listeners.clear()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(listen).mockReset()
+    vi.mocked(listen).mockImplementation(
+      async (event: string, handler: unknown) => {
+        listeners.set(event, handler as Handler)
+        return () => listeners.delete(event)
+      },
+    )
+  })
+
+  /// The clipboard is a browser API, so copying needs no command and widens
+  /// nothing this window may do — which is why a display-only window can have
+  /// it at all.
+  it("copies a segment without invoking any command", async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    })
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+    listeners.get("session-transcription-final")?.({ payload: scoped })
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getByRole("button", { name: "Copy" }))
+
+    expect(writeText).toHaveBeenCalledWith(
+      segmentAsText({
+        source: segment.source as "microphone" | "system_output",
+        startMs: segment.startMs,
+        text: segment.text,
+      }),
+    )
+    expect(invoke).not.toHaveBeenCalled()
+    expect(
+      await screen.findByRole("button", { name: "Copied" }),
+    ).toBeInTheDocument()
+  })
+
+  it("reports a refused clipboard instead of claiming a copy", async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    })
+    render(<DetachedTranscriptWindow />)
+    await waitFor(() => expect(listeners.size).toBe(5))
+    listeners.get("session-transcription-final")?.({ payload: scoped })
+    await screen.findByText(segment.text)
+
+    await user.click(screen.getByRole("button", { name: "Copy" }))
+
+    expect(
+      await screen.findByText(/the clipboard is not available/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Copied" }),
+    ).not.toBeInTheDocument()
   })
 })

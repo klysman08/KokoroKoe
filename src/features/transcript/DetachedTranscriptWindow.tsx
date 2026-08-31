@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Star } from "lucide-react"
+import { Copy, Star } from "lucide-react"
 import type { UnlistenFn } from "@tauri-apps/api/event"
 
 import { Badge } from "@/components/ui/badge"
@@ -29,6 +29,7 @@ import {
   type TranscriptRecord,
 } from "@/features/transcript/live-transcript-records"
 import { markTranscriptSegment } from "@/lib/tauri/transcripts"
+import { segmentAsText } from "@/features/transcript/segment-actions"
 import type { DetachedWindowAppearance } from "@/contracts/windows"
 import {
   listenToSessionTranscriptionFinals,
@@ -67,6 +68,8 @@ export function DetachedTranscriptWindow() {
   const [error, setError] = useState<ApplicationError>()
   const [marked, setMarked] = useState<Record<string, boolean>>({})
   const [markingId, setMarkingId] = useState<string>()
+  const [copiedId, setCopiedId] = useState<string>()
+  const [notice, setNotice] = useState<string>()
   const [appearance, setAppearance] = useState<DetachedWindowAppearance>()
   const [clickThrough, setClickThrough] = useState(false)
 
@@ -165,6 +168,22 @@ export function DetachedTranscriptWindow() {
     }
   }
 
+  async function copySegment(segment: {
+    id: string
+    source: "microphone" | "system_output"
+    startMs: number
+    text: string
+  }) {
+    try {
+      await navigator.clipboard.writeText(segmentAsText(segment))
+      setCopiedId(segment.id)
+      setNotice(undefined)
+    } catch {
+      setCopiedId(undefined)
+      setNotice("The clipboard is not available.")
+    }
+  }
+
   const compact = appearance?.compact ?? false
   // Only the background carries the alpha. Text and borders stay fully opaque
   // so lowering opacity never costs readability.
@@ -205,6 +224,11 @@ export function DetachedTranscriptWindow() {
             </Badge>
           </div>
         </header>
+        {notice && (
+          <p className="text-muted-foreground text-xs" role="status">
+            {notice}
+          </p>
+        )}
         {error && <SanitizedErrorPanel error={error} />}
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border">
           {records.length === 0 ? (
@@ -235,6 +259,10 @@ export function DetachedTranscriptWindow() {
                       >
                         <DetachedRecord
                           compact={compact}
+                          copied={
+                            record.kind === "segment" &&
+                            copiedId === record.segment.id
+                          }
                           important={
                             record.kind === "segment" &&
                             marked[record.segment.id] === true
@@ -243,6 +271,7 @@ export function DetachedTranscriptWindow() {
                             record.kind === "segment" &&
                             markingId === record.segment.id
                           }
+                          onCopy={(segment) => void copySegment(segment)}
                           onMark={mark}
                           record={record}
                         />
@@ -262,14 +291,23 @@ export function DetachedTranscriptWindow() {
 
 function DetachedRecord({
   compact,
+  copied,
   important,
   marking,
+  onCopy,
   onMark,
   record,
 }: {
   compact: boolean
+  copied: boolean
   important: boolean
   marking: boolean
+  onCopy: (segment: {
+    id: string
+    source: "microphone" | "system_output"
+    startMs: number
+    text: string
+  }) => void
   onMark: (segmentId: string, important: boolean) => void
   record: TranscriptRecord
 }) {
@@ -303,19 +341,35 @@ function DetachedRecord({
           Audio gap ({record.code.replaceAll("_", " ")})
         </p>
       )}
-      {markable !== undefined && (
-        <Button
-          aria-pressed={important}
-          className={cn(important && "border-primary")}
-          disabled={marking}
-          onClick={() => onMark(markable, !important)}
-          size="xs"
-          type="button"
-          variant="ghost"
-        >
-          <Star aria-hidden="true" data-icon="inline-start" />
-          {important ? "Important" : "Mark important"}
-        </Button>
+      {markable !== undefined && record.kind === "segment" && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Button
+            aria-pressed={important}
+            className={cn(important && "border-primary")}
+            disabled={marking}
+            onClick={() => onMark(markable, !important)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <Star aria-hidden="true" data-icon="inline-start" />
+            {important ? "Important" : "Mark important"}
+          </Button>
+          {/*
+            Copying is view-local: the clipboard is a browser API, so this
+            needs no command and widens nothing this window may do. It is the
+            one per-segment action a display-only window can simply have.
+          */}
+          <Button
+            onClick={() => onCopy(record.segment)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <Copy aria-hidden="true" data-icon="inline-start" />
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
       )}
     </article>
   )

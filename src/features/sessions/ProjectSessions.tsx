@@ -8,6 +8,8 @@ import {
   Plus,
   Square,
   Star,
+  Bookmark,
+  Copy,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
@@ -53,8 +55,12 @@ import {
 } from "@/features/sessions/use-sessions"
 import { listAudioDevices } from "@/lib/tauri/audio"
 import { SavedTranscript } from "@/features/transcript/SavedTranscript"
-import { annotateTranscriptSegmentRequestSchema } from "@/contracts/transcripts"
+import {
+  annotateTranscriptSegmentRequestSchema,
+  type SegmentAnnotation,
+} from "@/contracts/transcripts"
 import { annotateTranscriptSegment } from "@/lib/tauri/transcripts"
+import { segmentAsText } from "@/features/transcript/segment-actions"
 import { cn } from "@/lib/utils"
 import {
   markableSegmentId,
@@ -494,18 +500,28 @@ function SessionLiveTranscript({
    * journal for exactly that reason.
    */
   const [marked, setMarked] = useState<Record<string, boolean>>({})
-  const [markingId, setMarkingId] = useState<string>()
+  const [bookmarked, setBookmarked] = useState<Record<string, boolean>>({})
+  const [copiedId, setCopiedId] = useState<string>()
+  const [busyId, setBusyId] = useState<string>()
+  const [notice, setNotice] = useState<string>()
   const [markError, setMarkError] = useState<ApplicationError>()
 
-  async function mark(segmentId: string, important: boolean) {
+  /**
+   * Annotates the moment the user just heard.
+   *
+   * A finalized live segment carries the same id the journal recorded it
+   * under, so it can be flagged before the run has published it; Rust resolves
+   * the segment against the journal for exactly that reason.
+   */
+  async function annotate(segmentId: string, annotation: SegmentAnnotation) {
     const request = annotateTranscriptSegmentRequestSchema.safeParse({
       projectId: project.id,
       sessionId: session.id,
       segmentId,
-      annotation: { kind: "importance", important },
+      annotation,
     })
     if (!request.success) return
-    setMarkingId(segmentId)
+    setBusyId(segmentId)
     setMarkError(undefined)
     try {
       const updated = await annotateTranscriptSegment(request.data)
@@ -513,10 +529,30 @@ function SessionLiveTranscript({
         ...current,
         [segmentId]: updated.important === true,
       }))
+      setBookmarked((current) => ({
+        ...current,
+        [segmentId]: updated.bookmarked === true,
+      }))
     } catch (caught: unknown) {
       setMarkError(toApplicationError(caught))
     } finally {
-      setMarkingId(undefined)
+      setBusyId(undefined)
+    }
+  }
+
+  async function copySegment(segment: {
+    id: string
+    source: "microphone" | "system_output"
+    startMs: number
+    text: string
+  }) {
+    try {
+      await navigator.clipboard.writeText(segmentAsText(segment))
+      setCopiedId(segment.id)
+      setNotice(undefined)
+    } catch {
+      setCopiedId(undefined)
+      setNotice("The clipboard is not available.")
     }
   }
 
@@ -556,15 +592,35 @@ function SessionLiveTranscript({
                       }
                     >
                       <TranscriptMessage
+                        bookmarked={
+                          record.kind === "segment" &&
+                          bookmarked[record.segment.id] === true
+                        }
+                        busy={
+                          record.kind === "segment" &&
+                          busyId === record.segment.id
+                        }
+                        copied={
+                          record.kind === "segment" &&
+                          copiedId === record.segment.id
+                        }
                         important={
                           record.kind === "segment" &&
                           marked[record.segment.id] === true
                         }
-                        marking={
-                          record.kind === "segment" &&
-                          markingId === record.segment.id
+                        onBookmark={(segmentId, next) =>
+                          void annotate(segmentId, {
+                            kind: "bookmark",
+                            bookmarked: next,
+                          })
                         }
-                        onMark={mark}
+                        onCopy={(segment) => void copySegment(segment)}
+                        onMark={(segmentId, next) =>
+                          void annotate(segmentId, {
+                            kind: "importance",
+                            important: next,
+                          })
+                        }
                         record={record}
                       />
                     </MessageScrollerItem>
@@ -576,6 +632,11 @@ function SessionLiveTranscript({
           </MessageScrollerProvider>
         )}
       </div>
+      {notice && (
+        <p className="text-muted-foreground text-xs" role="status">
+          {notice}
+        </p>
+      )}
       {markError && <SanitizedErrorPanel error={markError} />}
     </section>
   )
@@ -590,13 +651,26 @@ function SessionLiveTranscript({
  * than typed into a scrolling pane during a meeting.
  */
 function TranscriptMessage({
+  bookmarked,
+  busy,
+  copied,
   important,
-  marking,
+  onBookmark,
+  onCopy,
   onMark,
   record,
 }: {
+  bookmarked: boolean
+  busy: boolean
+  copied: boolean
   important: boolean
-  marking: boolean
+  onBookmark: (segmentId: string, bookmarked: boolean) => void
+  onCopy: (segment: {
+    id: string
+    source: "microphone" | "system_output"
+    startMs: number
+    text: string
+  }) => void
   onMark: (segmentId: string, important: boolean) => void
   record: TranscriptRecord
 }) {
@@ -623,19 +697,48 @@ function TranscriptMessage({
               : `Audio gap: ${record.code}`}
           </BubbleContent>
         </Bubble>
-        {markable !== undefined && (
-          <Button
-            aria-pressed={important}
-            className={cn("self-start", important && "border-primary")}
-            disabled={marking}
-            onClick={() => onMark(markable, !important)}
-            size="xs"
-            type="button"
-            variant="ghost"
-          >
-            <Star aria-hidden="true" data-icon="inline-start" />
-            {important ? "Important" : "Mark important"}
-          </Button>
+        {markable !== undefined && record.kind === "segment" && (
+          <div className="flex flex-wrap items-center gap-1">
+            <Button
+              aria-pressed={important}
+              className={cn(important && "border-primary")}
+              disabled={busy}
+              onClick={() => onMark(markable, !important)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
+              <Star aria-hidden="true" data-icon="inline-start" />
+              {important ? "Important" : "Mark important"}
+            </Button>
+            {/*
+              A bookmark dropped mid-meeting carries no name. Naming is what
+              makes a list of pins scannable, but a text box in a scrolling
+              pane during a call is the wrong moment to ask for one — the
+              saved transcript is where a pin gets named.
+            */}
+            <Button
+              aria-pressed={bookmarked}
+              className={cn(bookmarked && "border-primary")}
+              disabled={busy}
+              onClick={() => onBookmark(markable, !bookmarked)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
+              <Bookmark aria-hidden="true" data-icon="inline-start" />
+              {bookmarked ? "Bookmarked" : "Bookmark"}
+            </Button>
+            <Button
+              onClick={() => onCopy(record.segment)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
+              <Copy aria-hidden="true" data-icon="inline-start" />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
         )}
       </MessageContent>
     </Message>

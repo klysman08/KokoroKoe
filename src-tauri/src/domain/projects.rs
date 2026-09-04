@@ -949,7 +949,12 @@ fn valid_device_snapshot(value: &AudioDeviceSnapshot) -> bool {
         }
 }
 
-fn valid_preset(value: &PresetSnapshot) -> bool {
+/// The rule a Session's frozen preset must satisfy.
+///
+/// The built-in catalog is checked against this too: anything the library can
+/// offer has to survive being frozen into a Session, or a preset would be
+/// selectable and then rejected at session creation.
+pub(crate) fn valid_preset(value: &PresetSnapshot) -> bool {
     value.version > 0
         && bounded_text(&value.name, 1, 128, false)
         && bounded_text(&value.assistant_role, 1, 4_096, true)

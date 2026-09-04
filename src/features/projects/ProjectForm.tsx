@@ -8,6 +8,7 @@ import {
   type Project,
   type UpdateProjectInput,
 } from "@/contracts/projects"
+import { type Preset } from "@/contracts/presets"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -19,6 +20,7 @@ import {
 
 type ProjectFormProps = {
   project?: Project | undefined
+  presets: Preset[]
   defaultPresetId?: string | undefined
   defaultTranscriptionModelId?: string | undefined
   defaultLlmModels?: LlmRoleModels | undefined
@@ -44,6 +46,7 @@ function commaList(value: string) {
 
 export function ProjectForm({
   project,
+  presets,
   defaultPresetId,
   defaultTranscriptionModelId,
   defaultLlmModels,
@@ -61,7 +64,13 @@ export function ProjectForm({
     project?.participants.join(", ") ?? "",
   )
   const [tags, setTags] = useState(project?.tags.join(", ") ?? "")
+  // A project's default is only the preset a new Session opens on, so an
+  // identifier the library no longer lists stays selected until it is changed.
+  const [presetId, setPresetId] = useState(
+    project?.defaultPresetId ?? defaultPresetId ?? "",
+  )
   const [validationMessage, setValidationMessage] = useState("")
+  const canChoosePreset = presets.length > 0
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -71,6 +80,7 @@ export function ProjectForm({
       globalContext,
       participants: commaList(participants),
       tags: commaList(tags),
+      ...(canChoosePreset ? { defaultPresetId: presetId } : {}),
     }
     if (project) {
       const parsed = updateProjectInputSchema.safeParse(editable)
@@ -82,10 +92,10 @@ export function ProjectForm({
       return
     }
     const parsed = createProjectInputSchema.safeParse({
-      ...editable,
       defaultPresetId,
       defaultTranscriptionModelId,
       preferredLlmModels: defaultLlmModels ?? {},
+      ...editable,
     })
     if (!parsed.success) {
       setValidationMessage("Check the project fields and setup defaults.")
@@ -138,6 +148,30 @@ export function ProjectForm({
               value={globalContext}
             />
           </label>
+          {canChoosePreset && (
+            <label className="grid gap-1.5 text-sm font-medium">
+              Default preset
+              <select
+                className={fieldClass}
+                disabled={busy}
+                onChange={(event) => setPresetId(event.target.value)}
+                value={presetId}
+              >
+                {presets.some((preset) => preset.id === presetId) ? null : (
+                  <option value={presetId}>Keep the current default</option>
+                )}
+                {presets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-muted-foreground text-xs">
+                New sessions in this project open on this preset. Each session
+                can choose another one.
+              </span>
+            </label>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-1.5 text-sm font-medium">
               Participants

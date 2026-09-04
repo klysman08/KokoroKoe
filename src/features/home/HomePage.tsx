@@ -21,11 +21,13 @@ import {
   useProjectsQuery,
   useUpdateProjectMutation,
 } from "@/features/projects/use-projects"
+import { usePresetsQuery } from "@/features/presets/use-presets-query"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
 
 export function HomePage() {
   const projectsQuery = useProjectsQuery()
   const settingsQuery = useSettingsQuery()
+  const presetsQuery = usePresetsQuery()
   const createMutation = useCreateProjectMutation()
   const updateMutation = useUpdateProjectMutation()
   const deleteProject = useDeleteProjectMutation()
@@ -75,6 +77,7 @@ export function HomePage() {
       {(creating || editing) && (
         <ProjectForm
           busy={busy}
+          presets={presetsQuery.data ?? []}
           defaultPresetId={settingsQuery.data?.defaultPresetId}
           defaultTranscriptionModelId={
             settingsQuery.data?.defaultTranscriptionModelId
@@ -104,6 +107,7 @@ export function HomePage() {
       {projectsQuery.error && (
         <SanitizedErrorPanel error={projectsQuery.error} />
       )}
+      {presetsQuery.error && <SanitizedErrorPanel error={presetsQuery.error} />}
 
       <section aria-labelledby="projects-title" className="space-y-4">
         <div className="flex items-end justify-between gap-4">

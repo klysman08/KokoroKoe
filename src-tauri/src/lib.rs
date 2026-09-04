@@ -5,6 +5,7 @@ mod llm;
 mod logging;
 mod models;
 mod persistence;
+mod presets;
 mod prompts;
 mod security;
 #[allow(dead_code)] // P3-004 is an intentionally unwired runtime prototype.
@@ -198,6 +199,7 @@ pub fn run() {
             commands::models::resume_model_download,
             commands::models::delete_transcription_model,
             commands::models::set_default_transcription_model,
+            commands::presets::list_presets,
             commands::audio::list_audio_devices,
             commands::audio::start_audio_device_test,
             commands::audio::stop_audio_device_test,

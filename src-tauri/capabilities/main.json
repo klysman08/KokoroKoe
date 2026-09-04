@@ -57,6 +57,7 @@
     "allow-resume-model-download",
     "allow-delete-transcription-model",
     "allow-set-default-transcription-model",
+    "allow-list-presets",
     "allow-start-live-transcription",
     "allow-get-live-transcription-status",
     "allow-stop-live-transcription"

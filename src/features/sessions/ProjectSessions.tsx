@@ -43,6 +43,7 @@ import { requestIdSchema } from "@/contracts/models"
 import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { DeleteConfirm } from "@/features/projects/DeleteConfirm"
+import { usePresetsQuery } from "@/features/presets/use-presets-query"
 import { SessionForm } from "@/features/sessions/SessionForm"
 import { SessionInsightsPanel } from "@/features/sessions/SessionInsightsPanel"
 import { SessionSummaryPanel } from "@/features/sessions/SessionSummaryPanel"
@@ -90,6 +91,7 @@ export function ProjectSessions({
     queryFn: listAudioDevices,
     gcTime: 0,
   })
+  const presetsQuery = usePresetsQuery()
   const createMutation = useCreateSessionMutation(project.id)
   const updateMutation = useUpdateSessionMutation(project.id)
   const lifecycleMutation = useSessionLifecycleMutation(project.id)
@@ -199,7 +201,7 @@ export function ProjectSessions({
           </div>
           <div className="flex gap-2">
             <Button
-              disabled={!devicesQuery.data}
+              disabled={!devicesQuery.data || !presetsQuery.data}
               onClick={() => {
                 setEditing(undefined)
                 setCreating(true)
@@ -215,10 +217,11 @@ export function ProjectSessions({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {(creating || editing) && devicesQuery.data && (
+          {(creating || editing) && devicesQuery.data && presetsQuery.data && (
             <SessionForm
               busy={busy}
               devices={devicesQuery.data}
+              presets={presetsQuery.data}
               key={editing?.id ?? "create"}
               onCancel={closeForm}
               onCreate={(value) =>
@@ -246,6 +249,9 @@ export function ProjectSessions({
           )}
           {devicesQuery.error && (
             <SanitizedErrorPanel error={devicesQuery.error} />
+          )}
+          {presetsQuery.error && (
+            <SanitizedErrorPanel error={presetsQuery.error} />
           )}
           {(sessionsQuery.error ||
             createMutation.error ||

@@ -12,6 +12,17 @@ const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 #[serde(transparent)]
 pub(crate) struct PresetId(Uuid);
 
+impl PresetId {
+    /// Parses an identifier that is checked into the repository.
+    ///
+    /// Every other `PresetId` reaches the application through serde, which
+    /// already rejects anything that is not a UUID. This exists for the
+    /// built-in catalog, whose identifiers are string literals.
+    pub(crate) fn from_catalog_id(value: &str) -> Option<Self> {
+        Uuid::parse_str(value).ok().map(Self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppSettings {
@@ -289,13 +300,13 @@ impl AppSettings {
                     "The default workspace path is not valid Unicode and cannot be displayed.",
                 )
             })?;
-        let default_preset_id = Uuid::parse_str(TECHNICAL_INTERVIEW_PRESET_ID)
+        let default_preset_id = PresetId::from_catalog_id(TECHNICAL_INTERVIEW_PRESET_ID)
             .expect("the checked-in built-in preset ID must be a valid UUID");
 
         let settings = Self {
             revision: 0,
             workspace_path,
-            default_preset_id: PresetId(default_preset_id),
+            default_preset_id,
             default_transcription_model_id: "whisper-base-multilingual".to_owned(),
             default_llm_models: LlmRoleModels::default(),
             llm_enabled: false,

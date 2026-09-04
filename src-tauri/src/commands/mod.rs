@@ -4,6 +4,7 @@ pub(crate) mod insights;
 pub(crate) mod manual_question;
 pub(crate) mod models;
 pub(crate) mod openrouter;
+pub(crate) mod presets;
 pub(crate) mod projects;
 pub(crate) mod sessions;
 pub(crate) mod settings;

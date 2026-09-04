@@ -15,6 +15,7 @@ fn main() {
             "resume_model_download",
             "delete_transcription_model",
             "set_default_transcription_model",
+            "list_presets",
             "delete_project",
             "delete_session",
             "annotate_transcript_segment",

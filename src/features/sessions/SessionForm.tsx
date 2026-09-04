@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useMemo, useState, type FormEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -10,12 +10,15 @@ import {
   type UpdateSessionInput,
 } from "@/contracts/projects"
 import { type AudioDevice, type AudioDeviceList } from "@/contracts/audio"
+import { presetSnapshotOf, type Preset } from "@/contracts/presets"
 import { type AppSettings } from "@/contracts/settings"
+import { INSIGHT_LABELS } from "@/features/insights/insight-labels"
 
 type SessionFormProps = {
   project: Project
   session?: Session | undefined
   devices: AudioDeviceList
+  presets: Preset[]
   settings: AppSettings | undefined
   busy: boolean
   onCancel: () => void
@@ -36,26 +39,50 @@ function snapshot(device: AudioDevice) {
   }
 }
 
-function builtInPreset(project: Project) {
-  return {
-    id: project.defaultPresetId,
-    version: 1,
-    name: "Technical interview",
-    assistantRole:
-      "Identify concrete decisions and unresolved technical risks.",
-    analysisObjectives: ["Track decisions", "Capture action items"],
-    insightTypes: ["decision", "action_item", "risk"] as const,
-    responseTone: "Concise and factual",
-    finalSummarySections: ["Decisions", "Actions", "Risks"],
-    highlightInstructions: ["Highlight owners and deadlines"],
-    prohibitedBehaviors: ["Do not invent facts"],
+type PresetChoice = {
+  id: string
+  name: string
+  description: string
+  insightTypes: Preset["insightTypes"]
+  snapshot: Session["preset"]
+}
+
+// What the picker may offer: the library, plus the preset this Session already
+// froze when the library no longer lists it. A Session that was created under
+// an older preset keeps reading the way it did, so editing its title must not
+// quietly rewrite the instructions it was started with.
+function presetChoices(
+  presets: Preset[],
+  session: Session | undefined,
+): PresetChoice[] {
+  const library = presets.map((preset) => ({
+    id: preset.id,
+    name: preset.name,
+    description: preset.description,
+    insightTypes: preset.insightTypes,
+    snapshot: presetSnapshotOf(preset),
+  }))
+  const frozen = session?.preset
+  if (!frozen || library.some((choice) => choice.id === frozen.id)) {
+    return library
   }
+  return [
+    {
+      id: frozen.id,
+      name: frozen.name,
+      description: "Kept as this session recorded it.",
+      insightTypes: frozen.insightTypes,
+      snapshot: frozen,
+    },
+    ...library,
+  ]
 }
 
 export function SessionForm({
   project,
   session,
   devices,
+  presets,
   settings,
   busy,
   onCancel,
@@ -75,7 +102,20 @@ export function SessionForm({
     session?.systemOutput.endpointId ?? devices.outputs[0]?.endpointId ?? "",
   )
   const [retainAudio, setRetainAudio] = useState(session?.retainAudio ?? false)
+  const choices = useMemo(
+    () => presetChoices(presets, session),
+    [presets, session],
+  )
+  const [presetId, setPresetId] = useState(
+    () =>
+      [session?.preset.id, project.defaultPresetId].find((candidate) =>
+        choices.some((choice) => choice.id === candidate),
+      ) ??
+      choices[0]?.id ??
+      "",
+  )
   const [validationMessage, setValidationMessage] = useState("")
+  const chosenPreset = choices.find((choice) => choice.id === presetId)
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -89,11 +129,15 @@ export function SessionForm({
       setValidationMessage("Select an available microphone and output device.")
       return
     }
+    if (!chosenPreset) {
+      setValidationMessage("Select a preset for this session.")
+      return
+    }
     const editable = {
       title,
       objective,
       sessionContext,
-      preset: session?.preset ?? builtInPreset(project),
+      preset: chosenPreset.snapshot,
       language,
       microphone: snapshot(microphone),
       systemOutput: snapshot(output),
@@ -173,6 +217,33 @@ export function SessionForm({
           value={sessionContext}
         />
       </label>
+      <div className="grid gap-1.5">
+        <label className="grid gap-1.5 text-sm font-medium">
+          Preset
+          <select
+            className={fieldClass}
+            disabled={busy}
+            onChange={(event) => setPresetId(event.target.value)}
+            required
+            value={presetId}
+          >
+            {choices.map((choice) => (
+              <option key={choice.id} value={choice.id}>
+                {choice.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {chosenPreset && (
+          <p className="text-muted-foreground text-sm">
+            {chosenPreset.description} Insights:{" "}
+            {chosenPreset.insightTypes
+              .map((type) => INSIGHT_LABELS[type])
+              .join(", ")}
+            .
+          </p>
+        )}
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-1.5 text-sm font-medium">
           Microphone

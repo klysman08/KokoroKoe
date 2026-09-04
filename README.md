@@ -16,6 +16,13 @@ to OpenRouter, and only when you ask for it.
 - **Curated model management.** A closed catalog of three SHA-256-pinned Whisper models — Tiny,
   Base, and Large-v3 Turbo Q5_0 (multilingual) — with resumable verified downloads, disk checks, and
   deletion, all owned by Rust.
+- **Presets.** The nine presets the product defines — technical and behavioral interview, business, sales
+  and product meetings, brainstorming, a class or lecture, customer support, and a neutral custom
+  starting point — are a closed catalog owned by Rust. Each names the assistant's role, its analysis
+  objectives, the insight types it requests, its tone, the sections its final summary uses, and what it
+  must not do. A project picks the preset its sessions open on, and each Session may choose another. The
+  choice is copied into the Session when it is created, so a meeting keeps reading the way it did when
+  it started even after the catalog changes.
 - **Projects and sessions.** Markdown is the source of truth: pinned `project.md` and `session.md`
   snapshots with YAML front matter, a durable append-only journal, incremental transcript
   materialization, interrupted-session recovery, and a rebuildable SQLite index for discovery and
@@ -63,9 +70,10 @@ to OpenRouter, and only when you ask for it.
   exists today.
 - An explicit monitor picker. Each window returns to where it was left, which is remembered between
   runs, but a preferred display cannot be named.
-- Manual bookmarks separate from marking a segment important. Insights show how many transcript
-  segments they came from but cannot yet show which, and an alternative version of an insight cannot
-  be generated.
+- Custom presets. The built-in nine can be chosen but not edited, duplicated, exported, or deleted,
+  and a preset of your own cannot be written; the `presets/` folder inside each project is created
+  and never used.
+- A local dashboard of session counts, transcribed time, token use, estimated cost, and disk usage.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 

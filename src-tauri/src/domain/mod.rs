@@ -4,6 +4,7 @@ mod insights;
 mod manual_question;
 mod models;
 mod openrouter;
+mod presets;
 mod projects;
 mod settings;
 mod summaries;
@@ -30,6 +31,9 @@ pub(crate) use models::{
 pub(crate) use openrouter::{
     CredentialValidation, OpenRouterDataCollection, OpenRouterModel, validate_rfc3339,
 };
+pub(crate) use presets::Preset;
+#[cfg(test)]
+pub(crate) use projects::valid_preset;
 pub(crate) use projects::{
     AudioDeviceSnapshot, CreateProjectInput, CreateSessionSnapshotInput, InsightType,
     LlmRoleModels, PageRequest, PresetSnapshot, Project, ProjectId, ProjectPage, Session,

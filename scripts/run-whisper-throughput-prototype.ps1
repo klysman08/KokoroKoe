@@ -1,5 +1,5 @@
 param(
-    [string] $AudioPath = (Join-Path $PSScriptRoot "..\public\audio_test\OpenAI.mp3"),
+    [string] $AudioPath = (Join-Path $PSScriptRoot "fixtures\OpenAI.mp3"),
     [string] $ScratchPath = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-004"),
     [ValidateRange(1, 64)]
     [int] $Threads = [Math]::Min([Environment]::ProcessorCount, 8)

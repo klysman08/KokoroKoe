@@ -43,3 +43,6 @@ ggml-*.bin
 *.njsproj
 *.sln
 *.sw?
+
+# Native runtimes staged for the release installer (scripts/stage-bundled-runtimes.ps1).
+src-tauri/runtime

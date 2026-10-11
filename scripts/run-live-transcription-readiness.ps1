@@ -1,5 +1,5 @@
 param(
-    [string] $AudioPath = (Join-Path $PSScriptRoot "..\public\audio_test\OpenAI.mp3"),
+    [string] $AudioPath = (Join-Path $PSScriptRoot "fixtures\OpenAI.mp3"),
     [string] $AppLocalDataPath = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.kokorokoe.desktop"),
     [string] $AdapterPath = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "KokoroKoe\p3-004\adapter-build\bin\Release\kokorokoe_whisper_adapter.dll")
 )

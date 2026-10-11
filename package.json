@@ -31,6 +31,9 @@
     "audit:rust": "cargo deny --manifest-path src-tauri/Cargo.toml check licenses bans sources && cargo audit --file src-tauri/Cargo.lock",
     "preview": "vite preview",
     "screenshots": "node scripts/capture-screenshots.mjs",
+    "notices": "node scripts/generate-third-party-notices.mjs",
+    "release:stage": "pwsh -NoProfile -File scripts/stage-bundled-runtimes.ps1",
+    "release:build": "tauri build --ci --target x86_64-pc-windows-msvc --config src-tauri/tauri.release.conf.json -- --locked",
     "tauri": "tauri"
   },
   "engines": {

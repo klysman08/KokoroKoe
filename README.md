@@ -121,10 +121,16 @@ pnpm verify:rust
 pnpm tauri build --ci --no-bundle --target x86_64-pc-windows-msvc -- --locked
 ```
 
-The native Whisper runtimes are built separately and staged beside the executable with
-`scripts/prepare-poc-transcription-runtime.ps1`; see
-[Development and CI](docs/development-and-ci.md). `pnpm screenshots` regenerates the images in this
-README from the real interface with demo data.
+The native Whisper runtimes are built separately (see [Development and CI](docs/development-and-ci.md)).
+To build the installers with them inside:
+
+```powershell
+pnpm release:stage   # copies and verifies the Whisper and Visual C++ runtimes into src-tauri/runtime
+pnpm notices         # regenerates THIRD_PARTY_NOTICES.md
+pnpm release:build   # MSI and NSIS installers in src-tauri/target/.../bundle
+```
+
+`pnpm screenshots` regenerates the images in this README from the real interface with demo data.
 
 ## Project status
 

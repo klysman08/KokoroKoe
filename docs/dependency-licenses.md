@@ -206,7 +206,7 @@ Automated policy in the foundation now includes:
 - `cargo audit` against the Rust lockfile.
 - `pnpm audit` and `pnpm licenses list` against the JavaScript lockfile.
 
-A distributable third-party notices document remains required before a release is published. The P2-001 installers are verification artifacts only and are ignored by Git.
+`THIRD_PARTY_NOTICES.md` is the distributable notices document (P7-001). `pnpm notices` regenerates it from the Windows normal-dependency closure in `cargo metadata` and pnpm's production inventory, prints each distinct license text once, links the SPDX text for the few packages that ship no license file, and records the native components the installer carries: whisper.cpp/ggml 1.9.2 (MIT) and the app-local Microsoft Visual C++ runtime (`msvcp140`, `vcruntime140`, `vcruntime140_1`, `vcomp140`) under the Visual Studio redistribution terms. The installer installs it beside the executable. Regenerate it whenever a lockfile changes before a release. Installers remain build artifacts ignored by Git and are published only as GitHub release assets.
 
 Review every new production dependency for API currency, maintenance, license, native/DLL requirements, privacy impact, and whether an existing dependency already provides the capability. Do not add GPL/AGPL dependencies or model terms without explicit approval.
 

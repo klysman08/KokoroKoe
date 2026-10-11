@@ -21,6 +21,16 @@ impl PresetId {
     pub(crate) fn from_catalog_id(value: &str) -> Option<Self> {
         Uuid::parse_str(value).ok().map(Self)
     }
+
+    /// A new identifier for a preset the user is writing.
+    pub(crate) fn generate() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// The short form that disambiguates a document name in a shared folder.
+    pub(crate) fn suffix(&self) -> String {
+        self.0.simple().to_string()[..8].to_owned()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

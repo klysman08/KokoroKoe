@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-preset"
+description = "Enables the export_preset command without any pre-configured scope."
+commands.allow = ["export_preset"]
+
+[[permission]]
+identifier = "deny-export-preset"
+description = "Denies the export_preset command without any pre-configured scope."
+commands.deny = ["export_preset"]

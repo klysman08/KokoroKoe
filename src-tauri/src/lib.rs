@@ -22,7 +22,8 @@ use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
 use persistence::{
-    ProjectService, SessionService, SettingsService, TranscriptService, WorkspaceService,
+    PresetService, ProjectService, SessionService, SettingsService, TranscriptService,
+    WorkspaceService,
 };
 use security::CredentialService;
 #[cfg(windows)]
@@ -83,6 +84,7 @@ pub fn run() {
             let models = ModelService::open(&app_data_directory, settings.clone())
                 .map_err(|_| io::Error::other("model service initialization failed"))?;
             let projects = ProjectService::new(settings.clone(), app_data_directory.clone());
+            let preset_library = PresetService::new(settings.clone(), app_data_directory.clone());
             let sessions = SessionService::new(settings.clone(), app_data_directory.clone());
             let transcripts = TranscriptService::new(settings.clone(), app_data_directory.clone());
             let workspace = WorkspaceService::new(settings.clone(), app_data_directory.clone());
@@ -104,6 +106,7 @@ pub fn run() {
             app.manage(summaries);
             app.manage(models);
             app.manage(projects);
+            app.manage(preset_library);
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(workspace);
@@ -200,6 +203,11 @@ pub fn run() {
             commands::models::delete_transcription_model,
             commands::models::set_default_transcription_model,
             commands::presets::list_presets,
+            commands::presets::create_preset,
+            commands::presets::update_preset,
+            commands::presets::duplicate_preset,
+            commands::presets::delete_custom_preset,
+            commands::presets::export_preset,
             commands::audio::list_audio_devices,
             commands::audio::start_audio_device_test,
             commands::audio::stop_audio_device_test,

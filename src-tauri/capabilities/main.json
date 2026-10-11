@@ -58,6 +58,11 @@
     "allow-delete-transcription-model",
     "allow-set-default-transcription-model",
     "allow-list-presets",
+    "allow-create-preset",
+    "allow-update-preset",
+    "allow-duplicate-preset",
+    "allow-delete-custom-preset",
+    "allow-export-preset",
     "allow-start-live-transcription",
     "allow-get-live-transcription-status",
     "allow-stop-live-transcription"

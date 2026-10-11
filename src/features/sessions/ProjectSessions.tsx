@@ -43,7 +43,7 @@ import { requestIdSchema } from "@/contracts/models"
 import { type PersistenceStatus } from "@/contracts/session-lifecycle"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { DeleteConfirm } from "@/features/projects/DeleteConfirm"
-import { usePresetsQuery } from "@/features/presets/use-presets-query"
+import { usePresetsQuery } from "@/features/presets/use-presets"
 import { SessionForm } from "@/features/sessions/SessionForm"
 import { SessionInsightsPanel } from "@/features/sessions/SessionInsightsPanel"
 import { SessionSummaryPanel } from "@/features/sessions/SessionSummaryPanel"
@@ -91,7 +91,7 @@ export function ProjectSessions({
     queryFn: listAudioDevices,
     gcTime: 0,
   })
-  const presetsQuery = usePresetsQuery()
+  const presetsQuery = usePresetsQuery(project.id)
   const createMutation = useCreateSessionMutation(project.id)
   const updateMutation = useUpdateSessionMutation(project.id)
   const lifecycleMutation = useSessionLifecycleMutation(project.id)

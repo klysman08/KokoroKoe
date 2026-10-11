@@ -39,6 +39,7 @@ impl PresetDescriptor {
             name: self.name.to_owned(),
             description: self.description.to_owned(),
             built_in: true,
+            project_id: None,
             assistant_role: self.assistant_role.to_owned(),
             analysis_objectives: owned(self.analysis_objectives),
             insight_types: self.insight_types.to_vec(),
@@ -63,6 +64,17 @@ pub(crate) fn list() -> Vec<Preset> {
         .iter()
         .map(|descriptor| descriptor.to_preset())
         .collect()
+}
+
+/// Whether this identifier names a preset that ships inside the binary.
+///
+/// The write commands ask before they touch the workspace: a built-in has no
+/// document to edit or remove, so a request naming one is answered without a
+/// filesystem operation at all.
+pub(crate) fn is_built_in(preset_id: &PresetId) -> bool {
+    catalog::ALL.iter().any(|descriptor| {
+        PresetId::from_catalog_id(descriptor.id).is_some_and(|id| id == *preset_id)
+    })
 }
 
 #[cfg(test)]
@@ -170,6 +182,24 @@ mod tests {
             list().contains(&fixture),
             "the shared preset fixture must stay identical to the catalog entry it publishes"
         );
+    }
+
+    /// The write commands ask this before they open the workspace, so it has to
+    /// answer for every catalog entry and for nothing else.
+    #[test]
+    fn only_catalog_identifiers_are_built_in() {
+        for preset in list() {
+            assert!(
+                super::is_built_in(&preset.id),
+                "{} is built in",
+                preset.name
+            );
+        }
+        assert!(!super::is_built_in(
+            &PresetId::from_catalog_id("00000000-0000-4000-8000-000000000099")
+                .expect("a valid UUID")
+        ));
+        assert!(!super::is_built_in(&PresetId::generate()));
     }
 
     /// The shipped default has to name a preset that exists, or a first run

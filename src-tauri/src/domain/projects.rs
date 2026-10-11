@@ -6,7 +6,7 @@ use crate::audio::DeviceSelection;
 
 use super::settings::PresetId;
 
-const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+pub(super) const JSON_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -1048,7 +1048,7 @@ fn valid_folder_name(value: &str, date: Option<&str>, suffix: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn portable_slug(value: &str, fallback: &str) -> String {
+pub(super) fn portable_slug(value: &str, fallback: &str) -> String {
     let mut slug = String::new();
     let mut pending_separator = false;
     for byte in value.bytes() {
@@ -1074,7 +1074,11 @@ fn portable_slug(value: &str, fallback: &str) -> String {
     }
 }
 
-fn valid_string_list(values: &[String], maximum_items: usize, maximum_text: usize) -> bool {
+pub(super) fn valid_string_list(
+    values: &[String],
+    maximum_items: usize,
+    maximum_text: usize,
+) -> bool {
     values.len() <= maximum_items
         && values
             .iter()
@@ -1085,7 +1089,7 @@ fn valid_string_list(values: &[String], maximum_items: usize, maximum_text: usiz
             .all(|(index, value)| values[..index].iter().all(|previous| previous != value))
 }
 
-fn bounded_text(value: &str, minimum: usize, maximum: usize, multiline: bool) -> bool {
+pub(super) fn bounded_text(value: &str, minimum: usize, maximum: usize, multiline: bool) -> bool {
     let length = value.encode_utf16().count();
     (minimum..=maximum).contains(&length)
         && value.chars().all(|character| {
@@ -1105,17 +1109,19 @@ fn fixed_decimal(value: &str) -> bool {
         && fraction.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-fn parse_timestamp(value: &str) -> Option<OffsetDateTime> {
+pub(super) fn parse_timestamp(value: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(value, &Rfc3339).ok()
 }
 
-fn ordered_timestamps(created: &str, updated: &str) -> bool {
+pub(super) fn ordered_timestamps(created: &str, updated: &str) -> bool {
     parse_timestamp(created)
         .zip(parse_timestamp(updated))
         .is_some_and(|(created, updated)| updated >= created)
 }
 
-fn deserialize_non_null_optional<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn deserialize_non_null_optional<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,

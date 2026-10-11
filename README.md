@@ -22,7 +22,10 @@ to OpenRouter, and only when you ask for it.
   objectives, the insight types it requests, its tone, the sections its final summary uses, and what it
   must not do. A project picks the preset its sessions open on, and each Session may choose another. The
   choice is copied into the Session when it is created, so a meeting keeps reading the way it did when
-  it started even after the catalog changes.
+  it started even after the catalog changes. Presets of your own can be written, edited, duplicated,
+  exported, and deleted alongside them: each is a portable Markdown document inside its project's own
+  folder, so a project carries its presets when it is copied or restored. Deleting one moves it to the
+  workspace Trash, and the built-in nine cannot be edited — duplicate one to start from it.
 - **Projects and sessions.** Markdown is the source of truth: pinned `project.md` and `session.md`
   snapshots with YAML front matter, a durable append-only journal, incremental transcript
   materialization, interrupted-session recovery, and a rebuildable SQLite index for discovery and
@@ -70,9 +73,9 @@ to OpenRouter, and only when you ask for it.
   exists today.
 - An explicit monitor picker. Each window returns to where it was left, which is remembered between
   runs, but a preferred display cannot be named.
-- Custom presets. The built-in nine can be chosen but not edited, duplicated, exported, or deleted,
-  and a preset of your own cannot be written; the `presets/` folder inside each project is created
-  and never used.
+- Sharing a preset between projects, and importing one. A preset belongs to the project it was
+  written in; copying its Markdown file into another project's `presets/` folder and rescanning the
+  workspace is the manual route.
 - A local dashboard of session counts, transcribed time, token use, estimated cost, and disk usage.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.

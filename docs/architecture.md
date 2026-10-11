@@ -82,6 +82,8 @@ P6-019 supplies the action that claim always implied. Markdown is the source of 
 
 P6-021 makes the preset a choice. Manifest section 8 names nine presets and the frontend had one, written as a literal in the session form, so every Session in the application was a technical interview and the field that decides which insight types are ever requested could not be set. The library is a compile-time catalog in Rust — `&'static str` descriptors in `presets/catalog.rs`, exactly the shape the transcription-model catalog uses — behind one exact-`main` `list_presets` command that reads no file and holds no state. What a Session stores does not change: choosing a preset still copies a `PresetSnapshot` into the Session, so a meeting keeps reading the way it did when it started even after the catalog moves on, and a Session whose frozen preset is no longer listed keeps it as its own option instead of being silently rewritten. The catalog is held to the rule Sessions enforce — every built-in entry must pass `valid_preset` — so nothing can be offered in the library and then rejected at creation.
 
+P6-022 completes section 8 with the presets a user writes, and ADR 0011 records the decision the two source documents disagreed about: they live in `projects/<project>/presets/`, one Markdown document each, so a project folder still explains itself when it is copied or restored. Every preset command is therefore scoped by a project, and `list_presets` returns the built-ins alone when it is not given one — which is the honest answer for the project-creation form. `PresetStore` reaches those documents only through the pinned project directory the project store already opens, derives each file name from the preset's own record rather than a caller's string, and refuses a document that names a different project even when it is found in this project's folder. Writes reuse the existing publish path: a synced temporary file, an atomic replace with a backup, a revision and a content fingerprint checked before the replacement, and a deletion that moves the document to `trash/` instead of destroying it. A built-in is refused before the workspace is opened, since a compile-time constant has no document to edit. The stored `version` moves only when the instructions move, so renaming a preset does not claim that meetings held under the old name were run on different guidance.
+
 P6-009 adds the Manifest section 9.2 per-segment actions the same way, and the same test applies: what does each one require? Copying is view-local. "Explain", "suggest a response", and "summarize" are prefilled questions through the one already-verified `ask_manual_question` path rather than three new prompt specs, so the answer stays inside the schema that path validates and no new command, capability, or prompt version appears.
 
 Prefilling and not sending is the deliberate part. This application sends meeting text to a third party, so a one-click label must not be the thing that transmits: the preset opens the question box with text already in it, and the user reads it, edits it, or abandons it before anything leaves the machine. The panel is keyed by segment and preset so choosing a different one replaces the text rather than leaving a stale question in front of a new label.
@@ -361,10 +363,15 @@ type Preset = PresetSnapshot & {
   schemaVersion: 1
   description: string
   builtIn: boolean
+  // Present exactly when the preset is not built in: ADR 0011 stores a custom
+  // preset inside the project that owns it.
+  projectId?: ProjectId
   createdAt: Rfc3339Utc
   updatedAt: Rfc3339Utc
   revision: number
 }
+
+type PresetExport = { path: string; files: number; bytes: number }
 
 type InsightType =
   | "suggested_response"
@@ -796,12 +803,12 @@ Commands use these exact transport names and typed request/result forms:
 | `resume_model_download` | `{ modelId } & RequestContext` | `ModelDownloadJob` |
 | `delete_transcription_model` | `{ modelId }` | `ModelInstallation` |
 | `set_default_transcription_model` | `{ modelId; expectedSettingsRevision }` | `AppSettings` |
-| `list_presets` | none | `Preset[]` |
-| `create_preset` | `CreatePresetInput` | `Preset` |
-| `update_preset` | `{ presetId } & Versioned<UpdatePresetInput>` | `Preset` |
-| `duplicate_preset` | `{ presetId; name: string }` | `Preset` |
-| `export_preset` | `{ presetId }` | `ExportResult` |
-| `delete_custom_preset` | `{ presetId; expectedRevision }` | `DeleteResult` |
+| `list_presets` | `{ projectId? }` | `Preset[]` |
+| `create_preset` | `{ projectId; value: CreatePresetInput }` | `Preset` |
+| `update_preset` | `{ projectId; presetId } & Versioned<UpdatePresetInput>` | `Preset` |
+| `duplicate_preset` | `{ projectId; presetId; name: string }` | `Preset` |
+| `export_preset` | `{ projectId; presetId }` | `PresetExport` |
+| `delete_custom_preset` | `{ projectId; presetId; expectedRevision }` | `void` |
 | `set_openrouter_api_key` | `{ apiKey: string }` | `CredentialStatus` |
 | `delete_openrouter_api_key` | none | `CredentialStatus` |
 | `get_openrouter_credential_status` | none | `CredentialStatus` |

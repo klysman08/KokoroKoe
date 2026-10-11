@@ -1,4 +1,10 @@
-import { CalendarClock, FolderKanban, Pencil, Plus } from "lucide-react"
+import {
+  CalendarClock,
+  FolderKanban,
+  Pencil,
+  Plus,
+  SlidersHorizontal,
+} from "lucide-react"
 import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +20,7 @@ import { type Project } from "@/contracts/projects"
 import { SanitizedErrorPanel } from "@/features/errors/SanitizedErrorPanel"
 import { DeleteConfirm } from "@/features/projects/DeleteConfirm"
 import { ProjectForm } from "@/features/projects/ProjectForm"
+import { ProjectPresets } from "@/features/presets/ProjectPresets"
 import { ProjectSessions } from "@/features/sessions/ProjectSessions"
 import {
   useCreateProjectMutation,
@@ -21,19 +28,22 @@ import {
   useProjectsQuery,
   useUpdateProjectMutation,
 } from "@/features/projects/use-projects"
-import { usePresetsQuery } from "@/features/presets/use-presets-query"
+import { usePresetsQuery } from "@/features/presets/use-presets"
 import { useSettingsQuery } from "@/features/settings/use-settings-query"
 
 export function HomePage() {
   const projectsQuery = useProjectsQuery()
   const settingsQuery = useSettingsQuery()
-  const presetsQuery = usePresetsQuery()
   const createMutation = useCreateProjectMutation()
   const updateMutation = useUpdateProjectMutation()
   const deleteProject = useDeleteProjectMutation()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Project>()
   const [sessionsProject, setSessionsProject] = useState<Project>()
+  const [presetsProject, setPresetsProject] = useState<Project>()
+  // Creating a project can only offer the built-ins; editing one can offer the
+  // presets that project owns.
+  const presetsQuery = usePresetsQuery(editing?.id)
   const projects = projectsQuery.data?.pages.flatMap((page) => page.items) ?? []
   const mutationError =
     createMutation.error ?? updateMutation.error ?? deleteProject.error
@@ -188,6 +198,13 @@ export function HomePage() {
                     >
                       <CalendarClock /> Manage sessions
                     </Button>
+                    <Button
+                      onClick={() => setPresetsProject(project)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <SlidersHorizontal /> Manage presets
+                    </Button>
                     <DeleteConfirm
                       busy={
                         deleteProject.isPending &&
@@ -216,6 +233,14 @@ export function HomePage() {
           </div>
         )}
       </section>
+
+      {presetsProject && (
+        <ProjectPresets
+          key={presetsProject.id}
+          onClose={() => setPresetsProject(undefined)}
+          project={presetsProject}
+        />
+      )}
 
       {sessionsProject && (
         <ProjectSessions

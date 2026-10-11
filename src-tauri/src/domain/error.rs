@@ -785,6 +785,73 @@ impl AppError {
         Self::new(code, user_message, Some(code), severity, retryable)
     }
 
+    pub(crate) fn preset_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "preset_contract_invalid" | "preset_update_invalid" => (
+                "The preset information is not valid.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "preset_not_found" | "preset_project_missing" => (
+                "That preset is no longer available.",
+                ErrorSeverity::Info,
+                false,
+            ),
+            "preset_built_in_read_only" => (
+                "Built-in presets cannot be edited or deleted. Duplicate one to make it yours.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "preset_revision_conflict" | "preset_external_modification" => (
+                "The preset changed since it was loaded. Reload it and try again.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "preset_already_exists" => (
+                "A preset with that local identity already exists in this project.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "preset_document_invalid" | "preset_document_name_mismatch" => (
+                "That preset document could not be read.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "preset_trash_failed" => (
+                "The preset could not be moved to the workspace Trash. Close anything using it and try again.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "preset_export_cancelled" => ("The export was cancelled.", ErrorSeverity::Info, false),
+            "preset_export_failed" => (
+                "The preset could not be written to that location. Choose another folder and try again.",
+                ErrorSeverity::Error,
+                true,
+            ),
+            "preset_revision_exhausted" => (
+                "KokoroKoe cannot save another revision of this preset.",
+                ErrorSeverity::Critical,
+                false,
+            ),
+            _ => (
+                "KokoroKoe could not complete the local preset operation.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
+    pub(crate) fn preset_worker_failed() -> Self {
+        Self::new(
+            "preset_worker_failed",
+            "The local preset service stopped unexpectedly.",
+            Some("The background preset operation did not complete."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
     pub(crate) fn project_worker_failed() -> Self {
         Self::new(
             "project_worker_failed",

@@ -1,4 +1,6 @@
 pub(crate) mod layout;
+mod preset_service;
+mod preset_store;
 mod project_index;
 mod project_service;
 mod project_store;
@@ -16,6 +18,10 @@ mod transcript_service;
 mod transcript_store;
 mod workspace_service;
 
+#[allow(unused_imports)]
+pub(crate) use preset_service::PresetService;
+#[allow(unused_imports)]
+pub(crate) use preset_store::{PresetStore, PresetStoreError};
 #[allow(unused_imports)]
 pub(crate) use project_index::{ProjectCatalog, ProjectIndexRebuildReport};
 pub(crate) use project_service::ProjectService;

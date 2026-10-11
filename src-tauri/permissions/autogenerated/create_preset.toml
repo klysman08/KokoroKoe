@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-preset"
+description = "Enables the create_preset command without any pre-configured scope."
+commands.allow = ["create_preset"]
+
+[[permission]]
+identifier = "deny-create-preset"
+description = "Denies the create_preset command without any pre-configured scope."
+commands.deny = ["create_preset"]

@@ -31,7 +31,9 @@ pub(crate) use models::{
 pub(crate) use openrouter::{
     CredentialValidation, OpenRouterDataCollection, OpenRouterModel, validate_rfc3339,
 };
-pub(crate) use presets::Preset;
+pub(crate) use presets::{
+    CreatePresetInput, CustomPreset, Preset, PresetExport, UpdatePresetInput,
+};
 #[cfg(test)]
 pub(crate) use projects::valid_preset;
 pub(crate) use projects::{

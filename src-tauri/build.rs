@@ -4,6 +4,7 @@ fn main() {
             "get_settings",
             "rescan_workspace",
             "get_dashboard_metrics",
+            "open_external_page",
             "update_settings",
             "choose_workspace",
             "open_workspace_folder",

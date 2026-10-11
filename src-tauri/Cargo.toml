@@ -2,7 +2,10 @@
 name = "kokorokoe"
 version = "0.1.0"
 description = "Privacy-first local meeting transcription and assistance for Windows"
-authors = ["KokoroKoe contributors"]
+authors = ["klysman08"]
+license = "MIT"
+repository = "https://github.com/klysman08/KokoroKoe"
+homepage = "https://github.com/klysman08/KokoroKoe"
 edition = "2024"
 rust-version = "1.88"
 publish = false

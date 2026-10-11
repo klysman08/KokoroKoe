@@ -238,6 +238,9 @@ fn map_completion_error(error: CompletionError) -> AppError {
         | "completion_provider_failed" => "summary_provider_temporarily_unavailable",
         _ => "summary_provider_unavailable",
     };
+    if public == "summary_provider_unavailable" {
+        return AppError::summary_error(public).with_internal_code(error.code);
+    }
     AppError::summary_error(public)
 }
 

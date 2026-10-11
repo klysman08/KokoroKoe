@@ -1,10 +1,13 @@
+import { useMutation } from "@tanstack/react-query"
 import {
   AudioLines,
   ChartColumn,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
+  FolderKanban,
   Home,
-  MessageSquareText,
+  Mic,
   Moon,
   Pause,
   Settings,
@@ -13,12 +16,19 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import type { ApplicationError } from "@/contracts/app-error"
 import { DashboardPage } from "@/features/dashboard/DashboardPage"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
-import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
+import { MeetingPage } from "@/features/meeting/MeetingPage"
+import { ProjectsPage } from "@/features/projects/ProjectsPage"
 import { useSessionLifecycleMutation } from "@/features/sessions/use-sessions"
 import { useAppliedTheme } from "@/app/shell/use-applied-theme"
+import {
+  EXTERNAL_PAGE_URLS,
+  type ExternalPage,
+  openExternalPage,
+} from "@/lib/tauri/about"
 import { cn } from "@/lib/utils"
 import { DetachedWindowControls } from "@/features/windows/DetachedWindowControls"
 import {
@@ -30,13 +40,40 @@ import {
   routeHref,
   useNavigationStore,
 } from "@/stores/navigation-store"
+import { useMeetingStore } from "@/stores/meeting-store"
 import { useShellStore } from "@/stores/shell-store"
 
 const navigation = [
-  { label: "Home", route: "home", icon: Home },
-  { label: "Dashboard", route: "dashboard", icon: ChartColumn },
-  { label: "Live transcript", route: "transcript", icon: MessageSquareText },
-  { label: "Settings", route: "settings", icon: Settings },
+  {
+    label: "Home",
+    route: "home",
+    icon: Home,
+    description: "Start a meeting or pick up a recent one",
+  },
+  {
+    label: "Meeting",
+    route: "meeting",
+    icon: Mic,
+    description: "Live transcript, insights, and summary",
+  },
+  {
+    label: "Projects",
+    route: "projects",
+    icon: FolderKanban,
+    description: "Every project and its sessions",
+  },
+  {
+    label: "Dashboard",
+    route: "dashboard",
+    icon: ChartColumn,
+    description: "Local usage, cost, and disk space",
+  },
+  {
+    label: "Settings",
+    route: "settings",
+    icon: Settings,
+    description: "Workspace, models, devices, and OpenRouter",
+  },
 ] as const
 
 export function AppShell() {
@@ -47,6 +84,8 @@ export function AppShell() {
   const theme = useShellStore((state) => state.theme)
   const toggleTheme = useShellStore((state) => state.toggleTheme)
   const activeSession = useActiveSessionStore((state) => state.activeSession)
+  const activePage =
+    navigation.find(({ route }) => route === activeRoute) ?? navigation[0]
 
   useAppliedTheme()
 
@@ -124,6 +163,7 @@ export function AppShell() {
 
         {/* Outside the scroll area: collapsing must always be reachable, even
             while a Session and both window panels fill the sidebar. */}
+        <ProjectCredits collapsed={collapsed} />
         <Button
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           className="mt-2 w-full shrink-0"
@@ -139,9 +179,9 @@ export function AppShell() {
       <div className="min-w-0 flex-1">
         <header className="bg-background/90 flex h-16 items-center justify-between border-b px-6 backdrop-blur">
           <div>
-            <p className="text-sm font-medium">Windows MVP</p>
+            <p className="text-sm font-medium">{activePage.label}</p>
             <p className="text-muted-foreground text-xs">
-              Foundation checkpoint
+              {activePage.description}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -162,8 +202,10 @@ export function AppShell() {
         <main className="mx-auto w-full max-w-7xl p-6 lg:p-8">
           {activeRoute === "settings" ? (
             <SettingsPage />
-          ) : activeRoute === "transcript" ? (
-            <LiveTranscriptPage />
+          ) : activeRoute === "meeting" ? (
+            <MeetingPage />
+          ) : activeRoute === "projects" ? (
+            <ProjectsPage />
           ) : activeRoute === "dashboard" ? (
             <DashboardPage />
           ) : (
@@ -183,6 +225,8 @@ function ActiveSessionControls({
   session: ActiveSession
 }) {
   const lifecycle = useSessionLifecycleMutation(session.projectId)
+  const navigate = useNavigationStore((state) => state.navigate)
+  const openMeeting = useMeetingStore((state) => state.open)
   const boundary = {
     projectId: session.projectId,
     sessionId: session.id,
@@ -208,6 +252,15 @@ function ActiveSessionControls({
       </div>
       <p className="mt-2 truncate text-sm font-medium">{session.title}</p>
       <div className="mt-3 flex gap-2">
+        <Button
+          onClick={() => {
+            openMeeting({ projectId: session.projectId, sessionId: session.id })
+            navigate("meeting")
+          }}
+          size="sm"
+        >
+          Open
+        </Button>
         {session.state === "transcribing" && (
           <Button
             disabled={lifecycle.isPending}
@@ -235,6 +288,80 @@ function ActiveSessionControls({
         </p>
       )}
     </section>
+  )
+}
+
+/**
+ * The repository link and the author's credit. Each link carries its real
+ * address so hovering shows it, but a click asks Rust to open the page in the
+ * default browser: the webview itself never navigates away from the app.
+ */
+function ProjectCredits({ collapsed }: { collapsed: boolean }) {
+  const open = useMutation<void, ApplicationError, ExternalPage>({
+    mutationFn: openExternalPage,
+    retry: false,
+  })
+  const openPage = (event: React.MouseEvent, page: ExternalPage) => {
+    event.preventDefault()
+    open.mutate(page)
+  }
+
+  if (collapsed) {
+    return (
+      <a
+        aria-label="KokoroKoe on GitHub"
+        className="text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground mt-2 grid h-10 shrink-0 place-items-center rounded-lg transition-colors"
+        href={EXTERNAL_PAGE_URLS.repository}
+        onClick={(event) => openPage(event, "repository")}
+        title={`KokoroKoe v${__APP_VERSION__} on GitHub`}
+      >
+        <GitHubMark className="size-4" />
+      </a>
+    )
+  }
+
+  return (
+    <footer className="mt-2 shrink-0 border-t pt-3 text-xs">
+      <a
+        className="text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground flex h-9 items-center gap-2 rounded-lg px-3 font-medium transition-colors"
+        href={EXTERNAL_PAGE_URLS.repository}
+        onClick={(event) => openPage(event, "repository")}
+      >
+        <GitHubMark className="size-4 shrink-0" />
+        <span className="truncate">KokoroKoe on GitHub</span>
+        <ExternalLink aria-hidden="true" className="ml-auto size-3 shrink-0" />
+      </a>
+      <p className="text-muted-foreground mt-1 truncate px-3">
+        Made by{" "}
+        <a
+          className="text-foreground font-medium underline-offset-2 hover:underline"
+          href={EXTERNAL_PAGE_URLS.author}
+          onClick={(event) => openPage(event, "author")}
+        >
+          klysman08
+        </a>{" "}
+        · v{__APP_VERSION__}
+      </p>
+      {open.error && (
+        <p className="text-destructive mt-1 px-3" role="alert">
+          {open.error.details.userMessage}
+        </p>
+      )}
+    </footer>
+  )
+}
+
+/** The GitHub mark from Octicons (MIT); Lucide no longer ships brand icons. */
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="currentColor"
+      viewBox="0 0 16 16"
+    >
+      <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
+    </svg>
   )
 }
 

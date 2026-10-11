@@ -729,6 +729,20 @@ impl AppError {
         Self::new(code, user_message, Some(code), severity, retryable)
     }
 
+    /// Names the internal step behind a catch-all code.
+    ///
+    /// A generation can fail at a dozen points inside the stream, and the
+    /// public codes deliberately fold the rare ones together. When that
+    /// catch-all is what the user sees, the technical detail says which step
+    /// it was. The step is a fixed code, never provider text or meeting content.
+    pub(crate) fn with_internal_code(mut self, internal: &'static str) -> Self {
+        self.technical_detail = Some(sanitize_technical_detail(&format!(
+            "{} ({internal})",
+            self.code
+        )));
+        self
+    }
+
     /// The dashboard reads the workspace indexes and the local usage ledger,
     /// so it can fail for any reason either can; the codes are theirs.
     pub(crate) fn dashboard_error(code: &str) -> Self {
@@ -1072,6 +1086,16 @@ impl AppError {
             "workspace_open_failed",
             "KokoroKoe could not open the workspace folder in File Explorer.",
             Some("Windows File Explorer did not accept the verified workspace path."),
+            ErrorSeverity::Error,
+            true,
+        )
+    }
+
+    pub(crate) fn external_page_open_failed() -> Self {
+        Self::new(
+            "external_page_open_failed",
+            "KokoroKoe could not open the page in your browser.",
+            Some("Windows did not accept the fixed project address."),
             ErrorSeverity::Error,
             true,
         )

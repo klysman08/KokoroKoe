@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>KokoroKoe social preview</title>
+    <script type="module">
+      import "@fontsource-variable/inter"
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        font-family: "Inter Variable", "Segoe UI", sans-serif;
+        color: #fafafa;
+        background:
+          radial-gradient(
+            900px 520px at 88% 18%,
+            rgba(99, 102, 241, 0.32),
+            transparent 60%
+          ),
+          radial-gradient(
+            700px 500px at 6% 110%,
+            rgba(20, 184, 166, 0.22),
+            transparent 60%
+          ),
+          #09090b;
+      }
+      .copy {
+        position: absolute;
+        left: 56px;
+        top: 60px;
+        width: 350px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .brand img {
+        width: 52px;
+        height: 52px;
+        border-radius: 14px;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      h1 {
+        margin-top: 36px;
+        font-size: 40px;
+        line-height: 1.08;
+        font-weight: 750;
+        letter-spacing: -0.03em;
+      }
+      h1 span {
+        background: linear-gradient(90deg, #a5b4fc, #5eead4);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      ul {
+        margin-top: 28px;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 12px;
+        font-size: 17px;
+        line-height: 1.35;
+        color: #d4d4d8;
+      }
+      li {
+        display: flex;
+        gap: 10px;
+      }
+      li::before {
+        content: "";
+        flex: none;
+        width: 8px;
+        height: 8px;
+        margin-top: 8px;
+        border-radius: 999px;
+        background: #5eead4;
+      }
+      .footer {
+        position: absolute;
+        left: 56px;
+        bottom: 52px;
+        width: 350px;
+        font-size: 15px;
+        line-height: 1.6;
+        color: #a1a1aa;
+      }
+      .footer strong {
+        color: #fafafa;
+        font-weight: 600;
+      }
+      .window {
+        position: absolute;
+        left: 432px;
+        top: 74px;
+        width: 1280px;
+        height: 830px;
+        transform: scale(0.58);
+        transform-origin: top left;
+        border-radius: 22px;
+        overflow: hidden;
+        box-shadow:
+          0 0 0 2px rgba(255, 255, 255, 0.14),
+          0 50px 120px rgba(0, 0, 0, 0.6);
+        background: #09090b;
+      }
+      .window iframe {
+        width: 1280px;
+        height: 830px;
+        border: 0;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="copy">
+      <div class="brand">
+        <img alt="" src="/kokorokoe.svg" />
+        KokoroKoe
+      </div>
+      <h1>Your meetings, <span>transcribed on your own PC.</span></h1>
+      <ul>
+        <li>Live transcript of your mic and computer audio</li>
+        <li>AI insights and summaries as you talk</li>
+        <li>Audio never leaves the machine</li>
+      </ul>
+    </div>
+    <p class="footer">
+      <strong>Free &amp; open source</strong> · Windows 10/11<br />
+      github.com/klysman08/KokoroKoe
+    </p>
+    <div class="window">
+      <iframe
+        src="./index.html?view=meeting&amp;collapsed=1"
+        title="KokoroKoe meeting view"
+      ></iframe>
+    </div>
+  </body>
+</html>

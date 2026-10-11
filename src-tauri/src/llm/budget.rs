@@ -452,7 +452,7 @@ fn validate_reservation_input(
     if model.id != envelope.model_id || selected_model != Some(envelope.model_id.as_str()) {
         return Err(UsageBudgetError::new("usage_model_mismatch"));
     }
-    if envelope.request_token_limit > session.max_tokens_per_request
+    if envelope.maximum_output_tokens > session.max_tokens_per_request
         || envelope.request_token_limit > envelope.specification.approximate_request_token_limit
         || envelope.maximum_output_tokens > envelope.specification.maximum_output_tokens
         || envelope.estimated_input_tokens > envelope.input_token_limit

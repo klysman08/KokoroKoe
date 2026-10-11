@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
+import { ensureModelCatalog } from "@/lib/tauri/openrouter"
 import {
   createContractApplicationError,
   createRequestContractApplicationError,
@@ -24,6 +25,7 @@ export async function generateRecentInsights(
 ): Promise<RecentInsightsResponse> {
   const request = generateRecentInsightsRequestSchema.safeParse(value)
   if (!request.success) throw createRequestContractApplicationError()
+  await ensureModelCatalog()
   let raw: unknown
   try {
     raw = await invoke<unknown>("generate_recent_insights", {
@@ -74,6 +76,7 @@ export async function generateAlternativeInsight(
 ): Promise<RecentInsightsResponse> {
   const request = generateAlternativeInsightRequestSchema.safeParse(value)
   if (!request.success) throw createRequestContractApplicationError()
+  await ensureModelCatalog()
   let raw: unknown
   try {
     raw = await invoke<unknown>("generate_alternative_insight", {

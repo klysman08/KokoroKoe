@@ -21,7 +21,9 @@ function detachedSurfaceFromHash(hash: string) {
 function routeFromHash(hash: string) {
   if (hash === "#/settings") return "settings"
   if (hash === "#/dashboard") return "dashboard"
-  if (hash === "#/transcript") return "transcript"
+  if (hash === "#/projects") return "projects"
+  // The old live-transcript preview became the meeting view.
+  if (hash === "#/meeting" || hash === "#/transcript") return "meeting"
   return "home"
 }
 

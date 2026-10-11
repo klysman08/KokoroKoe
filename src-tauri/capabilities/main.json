@@ -12,6 +12,7 @@
     "allow-open-workspace-folder",
     "allow-rescan-workspace",
     "allow-get-dashboard-metrics",
+    "allow-open-external-page",
     "allow-get-openrouter-credential-status",
     "allow-set-openrouter-api-key",
     "allow-delete-openrouter-api-key",

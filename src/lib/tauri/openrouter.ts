@@ -49,3 +49,23 @@ export function listOpenRouterModels(
     openRouterModelListSchema,
   )
 }
+
+/**
+ * Loads the model catalog a generation is about to be priced against.
+ *
+ * Rust prices every request from a catalog it caches for fifteen minutes and,
+ * by design, never fetches on its own from inside a completion. So a meeting
+ * that outlived the cache failed every insight with "catalog required", and a
+ * summary at its end failed the same way, until someone opened Settings. This
+ * asks for the catalog first — a request for the public model list, carrying no
+ * meeting content, that Rust answers from its cache while it is still fresh.
+ * A failure here is not reported: the generation that follows reports the real
+ * problem, such as a missing key, in its own words.
+ */
+export async function ensureModelCatalog(): Promise<void> {
+  try {
+    await listOpenRouterModels(false)
+  } catch {
+    // The generation below reports what is actually wrong.
+  }
+}

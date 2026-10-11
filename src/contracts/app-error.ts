@@ -79,6 +79,24 @@ export function createUnexpectedApplicationError(): ApplicationError {
   })
 }
 
+/**
+ * A problem the interface found before asking Rust anything, such as no
+ * microphone to start a meeting with. It renders through the same sanitized
+ * panel as a Rust error; the message is fixed text chosen by the caller.
+ */
+export function createLocalApplicationError(
+  code: string,
+  userMessage: string,
+): ApplicationError {
+  return new ApplicationError({
+    code,
+    userMessage,
+    severity: "warning",
+    retryable: false,
+    correlationId: createCorrelationId(),
+  })
+}
+
 function createCorrelationId() {
   return globalThis.crypto.randomUUID()
 }

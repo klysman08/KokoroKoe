@@ -47,6 +47,10 @@ pub(crate) struct AppSettings {
     pub(crate) deny_provider_data_collection: bool,
     pub(crate) max_tokens_per_request: u32,
     pub(crate) default_session_budget_usd: String,
+    /// The spoken language the last meeting was started in, offered for the
+    /// next one. Absent until the user first starts a meeting from Home.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_session_language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,6 +83,9 @@ pub(crate) struct AppSettingsUpdate {
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) default_session_budget_usd: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_session_language: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +109,8 @@ struct RawAppSettingsUpdate {
     max_tokens_per_request: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_non_null_optional")]
     default_session_budget_usd: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    default_session_language: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for AppSettingsUpdate {
@@ -120,6 +129,7 @@ impl<'de> Deserialize<'de> for AppSettingsUpdate {
             deny_provider_data_collection: raw.deny_provider_data_collection,
             max_tokens_per_request: raw.max_tokens_per_request,
             default_session_budget_usd: raw.default_session_budget_usd,
+            default_session_language: raw.default_session_language,
         };
         update.validate().map_err(D::Error::custom)?;
         Ok(update)
@@ -256,6 +266,8 @@ struct RawAppSettings {
     deny_provider_data_collection: bool,
     max_tokens_per_request: u32,
     default_session_budget_usd: String,
+    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    default_session_language: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for AppSettings {
@@ -276,6 +288,7 @@ impl<'de> Deserialize<'de> for AppSettings {
             deny_provider_data_collection: raw.deny_provider_data_collection,
             max_tokens_per_request: raw.max_tokens_per_request,
             default_session_budget_usd: raw.default_session_budget_usd,
+            default_session_language: raw.default_session_language,
         };
         settings.validate_transport().map_err(D::Error::custom)?;
         Ok(settings)
@@ -285,6 +298,22 @@ impl<'de> Deserialize<'de> for AppSettings {
 fn has_bounded_utf16_length(value: &str, minimum: usize, maximum: usize) -> bool {
     let length = value.encode_utf16().count();
     (minimum..=maximum).contains(&length)
+}
+
+/// A BCP 47 shape such as `pt-BR`: letters first, then up to seven
+/// alphanumeric subtags. Whisper support is checked when a session starts.
+fn is_language_tag(value: &str) -> bool {
+    let mut parts = value.split('-');
+    let primary_ok = parts.next().is_some_and(|primary| {
+        (2..=8).contains(&primary.len()) && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+    });
+    let rest = parts.collect::<Vec<_>>();
+    primary_ok
+        && value.len() <= 64
+        && rest.len() <= 7
+        && rest.iter().all(|part| {
+            (1..=8).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
 }
 
 fn is_fixed_decimal(value: &str) -> bool {
@@ -325,6 +354,7 @@ impl AppSettings {
             deny_provider_data_collection: true,
             max_tokens_per_request: 2_048,
             default_session_budget_usd: "0.00".to_owned(),
+            default_session_language: None,
         };
         settings
             .validate_transport()
@@ -363,6 +393,9 @@ impl AppSettings {
         }
         if let Some(value) = update.default_session_budget_usd {
             self.default_session_budget_usd = value;
+        }
+        if let Some(value) = update.default_session_language {
+            self.default_session_language = Some(value);
         }
 
         self.increment_revision()?;
@@ -436,6 +469,13 @@ impl AppSettings {
         if !is_fixed_decimal(&self.default_session_budget_usd) {
             return Err("The default session budget must use two decimal places.");
         }
+        if self
+            .default_session_language
+            .as_deref()
+            .is_some_and(|value| !is_language_tag(value))
+        {
+            return Err("The default session language is not a language tag.");
+        }
 
         Ok(())
     }
@@ -457,6 +497,7 @@ impl AppSettingsUpdate {
             deny_provider_data_collection: None,
             max_tokens_per_request: None,
             default_session_budget_usd: None,
+            default_session_language: None,
         }
     }
 
@@ -491,6 +532,13 @@ impl AppSettingsUpdate {
         {
             return Err("The default session budget must use two decimal places.");
         }
+        if self
+            .default_session_language
+            .as_deref()
+            .is_some_and(|value| !is_language_tag(value))
+        {
+            return Err("The default session language is not a language tag.");
+        }
         Ok(())
     }
 
@@ -504,6 +552,7 @@ impl AppSettingsUpdate {
             && self.deny_provider_data_collection.is_none()
             && self.max_tokens_per_request.is_none()
             && self.default_session_budget_usd.is_none()
+            && self.default_session_language.is_none()
     }
 }
 
@@ -523,6 +572,35 @@ mod tests {
         let actual = serde_json::to_value(parsed).expect("AppSettings should serialize");
 
         assert_eq!(actual, expected);
+    }
+
+    /// Home remembers the language the user last spoke. A record written
+    /// before that existed has no such field and must still load.
+    #[test]
+    fn the_meeting_language_is_remembered_and_optional() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/app-settings-v1.json"
+        ))
+        .unwrap();
+        let legacy: AppSettings = serde_json::from_value(fixture).unwrap();
+        assert_eq!(legacy.default_session_language, None);
+
+        let update: AppSettingsUpdate =
+            serde_json::from_str(r#"{"defaultSessionLanguage":"pt-BR"}"#).unwrap();
+        let updated = legacy.apply_update(update).unwrap();
+        assert_eq!(updated.default_session_language.as_deref(), Some("pt-BR"));
+        assert_eq!(
+            serde_json::to_value(&updated).unwrap()["defaultSessionLanguage"],
+            "pt-BR"
+        );
+
+        for invalid in ["", "p", "pt_BR", "pt-BR-", "12-BR"] {
+            let value = serde_json::json!({ "defaultSessionLanguage": invalid });
+            assert!(
+                serde_json::from_value::<AppSettingsUpdate>(value).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

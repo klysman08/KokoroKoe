@@ -117,4 +117,19 @@ if (
   fail("rehype-raw must not be added to this untrusted Markdown boundary")
 }
 
+// The sidebar and the installer read the version from package.json (Tauri
+// points at it); the Rust crate has to say the same thing.
+const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"))
+if (tauriConfig.version !== "../package.json") {
+  fail("tauri.conf.json must take its version from package.json")
+}
+const crateVersion = /^version\s*=\s*"([^"]+)"/mu.exec(
+  read("src-tauri/Cargo.toml"),
+)?.[1]
+if (crateVersion !== packageManifest.version) {
+  fail(
+    `src-tauri/Cargo.toml version ${crateVersion} differs from package.json ${packageManifest.version}`,
+  )
+}
+
 console.log("Repository policy checks passed.")

@@ -23,7 +23,12 @@ describe("recent insights Tauri adapter", () => {
     expect(invoke).toHaveBeenCalledWith("generate_recent_insights", {
       request: contract.request,
     })
-    const call = vi.mocked(invoke).mock.calls[0]
+    // The catalog is loaded first, so a meeting that outlives Rust's
+    // fifteen-minute cache does not fail its insights with "catalog required".
+    expect(vi.mocked(invoke).mock.calls[0]?.[0]).toBe("list_openrouter_models")
+    const call = vi
+      .mocked(invoke)
+      .mock.calls.find(([command]) => command === "generate_recent_insights")
     expect(call).toBeDefined()
     expect(Object.keys(call?.[1] as object)).toEqual(["request"])
     expect(Object.keys(contract.request)).toEqual([

@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { invoke } from "@tauri-apps/api/core"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -17,9 +18,9 @@ vi.mock("@/features/home/HomePage", () => ({
 vi.mock("@/features/settings/SettingsPage", () => ({
   SettingsPage: () => <p>Settings content</p>,
 }))
-vi.mock("@/features/transcript/LiveTranscriptPage", () => ({
-  LiveTranscriptPage: () => <p>Transcript content</p>,
-}))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
+
+const invokeMock = vi.mocked(invoke)
 
 function renderShell() {
   return render(
@@ -37,6 +38,7 @@ describe("AppShell session and appearance controls", () => {
     useShellStore.setState({ navigationCollapsed: false, theme: "light" })
     useNavigationStore.getState().navigate("home")
     useActiveSessionStore.setState({ activeSession: undefined })
+    invokeMock.mockReset()
   })
 
   it("shows pause and stop controls for the active transcribing session", () => {
@@ -67,5 +69,40 @@ describe("AppShell session and appearance controls", () => {
     expect(
       screen.getByRole("button", { name: "Switch to light mode" }),
     ).toBeInTheDocument()
+  })
+
+  it("credits the author and opens the repository through Rust", async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    renderShell()
+
+    const repository = screen.getByRole("link", {
+      name: "KokoroKoe on GitHub",
+    })
+    expect(repository).toHaveAttribute(
+      "href",
+      "https://github.com/klysman08/KokoroKoe",
+    )
+    expect(screen.getByText(/Made by/)).toHaveTextContent(
+      `Made by klysman08 · v${__APP_VERSION__}`,
+    )
+
+    await user.click(repository)
+    await user.click(screen.getByRole("link", { name: "klysman08" }))
+
+    expect(invokeMock).toHaveBeenCalledWith("open_external_page", {
+      page: "repository",
+    })
+    expect(invokeMock).toHaveBeenCalledWith("open_external_page", {
+      page: "author",
+    })
+  })
+
+  it("names the current page in the header", () => {
+    useNavigationStore.getState().navigate("settings")
+    renderShell()
+
+    expect(screen.getByRole("banner")).toHaveTextContent("Settings")
+    expect(screen.queryByText("Foundation checkpoint")).not.toBeInTheDocument()
   })
 })

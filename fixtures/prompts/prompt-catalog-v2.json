@@ -2,7 +2,7 @@
   "specifications": [
     {
       "id": "kokorokoe.insight.recent",
-      "version": 1,
+      "version": 2,
       "purpose": "insight",
       "variables": [
         "project",
@@ -13,7 +13,7 @@
       ],
       "approximateRequestTokenLimit": 8192,
       "maximumOutputTokens": 1024,
-      "outputSchemaId": "insight_batch_v1",
+      "outputSchemaId": "insight_batch_v2",
       "outputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -21,13 +21,20 @@
         "properties": {
           "insights": {
             "type": "array",
-            "maxItems": 8,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["type", "title", "content", "relatedSegmentIds"],
+              "required": [
+                "type",
+                "title",
+                "content",
+                "rationale",
+                "relatedSegmentIds",
+                "confidence"
+              ],
               "properties": {
                 "type": {
+                  "type": "string",
                   "enum": [
                     "suggested_response",
                     "follow_up_question",
@@ -41,18 +48,23 @@
                     "unaddressed_topic"
                   ]
                 },
-                "title": { "type": "string", "maxLength": 160 },
-                "content": { "type": "string", "maxLength": 2000 },
-                "rationale": { "type": "string", "maxLength": 1000 },
+                "title": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "rationale": {
+                  "type": ["string", "null"]
+                },
                 "relatedSegmentIds": {
                   "type": "array",
-                  "maxItems": 16,
-                  "items": { "type": "string", "format": "uuid" }
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "confidence": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
+                  "type": ["number", "null"]
                 }
               }
             }
@@ -63,7 +75,7 @@
     },
     {
       "id": "kokorokoe.summary.session",
-      "version": 1,
+      "version": 2,
       "purpose": "summary",
       "variables": [
         "project",
@@ -72,9 +84,9 @@
         "summaryKind",
         "transcriptSegments"
       ],
-      "approximateRequestTokenLimit": 16384,
+      "approximateRequestTokenLimit": 32768,
       "maximumOutputTokens": 4096,
-      "outputSchemaId": "session_summary_v1",
+      "outputSchemaId": "session_summary_v2",
       "outputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -88,50 +100,63 @@
           "nextSteps"
         ],
         "properties": {
-          "executiveSummary": { "type": "string", "maxLength": 8000 },
+          "executiveSummary": {
+            "type": "string"
+          },
           "mainTopics": {
             "type": "array",
-            "maxItems": 64,
-            "items": { "type": "string", "maxLength": 1000 }
+            "items": {
+              "type": "string"
+            }
           },
           "decisions": {
             "type": "array",
-            "maxItems": 64,
-            "items": { "type": "string", "maxLength": 2000 }
+            "items": {
+              "type": "string"
+            }
           },
           "actionItems": {
             "type": "array",
-            "maxItems": 64,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["text", "relatedSegmentIds"],
+              "required": ["text", "owner", "deadline", "relatedSegmentIds"],
               "properties": {
-                "text": { "type": "string", "maxLength": 2000 },
-                "owner": { "type": "string", "maxLength": 256 },
-                "deadline": { "type": "string", "format": "date-time" },
+                "text": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": ["string", "null"]
+                },
+                "deadline": {
+                  "type": ["string", "null"]
+                },
                 "relatedSegmentIds": {
                   "type": "array",
-                  "maxItems": 16,
-                  "items": { "type": "string", "format": "uuid" }
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
           },
           "risks": {
             "type": "array",
-            "maxItems": 64,
-            "items": { "type": "string", "maxLength": 2000 }
+            "items": {
+              "type": "string"
+            }
           },
           "openQuestions": {
             "type": "array",
-            "maxItems": 64,
-            "items": { "type": "string", "maxLength": 2000 }
+            "items": {
+              "type": "string"
+            }
           },
           "nextSteps": {
             "type": "array",
-            "maxItems": 64,
-            "items": { "type": "string", "maxLength": 2000 }
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -139,7 +164,7 @@
     },
     {
       "id": "kokorokoe.manual_question.segment",
-      "version": 1,
+      "version": 2,
       "purpose": "manual_question",
       "variables": [
         "project",
@@ -151,22 +176,26 @@
       ],
       "approximateRequestTokenLimit": 8192,
       "maximumOutputTokens": 2048,
-      "outputSchemaId": "manual_answer_v1",
+      "outputSchemaId": "manual_answer_v2",
       "outputSchema": {
         "type": "object",
         "additionalProperties": false,
         "required": ["answer", "relatedSegmentIds", "limitations"],
         "properties": {
-          "answer": { "type": "string", "maxLength": 8000 },
+          "answer": {
+            "type": "string"
+          },
           "relatedSegmentIds": {
             "type": "array",
-            "maxItems": 16,
-            "items": { "type": "string", "format": "uuid" }
+            "items": {
+              "type": "string"
+            }
           },
           "limitations": {
             "type": "array",
-            "maxItems": 16,
-            "items": { "type": "string", "maxLength": 1000 }
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

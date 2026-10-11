@@ -17,6 +17,10 @@ const defaultLlmModelsSchema = z
     manualQuestions: openRouterModelIdSchema.optional(),
   })
   .strict()
+const languageTagSchema = z
+  .string()
+  .max(64)
+  .regex(/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}$/)
 const maxTokensSchema = z.number().int().min(1).max(1_000_000)
 const budgetSchema = z
   .string()
@@ -36,6 +40,8 @@ export const appSettingsSchema = z
     denyProviderDataCollection: z.boolean(),
     maxTokensPerRequest: maxTokensSchema,
     defaultSessionBudgetUsd: budgetSchema,
+    // The spoken language Home offers next, remembered from the last meeting.
+    defaultSessionLanguage: languageTagSchema.optional(),
   })
   .strict()
 
@@ -52,6 +58,7 @@ export const appSettingsUpdateSchema = z
     denyProviderDataCollection: z.boolean().optional(),
     maxTokensPerRequest: maxTokensSchema.optional(),
     defaultSessionBudgetUsd: budgetSchema.optional(),
+    defaultSessionLanguage: languageTagSchema.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {

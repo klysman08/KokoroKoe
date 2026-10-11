@@ -1,128 +1,150 @@
-# KokoroKoe
+<p align="center">
+  <img src="docs/assets/og.png" alt="KokoroKoe: your meetings, transcribed on your own PC" width="840" />
+</p>
 
-KokoroKoe is a privacy-first Windows meeting assistant under active development. Audio never leaves
-the machine: capture, transcription, and storage are local, and only bounded transcript text is sent
-to OpenRouter, and only when you ask for it.
+<h1 align="center">KokoroKoe</h1>
 
-## What works today
+<p align="center">
+  <strong>Private meeting transcription and AI insights for Windows.</strong><br />
+  Your microphone and your computer's audio, transcribed live on your own machine.
+</p>
 
-- **Dual-source capture.** Windows WASAPI capture of the microphone and system output as separate
-  channels, with normalization, source-local VAD, utterance segmentation, QPC clock alignment, and
-  visible gaps whenever a source drops or recovers.
-- **Local transcription.** Whisper inference through a project-owned C ABI shim over pinned MIT
-  whisper.cpp v1.9.2, running in a supervised Vulkan worker with a lazy exact CPU fallback, plus a
-  prioritized scheduler with bounded queues and backpressure. Partial and final results are labelled
-  by source and ordered chronologically across both channels.
-- **Curated model management.** A closed catalog of three SHA-256-pinned Whisper models — Tiny,
-  Base, and Large-v3 Turbo Q5_0 (multilingual) — with resumable verified downloads, disk checks, and
-  deletion, all owned by Rust.
-- **Presets.** The nine presets the product defines — technical and behavioral interview, business, sales
-  and product meetings, brainstorming, a class or lecture, customer support, and a neutral custom
-  starting point — are a closed catalog owned by Rust. Each names the assistant's role, its analysis
-  objectives, the insight types it requests, its tone, the sections its final summary uses, and what it
-  must not do. A project picks the preset its sessions open on, and each Session may choose another. The
-  choice is copied into the Session when it is created, so a meeting keeps reading the way it did when
-  it started even after the catalog changes. Presets of your own can be written, edited, duplicated,
-  exported, and deleted alongside them: each is a portable Markdown document inside its project's own
-  folder, so a project carries its presets when it is copied or restored. Deleting one moves it to the
-  workspace Trash, and the built-in nine cannot be edited — duplicate one to start from it.
-- **Projects and sessions.** Markdown is the source of truth: pinned `project.md` and `session.md`
-  snapshots with YAML front matter, a durable append-only journal, incremental transcript
-  materialization, interrupted-session recovery, and a rebuildable SQLite index for discovery and
-  full-text search.
-- **OpenRouter integration.** The API key lives only in Windows Credential Manager and is never
-  returned to the frontend. Rust owns validation, a privacy-filtered zero-data-retention model
-  catalog, per-role model selection, versioned prompts, conservative cost reservation with
-  reconciliation against a per-Session spending limit, bounded retries, and strict schema validation
-  with a single JSON repair attempt.
-- **Questions and insights.** Ask a question about a saved transcript segment — freehand, or with a
-  one-click **Explain**, **Suggest a response**, or **Summarize** that fills the question box for
-  you to read and edit before sending — or generate insights over the recent transcript of a running
-  Session. Each insight says which moments of the meeting it came from, and can be asked again for a
-  second reading of those same moments, kept beside the first. All of these are explicit,
-  per-request user actions that return transient, validated, typed results with their token and cost
-  accounting. Transcript segments can also be copied, marked
-  important, and corrected — a correction is recorded as a new journal event, so the transcription
-  it replaced stays readable in the document and the app. A corrected segment can show its whole
-  history: what was transcribed, every wording since, and when each was recorded, with any of them
-  restorable into the correction box. During the meeting a finalized segment can be marked
-  important, bookmarked, or copied straight from the live transcript, the moment it is heard — and
-  the popped-out transcript window can mark and copy too, holding that one command and nothing else
-  that writes.
-- **Final session summary.** Once a Session is finished, generate an executive summary with main
-  topics, decisions, action items (with owners and deadlines), risks, open questions, and next
-  steps. It is written to `summary.md` beside the transcript as portable Markdown, states how much
-  of the transcript it covered, and can be regenerated.
-- **Detached transcript and insights windows.** Pop the live transcript out during a Session, and
-  pop generated insights into a second window that shows one card at a time with previous/next
-  navigation, its type, confidence, and rationale. Pin an insight to keep it past the next batch,
-  dismiss one so a later batch repeating it stays out of the way, or copy its text. Generation still
-  happens only from an explicit click in the main window.
-- **Independent window controls.** Each detached window has its own background opacity,
-  always-on-top, compact mode, position, size, system-wide show/hide shortcut, and click-through,
-  all remembered separately between runs. Opacity dims the background only, so text stays fully
-  readable and cannot be lowered past a readable floor; a window left on a display that is later
-  disconnected returns to a centered default instead of reopening off-screen. Click-through never
-  survives a restart, cannot be switched on without the main window, and switches off when the main
-  window closes, so pointer control is always recoverable. Both windows are created by Rust and hold
-  an event-subscription-only capability: neither can invoke a command or read a file.
-- **Local dashboard.** Sessions, transcribed speech, the most used projects and Whisper and
-  language models, tokens, estimated cost, insights generated, disk space, and recent errors, for
-  the last 7 or 30 days or all time, for one project or all of them. Spending is read from a
-  local ledger that begins on the first run of a version that has it; nothing on the dashboard
-  is sent anywhere.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+  <img alt="Windows 10 and 11, x64" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078D4.svg" />
+  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-teal.svg" />
+</p>
 
-## Not implemented yet
+---
 
-- The rolling in-session summary that accumulates while a Session runs; only the final summary
-  exists today.
-- An explicit monitor picker. Each window returns to where it was left, which is remembered between
-  runs, but a preferred display cannot be named.
-- Sharing a preset between projects, and importing one. A preset belongs to the project it was
-  written in; copying its Markdown file into another project's `presets/` folder and rescanning the
-  workspace is the manual route.
-- A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
-  staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
+KokoroKoe is a desktop meeting assistant that listens to **both sides of a call**: what you say into
+your microphone and what the others say through your speakers. It transcribes everything **on your
+PC** with Whisper, so the audio never leaves the machine. If you want, it also reads the transcript
+with an AI model of your choice and points out decisions, action items, and risks while you talk,
+then writes a summary when the meeting ends.
 
-Verification so far covers Windows 11 x64 on a single RTX 3070 Ti / Ryzen 7 3700X host. Windows 10,
-AMD and Intel GPUs, CPU-only minimum hardware, and broad real-speech accuracy across speakers,
-languages, accents, and noise remain unverified.
+Everything is saved as plain Markdown files in a folder you choose. No account, no cloud, no
+subscription.
 
-## Prerequisites
+## Features
 
-- Windows 10 22H2 or Windows 11 x64
-- Node.js 24 LTS
-- pnpm 10
-- Rust 1.88+ with the `x86_64-pc-windows-msvc` target
-- Microsoft Visual C++ Build Tools and Windows SDK
-- Microsoft Edge WebView2 Runtime
+- **One press to start.** Pick a language and a meeting type, press **Start meeting**, and the
+  live transcript appears. Your last choices are remembered.
+- **Both sides of the conversation.** The microphone and the computer's audio are captured as
+  separate channels, so the transcript shows who said what: _you_ or _the others_.
+- **Local transcription.** Whisper runs on your GPU through Vulkan, or on the CPU when there is no
+  GPU. Choose between Tiny, Base, and Large-v3 Turbo, downloaded and verified in the app.
+- **Live insights.** Decisions, action items, risks, follow-up questions, and topics nobody has
+  covered appear as cards during the meeting, each linked to the moment it came from.
+- **Summary at the end.** An executive summary with topics, decisions, action items with owners
+  and deadlines, risks, open questions, and next steps, saved beside the transcript.
+- **Ask about any moment.** Select a line of the transcript and ask a question, or use one of the
+  shortcuts: **Explain**, **Suggest a response**, **Summarize**.
+- **Floating windows.** Pop the transcript or the insights out into small windows that stay on top
+  of your call. Opacity, size, and a show/hide shortcut are set per window.
+- **Meeting types.** Nine built-in presets (sales call, interview, brainstorm, lecture, customer
+  support, and more) tell the assistant what to look for. You can write your own.
+- **Files you own.** Each meeting is a folder of Markdown files: its details, transcript, and summary.
+  Bookmark, mark as important, and correct lines; every correction keeps its history.
+- **Local dashboard.** Time transcribed, meetings, tokens, cost, and disk space, computed on your
+  PC and never sent anywhere.
 
-## Development
+## Screenshots
+
+<p align="center">
+  <img src="docs/assets/screenshot-meeting.png" alt="A live meeting: transcript on the left, insights on the right" width="840" />
+</p>
+
+<table>
+  <tr>
+    <td><img src="docs/assets/screenshot-home.png" alt="Home: start a meeting and see recent ones" /></td>
+    <td><img src="docs/assets/screenshot-dashboard.png" alt="Dashboard: local usage, cost, and disk space" /></td>
+  </tr>
+</table>
+
+<sub>The screenshots use fictional demo data.</sub>
+
+## Privacy
+
+| Stays on your PC                                        | Leaves your PC, only if you turn it on                                                             |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| All audio, always                                       | Transcript text sent to [OpenRouter](https://openrouter.ai) for insights, summaries, and questions |
+| Transcripts, summaries, and notes (Markdown)            |                                                                                                    |
+| Your OpenRouter key, kept in Windows Credential Manager |                                                                                                    |
+| Usage and cost history                                  |                                                                                                    |
+
+- **Audio is never uploaded.** There is no setting that sends it anywhere.
+- **AI features are off until you add a key.** Without one, KokoroKoe is a fully offline
+  transcriber.
+- **Privacy-respecting models by default.** Providers that keep or train on your data are
+  filtered out unless you change that, and each meeting has a spending limit you set.
+- **You are responsible for consent.** Tell the people in the meeting that it is being transcribed,
+  as the law where you live may require.
+
+The details are in [Privacy and limitations](docs/privacy-and-limitations.md).
+
+## Getting started
+
+1. Download the latest installer from the
+   [Releases page](https://github.com/klysman08/KokoroKoe/releases) and run it.
+   The app is not code-signed yet, so Windows SmartScreen may warn you: choose **More info → Run
+   anyway**.
+2. Open **Settings** and choose a folder for your meetings.
+3. Download a transcription model. **Base** is a good start; **Large-v3 Turbo** is the most
+   accurate and works best with a GPU.
+4. _(Optional)_ Add an [OpenRouter API key](https://openrouter.ai/keys) and choose the models for
+   insights and summaries.
+5. Go to **Home** and press **Start meeting**.
+
+### Requirements
+
+- Windows 10 22H2 or Windows 11, 64-bit
+- Microsoft Edge WebView2 Runtime (already installed on most PCs)
+- 80 MB to 600 MB of disk space per transcription model
+- Optional: a GPU with Vulkan support for faster transcription
+
+## Build from source
+
+Prerequisites: Node.js 24, pnpm 10, Rust 1.88+ with the `x86_64-pc-windows-msvc` target, the
+Microsoft Visual C++ Build Tools, and the Windows SDK.
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm dev
-```
-
-Run the desktop shell:
-
-```powershell
 pnpm tauri dev
 ```
 
-## Verification
+Checks and a release build:
 
 ```powershell
 pnpm verify:frontend
 pnpm verify:rust
+pnpm tauri build --ci --no-bundle --target x86_64-pc-windows-msvc -- --locked
 ```
 
-Dependency audits, production-license inventory, installer builds, CI parity, and the secret-handling
-policy are documented in [Development and CI](docs/development-and-ci.md).
+The native Whisper runtimes are built separately and staged beside the executable with
+`scripts/prepare-poc-transcription-runtime.ps1`; see
+[Development and CI](docs/development-and-ci.md). `pnpm screenshots` regenerates the images in this
+README from the real interface with demo data.
 
-See [the architecture](docs/architecture.md) and [project memory](docs/project-memory.md) for scope,
-decisions, and the active handoff. [Privacy and limitations](docs/privacy-and-limitations.md)
-records what leaves the machine and what is still unverified.
+## Project status
 
-The focused P3-010 Rust-only model gate is documented in
-[Whisper model management prototype](docs/whisper-model-management-prototype.md).
+This is the first public version. It has been tested on Windows 11 with an NVIDIA GPU. Windows 10,
+AMD and Intel GPUs, and CPU-only computers have not been verified yet, and transcription accuracy
+varies with the model, the language, and the audio. A rolling summary during the meeting and
+sharing presets between projects are planned.
+
+Found a bug or have an idea? [Open an issue](https://github.com/klysman08/KokoroKoe/issues).
+
+## Documentation
+
+- [Architecture](docs/architecture.md) and the [decision records](docs/adr)
+- [Privacy and limitations](docs/privacy-and-limitations.md)
+- [Development and CI](docs/development-and-ci.md)
+- [Dependencies and licenses](docs/dependency-licenses.md)
+
+## License
+
+[MIT](LICENSE) © 2026 [klysman08](https://github.com/klysman08)
+
+KokoroKoe uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and OpenAI's Whisper models
+(MIT), [Tauri](https://tauri.app), and [React](https://react.dev).

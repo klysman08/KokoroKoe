@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 
+import { ensureModelCatalog } from "@/lib/tauri/openrouter"
 import {
   createContractApplicationError,
   createRequestContractApplicationError,
@@ -44,6 +45,7 @@ export async function generateSessionSummary(
 ): Promise<GenerateSessionSummaryResponse> {
   const request = generateSessionSummaryRequestSchema.safeParse(value)
   if (!request.success) throw createRequestContractApplicationError()
+  await ensureModelCatalog()
   let raw: unknown
   try {
     raw = await invoke<unknown>("generate_session_summary", {

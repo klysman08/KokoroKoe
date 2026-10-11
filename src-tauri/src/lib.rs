@@ -171,6 +171,7 @@ pub fn run() {
             commands::settings::open_workspace_folder,
             commands::settings::rescan_workspace,
             commands::dashboard::get_dashboard_metrics,
+            commands::about::open_external_page,
             commands::credentials::get_openrouter_credential_status,
             commands::credentials::set_openrouter_api_key,
             commands::credentials::delete_openrouter_api_key,

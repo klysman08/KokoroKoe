@@ -243,6 +243,9 @@ fn map_completion_error(error: CompletionError) -> AppError {
         | "completion_provider_failed" => "insight_provider_temporarily_unavailable",
         _ => "insight_provider_unavailable",
     };
+    if public == "insight_provider_unavailable" {
+        return AppError::insight_error(public).with_internal_code(error.code);
+    }
     AppError::insight_error(public)
 }
 

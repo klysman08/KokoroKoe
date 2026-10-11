@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 
+import { ensureModelCatalog } from "@/lib/tauri/openrouter"
 import {
   createContractApplicationError,
   createRequestContractApplicationError,
@@ -17,6 +18,7 @@ export async function askManualQuestion(
 ): Promise<ManualQuestionResponse> {
   const request = askManualQuestionRequestSchema.safeParse(value)
   if (!request.success) throw createRequestContractApplicationError()
+  await ensureModelCatalog()
   let raw: unknown
   try {
     raw = await invoke<unknown>("ask_manual_question", {

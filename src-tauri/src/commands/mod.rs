@@ -1,3 +1,4 @@
+pub(crate) mod about;
 pub(crate) mod audio;
 pub(crate) mod credentials;
 pub(crate) mod dashboard;

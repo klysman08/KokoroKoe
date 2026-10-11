@@ -30,6 +30,15 @@ pub(crate) struct PromptSpecification {
     pub(crate) task_instructions: &'static str,
 }
 
+// Every output schema is written in the subset that strict structured outputs
+// accept: each object lists all of its properties in `required`, an optional
+// value is a `null` union rather than an absent key, and no string-length,
+// numeric-range, array-size, or format keyword appears. Providers enforcing
+// strict mode reject a schema outside that subset with HTTP 400, which is how
+// the version-one schemas failed against a real model. The bounds those
+// keywords expressed are enforced locally in `llm/results.rs` instead, where
+// they hold whatever the provider does.
+
 const INSIGHT_OUTPUT_SCHEMA: &str = r#"{
   "type": "object",
   "additionalProperties": false,
@@ -37,18 +46,17 @@ const INSIGHT_OUTPUT_SCHEMA: &str = r#"{
   "properties": {
     "insights": {
       "type": "array",
-      "maxItems": 8,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "title", "content", "relatedSegmentIds"],
+        "required": ["type", "title", "content", "rationale", "relatedSegmentIds", "confidence"],
         "properties": {
-          "type": {"enum": ["suggested_response", "follow_up_question", "clarification", "fact_or_number", "risk", "objection", "decision", "action_item", "contradiction", "unaddressed_topic"]},
-          "title": {"type": "string", "maxLength": 160},
-          "content": {"type": "string", "maxLength": 2000},
-          "rationale": {"type": "string", "maxLength": 1000},
-          "relatedSegmentIds": {"type": "array", "maxItems": 16, "items": {"type": "string", "format": "uuid"}},
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          "type": {"type": "string", "enum": ["suggested_response", "follow_up_question", "clarification", "fact_or_number", "risk", "objection", "decision", "action_item", "contradiction", "unaddressed_topic"]},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "rationale": {"type": ["string", "null"]},
+          "relatedSegmentIds": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": ["number", "null"]}
         }
       }
     }
@@ -60,27 +68,26 @@ const SUMMARY_OUTPUT_SCHEMA: &str = r#"{
   "additionalProperties": false,
   "required": ["executiveSummary", "mainTopics", "decisions", "actionItems", "risks", "openQuestions", "nextSteps"],
   "properties": {
-    "executiveSummary": {"type": "string", "maxLength": 8000},
-    "mainTopics": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 1000}},
-    "decisions": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 2000}},
+    "executiveSummary": {"type": "string"},
+    "mainTopics": {"type": "array", "items": {"type": "string"}},
+    "decisions": {"type": "array", "items": {"type": "string"}},
     "actionItems": {
       "type": "array",
-      "maxItems": 64,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["text", "relatedSegmentIds"],
+        "required": ["text", "owner", "deadline", "relatedSegmentIds"],
         "properties": {
-          "text": {"type": "string", "maxLength": 2000},
-          "owner": {"type": "string", "maxLength": 256},
-          "deadline": {"type": "string", "format": "date-time"},
-          "relatedSegmentIds": {"type": "array", "maxItems": 16, "items": {"type": "string", "format": "uuid"}}
+          "text": {"type": "string"},
+          "owner": {"type": ["string", "null"]},
+          "deadline": {"type": ["string", "null"]},
+          "relatedSegmentIds": {"type": "array", "items": {"type": "string"}}
         }
       }
     },
-    "risks": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 2000}},
-    "openQuestions": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 2000}},
-    "nextSteps": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 2000}}
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "openQuestions": {"type": "array", "items": {"type": "string"}},
+    "nextSteps": {"type": "array", "items": {"type": "string"}}
   }
 }"#;
 
@@ -89,16 +96,16 @@ const MANUAL_QUESTION_OUTPUT_SCHEMA: &str = r#"{
   "additionalProperties": false,
   "required": ["answer", "relatedSegmentIds", "limitations"],
   "properties": {
-    "answer": {"type": "string", "maxLength": 8000},
-    "relatedSegmentIds": {"type": "array", "maxItems": 16, "items": {"type": "string", "format": "uuid"}},
-    "limitations": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 1000}}
+    "answer": {"type": "string"},
+    "relatedSegmentIds": {"type": "array", "items": {"type": "string"}},
+    "limitations": {"type": "array", "items": {"type": "string"}}
   }
 }"#;
 
 const PROMPT_SPECIFICATIONS: [PromptSpecification; 3] = [
     PromptSpecification {
         id: "kokorokoe.insight.recent",
-        version: 1,
+        version: 2,
         purpose: PromptPurpose::Insight,
         variables: &[
             "project",
@@ -109,14 +116,14 @@ const PROMPT_SPECIFICATIONS: [PromptSpecification; 3] = [
         ],
         approximate_request_token_limit: 8_192,
         maximum_output_tokens: 1_024,
-        output_schema_id: "insight_batch_v1",
+        output_schema_id: "insight_batch_v2",
         output_schema: INSIGHT_OUTPUT_SCHEMA,
         fallback_strategy: PromptFallbackStrategy::SingleJsonRepairThenFail,
-        task_instructions: "Return only concise, non-duplicative insights of the requested types that are supported by the supplied transcript segments.",
+        task_instructions: "Return the insights of the requested types that would help the user most right now, usually one to five: questions worth asking, risks, decisions, action items, facts or numbers worth checking, topics left unaddressed. Make each one specific to what was said, cite the segments it rests on, and do not repeat an earlier insight. Return an empty list only when the segments hold no substantive discussion. Write every text value in the language named by the session's language field.",
     },
     PromptSpecification {
         id: "kokorokoe.summary.session",
-        version: 1,
+        version: 2,
         purpose: PromptPurpose::Summary,
         variables: &[
             "project",
@@ -125,16 +132,16 @@ const PROMPT_SPECIFICATIONS: [PromptSpecification; 3] = [
             "summaryKind",
             "transcriptSegments",
         ],
-        approximate_request_token_limit: 16_384,
+        approximate_request_token_limit: 32_768,
         maximum_output_tokens: 4_096,
-        output_schema_id: "session_summary_v1",
+        output_schema_id: "session_summary_v2",
         output_schema: SUMMARY_OUTPUT_SCHEMA,
         fallback_strategy: PromptFallbackStrategy::SingleJsonRepairThenFail,
-        task_instructions: "Return only a factual summary supported by the supplied transcript segments, preserving uncertainty and omitting invented decisions, owners, or deadlines.",
+        task_instructions: "Summarize the meeting for someone who missed it, using only the supplied transcript segments. The executive summary is a full paragraph: what the meeting was for, what was discussed, and where it ended. List every main topic. Record decisions, action items with their owners and deadlines, risks, open questions, and next steps whenever the segments support them, and leave a list empty rather than invent an entry. Prefer concrete detail - names, numbers, tools, examples, reasons - over generic phrasing, and preserve uncertainty where speakers were unsure. Write every text value in the language named by the session's language field.",
     },
     PromptSpecification {
         id: "kokorokoe.manual_question.segment",
-        version: 1,
+        version: 2,
         purpose: PromptPurpose::ManualQuestion,
         variables: &[
             "project",
@@ -146,10 +153,10 @@ const PROMPT_SPECIFICATIONS: [PromptSpecification; 3] = [
         ],
         approximate_request_token_limit: 8_192,
         maximum_output_tokens: 2_048,
-        output_schema_id: "manual_answer_v1",
+        output_schema_id: "manual_answer_v2",
         output_schema: MANUAL_QUESTION_OUTPUT_SCHEMA,
         fallback_strategy: PromptFallbackStrategy::SingleJsonRepairThenFail,
-        task_instructions: "Answer only the supplied question using the supplied transcript segments and session context; state limitations when the evidence is insufficient.",
+        task_instructions: "Answer only the supplied question using the supplied transcript segments and session context; state limitations when the evidence is insufficient. Write every text value in the language named by the session's language field.",
     },
 ];
 
@@ -243,11 +250,68 @@ mod tests {
         fallback_strategy: PromptFallbackStrategy,
     }
 
+    /// Strict structured outputs reject a schema with an optional property or
+    /// a keyword outside their subset, and they reject it with an HTTP 400 that
+    /// reads to the user like a bad model choice. Every object therefore names
+    /// all of its properties as required and closes itself, and none of the
+    /// unsupported keywords appears anywhere.
+    #[test]
+    fn every_output_schema_is_in_the_strict_structured_output_subset() {
+        fn walk(path: &str, value: &serde_json::Value) {
+            let Some(object) = value.as_object() else {
+                if let Some(items) = value.as_array() {
+                    items.iter().for_each(|item| walk(path, item));
+                }
+                return;
+            };
+            for forbidden in [
+                "maxLength",
+                "minLength",
+                "maxItems",
+                "minItems",
+                "minimum",
+                "maximum",
+                "format",
+                "pattern",
+            ] {
+                assert!(!object.contains_key(forbidden), "{path} uses {forbidden}");
+            }
+            if let Some(properties) = object.get("properties").and_then(|value| value.as_object()) {
+                let required = object
+                    .get("required")
+                    .and_then(|value| value.as_array())
+                    .unwrap_or_else(|| panic!("{path} has no required list"));
+                for name in properties.keys() {
+                    assert!(
+                        required.iter().any(|entry| entry == name),
+                        "{path}.{name} is optional"
+                    );
+                }
+                assert_eq!(
+                    object.get("additionalProperties"),
+                    Some(&serde_json::Value::Bool(false)),
+                    "{path} is open"
+                );
+            }
+            if object.contains_key("enum") {
+                assert!(object.contains_key("type"), "{path} has an untyped enum");
+            }
+            for (key, child) in object {
+                walk(&format!("{path}.{key}"), child);
+            }
+        }
+        for specification in prompt_specifications() {
+            let schema: serde_json::Value =
+                serde_json::from_str(specification.output_schema).unwrap();
+            walk(specification.output_schema_id, &schema);
+        }
+    }
+
     #[test]
     fn prompt_catalog_matches_the_frozen_fixture_and_invariants() {
         validate_catalog().unwrap();
         let fixture: CatalogFixture = serde_json::from_str(include_str!(
-            "../../../fixtures/prompts/prompt-catalog-v1.json"
+            "../../../fixtures/prompts/prompt-catalog-v2.json"
         ))
         .unwrap();
         assert_eq!(fixture.specifications.len(), prompt_specifications().len());

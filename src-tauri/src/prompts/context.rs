@@ -134,13 +134,17 @@ pub(crate) fn build_prompt_context(
     let model_id = selected_model(request.session, purpose)
         .ok_or_else(|| PromptBuildError::new("prompt_model_not_selected"))?;
     let output_schema = compact_output_schema(specification.output_schema)?;
-    let request_token_limit = request
-        .session
-        .max_tokens_per_request
-        .min(specification.approximate_request_token_limit);
+    // The session's `maxTokensPerRequest` caps what the model may write, which
+    // is what `max_tokens` means everywhere else. Version one capped the whole
+    // request with it instead, so the 2,048 default left a summary 512 tokens
+    // to write and room for three segments of a ten-segment meeting. How much
+    // of the meeting a request may carry is the prompt's own limit, and the
+    // session budget is what bounds the cost.
+    let request_token_limit = specification.approximate_request_token_limit;
     let maximum_output_tokens = specification
         .maximum_output_tokens
-        .min((request_token_limit / 4).max(1));
+        .min(request.session.max_tokens_per_request)
+        .max(1);
     let input_token_limit = request_token_limit.saturating_sub(maximum_output_tokens);
     let candidates = collect_candidates(&request)?;
 
@@ -577,8 +581,9 @@ mod tests {
             PromptPurpose::ManualQuestion
         );
         assert_eq!(envelope.model_id, "example/question");
-        assert_eq!(envelope.request_token_limit, 2_048);
-        assert_eq!(envelope.maximum_output_tokens, 512);
+        // The session cap bounds what the model writes; the prompt bounds the request.
+        assert_eq!(envelope.request_token_limit, 8_192);
+        assert_eq!(envelope.maximum_output_tokens, 2_048);
         assert!(envelope.estimated_input_tokens <= envelope.input_token_limit);
         assert_eq!(envelope.selected_segment_ids, [selected.id]);
         assert!(!envelope.untrusted_context.contains("folderName"));
@@ -676,7 +681,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(summary.model_id, "example/summary");
-        assert_eq!(summary.request_token_limit, 16_384);
+        assert_eq!(summary.request_token_limit, 32_768);
         assert_eq!(summary.maximum_output_tokens, 4_096);
         assert!(summary.untrusted_context.contains("summaryKind"));
 
@@ -714,7 +719,7 @@ mod tests {
                     &session,
                     &format!("22222222-2222-4222-8222-22222222222{index}"),
                     index * 1_000,
-                    "n".repeat(900),
+                    "n".repeat(9_000),
                 )
             })
             .collect::<Vec<_>>();
@@ -731,6 +736,37 @@ mod tests {
         assert!(envelope.selected_segment_ids.contains(&relevant.id));
         assert!(envelope.omitted_recent_segments > 0);
         assert!(envelope.estimated_input_tokens <= envelope.input_token_limit);
+    }
+
+    /// The first real summary covered three of a ten-segment meeting, because
+    /// the 2,048-token default capped the whole request. It caps the answer.
+    #[test]
+    fn a_short_meeting_is_summarized_whole_under_the_default_cap() {
+        let (project, mut session) = records();
+        session.max_tokens_per_request = 2_048;
+        let segments = (0..10)
+            .map(|index| {
+                segment(
+                    &project,
+                    &session,
+                    &format!("33333333-3333-4333-8333-33333333333{index}"),
+                    index * 30_000,
+                    "word ".repeat(120),
+                )
+            })
+            .collect::<Vec<_>>();
+        let envelope = build_prompt_context(PromptContextRequest {
+            project: &project,
+            session: &session,
+            task: PromptTask::Summary {
+                kind: SummaryKind::Final,
+            },
+            relevant_segments: &segments,
+            recent_segments: &[],
+        })
+        .unwrap();
+        assert_eq!(envelope.selected_segment_ids.len(), 10);
+        assert_eq!(envelope.maximum_output_tokens, 2_048);
     }
 
     #[test]
@@ -808,7 +844,7 @@ mod tests {
             &session,
             "44444444-4444-4444-8444-444444444444",
             2_000,
-            "e".repeat(8_000),
+            "e".repeat(30_000),
         );
         session.max_tokens_per_request = 2_048;
         let error = build_prompt_context(PromptContextRequest {
@@ -824,8 +860,10 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code, "prompt_selected_segment_exceeds_budget");
 
+        // The smallest cap still leaves the request its prompt's room: it
+        // shortens the answer, it does not starve the context.
         session.max_tokens_per_request = 1;
-        let error = build_prompt_context(PromptContextRequest {
+        let envelope = build_prompt_context(PromptContextRequest {
             project: &project,
             session: &session,
             task: PromptTask::Summary {
@@ -834,7 +872,8 @@ mod tests {
             relevant_segments: &[],
             recent_segments: &[],
         })
-        .unwrap_err();
-        assert_eq!(error.code, "prompt_context_budget_too_small");
+        .unwrap();
+        assert_eq!(envelope.maximum_output_tokens, 1);
+        assert_eq!(envelope.request_token_limit, 32_768);
     }
 }

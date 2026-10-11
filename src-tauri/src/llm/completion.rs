@@ -78,6 +78,15 @@ struct CompletionRequest<'a> {
     stream: bool,
     response_format: ResponseFormat<'a>,
     provider: ProviderRouting<'static>,
+    /// Asks OpenRouter to put token usage in the final stream event. The budget
+    /// cannot reconcile a request without it, and a stream that ends without
+    /// usage fails as `completion_usage_missing`.
+    usage: UsageOption,
+}
+
+#[derive(Serialize)]
+struct UsageOption {
+    include: bool,
 }
 
 #[derive(Serialize)]
@@ -366,6 +375,7 @@ fn build_request_body(envelope: &PromptEnvelope) -> Result<Vec<u8>, CompletionEr
             data_collection: "deny",
             require_parameters: true,
         },
+        usage: UsageOption { include: true },
     };
     let body = serde_json::to_vec(&request).map_err(|_| {
         CompletionError::new(
@@ -529,7 +539,7 @@ fn process_chunk<F: FnMut(&str)>(
     if chunk
         .model
         .as_deref()
-        .is_some_and(|model| model != expected_model)
+        .is_some_and(|model| !same_model(expected_model, model))
     {
         return Err(StreamFailure {
             code: "completion_model_mismatch",
@@ -552,7 +562,10 @@ fn process_chunk<F: FnMut(&str)>(
                 usage: *usage,
             });
         }
-        if let Some(delta) = choice.delta.content {
+        // OpenRouter's final usage event repeats the choice with an empty
+        // delta, sometimes after the finish reason. An empty delta adds no
+        // text, so it is not a delta after the end.
+        if let Some(delta) = choice.delta.content.filter(|value| !value.is_empty()) {
             if finish_reason.is_some() || output.len().saturating_add(delta.len()) > OUTPUT_LIMIT {
                 return Err(StreamFailure {
                     code: if finish_reason.is_some() {
@@ -568,14 +581,7 @@ fn process_chunk<F: FnMut(&str)>(
             on_delta(&delta);
         }
         if let Some(reason) = choice.finish_reason {
-            if finish_reason.is_some() {
-                return Err(StreamFailure {
-                    code: "completion_response_invalid",
-                    started,
-                    usage: *usage,
-                });
-            }
-            *finish_reason = Some(match reason.as_str() {
+            let reason = match reason.as_str() {
                 "stop" => CompletionFinishReason::Stop,
                 "length" => CompletionFinishReason::Length,
                 "content_filter" => CompletionFinishReason::ContentFilter,
@@ -586,7 +592,18 @@ fn process_chunk<F: FnMut(&str)>(
                         usage: *usage,
                     });
                 }
-            });
+            };
+            // Some providers repeat the finish reason on the usage event.
+            // Saying the same thing twice is not a contradiction; a second,
+            // different reason is.
+            if finish_reason.is_some_and(|previous| previous != reason) {
+                return Err(StreamFailure {
+                    code: "completion_response_invalid",
+                    started,
+                    usage: *usage,
+                });
+            }
+            *finish_reason = Some(reason);
         }
     }
     if let Some(final_usage) = chunk.usage {
@@ -607,6 +624,30 @@ fn process_chunk<F: FnMut(&str)>(
         *usage = Some(final_usage);
     }
     Ok(())
+}
+
+/// Whether the model a stream reports is the one that was priced.
+///
+/// OpenRouter may answer with the dated release behind a slug — a request for
+/// `vendor/model` streams back `vendor/model-2024-07-18` — and drops a routing
+/// variant such as `:free`. Those are the same model at the same price. Only a
+/// purely numeric suffix counts as a release: `gpt-4o-mini` is a different,
+/// differently priced model from `gpt-4o`, not a release of it.
+fn same_model(expected: &str, actual: &str) -> bool {
+    let base = |value: &str| value.split(':').next().unwrap_or(value).to_owned();
+    let release_of = |longer: &str, shorter: &str| {
+        longer
+            .strip_prefix(shorter)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|release| {
+                release.chars().filter(char::is_ascii_digit).count() >= 4
+                    && release
+                        .chars()
+                        .all(|character| character.is_ascii_digit() || character == '-')
+            })
+    };
+    let (expected, actual) = (base(expected), base(actual));
+    expected == actual || release_of(&actual, &expected) || release_of(&expected, &actual)
 }
 
 fn map_provider_error(error_type: Option<&str>) -> &'static str {
@@ -945,7 +986,7 @@ mod tests {
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "insight_batch_v1",
+                        "name": "insight_batch_v2",
                         "strict": true,
                         "schema": {
                             "type":"object",
@@ -955,7 +996,8 @@ mod tests {
                         }
                     }
                 },
-                "provider": {"zdr":true,"data_collection":"deny","require_parameters":true}
+                "provider": {"zdr":true,"data_collection":"deny","require_parameters":true},
+                "usage": {"include": true}
             })
         );
         for forbidden in ["audio", "tools", "plugins", "metadata", "debug"] {
@@ -1171,6 +1213,89 @@ mod tests {
             assert_eq!(error.reservation, ReservationDisposition::Retained);
             requests.recv_timeout(Duration::from_secs(1)).unwrap();
         }
+    }
+
+    /// The shape a real OpenRouter stream takes, which the version-one parser
+    /// refused: the dated release name, and a final usage event that repeats
+    /// the choice with an empty delta and the same finish reason.
+    #[test]
+    fn a_real_openrouter_stream_shape_reconciles() {
+        let body = concat!(
+            "data: {\"model\":\"example/text-model-2024-07-18\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"{\\\"insights\\\":[]}\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"model\":\"example/text-model-2024-07-18\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"model\":\"example/text-model-2024-07-18\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":64,\"completion_tokens\":8,\"total_tokens\":72}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let (base_url, requests) = start_server(vec![ResponsePlan {
+            status: 200,
+            content_type: "text/event-stream",
+            chunks: vec![body.as_bytes().to_vec()],
+        }]);
+        let result = service(&base_url)
+            .stream_completion(
+                RequestId::new(),
+                &session(),
+                &envelope(),
+                &Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(result.content, r#"{"insights":[]}"#);
+        assert_eq!(result.finish_reason, CompletionFinishReason::Stop);
+        assert_eq!(result.usage.input_tokens, 64);
+        requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+
+    #[test]
+    fn a_delta_or_a_different_reason_after_the_end_still_fails() {
+        let late_text = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{}\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"more\"},\"finish_reason\":null}]}\n\n",
+        );
+        let changed_reason = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{}\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+        );
+        let (base_url, requests) = start_server(
+            [late_text, changed_reason]
+                .into_iter()
+                .map(|body| ResponsePlan {
+                    status: 200,
+                    content_type: "text/event-stream",
+                    chunks: vec![body.as_bytes().to_vec()],
+                })
+                .collect(),
+        );
+        let service = service(&base_url);
+        for _ in 0..2 {
+            let error = service
+                .stream_completion(
+                    RequestId::new(),
+                    &session(),
+                    &envelope(),
+                    &Arc::new(AtomicBool::new(false)),
+                    |_| {},
+                )
+                .unwrap_err();
+            assert_eq!(error.code, "completion_response_invalid");
+            requests.recv_timeout(Duration::from_secs(1)).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_dated_release_or_routing_variant_is_the_same_model() {
+        assert!(super::same_model(
+            "openai/gpt-4o-mini",
+            "openai/gpt-4o-mini"
+        ));
+        assert!(super::same_model(
+            "openai/gpt-4o-mini",
+            "openai/gpt-4o-mini-2024-07-18"
+        ));
+        assert!(super::same_model("vendor/model:free", "vendor/model"));
+        assert!(!super::same_model("openai/gpt-4o", "openai/gpt-4o-mini-x"));
+        assert!(!super::same_model("openai/gpt-4o", "anthropic/claude"));
+        assert!(!super::same_model("openai/gpt-4", "openai/gpt-4o"));
     }
 
     #[test]

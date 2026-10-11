@@ -2,6 +2,17 @@
   "name": "kokorokoe",
   "private": true,
   "version": "0.1.0",
+  "description": "Private, local meeting transcription and AI insights for Windows",
+  "license": "MIT",
+  "author": "klysman08 (https://github.com/klysman08)",
+  "homepage": "https://github.com/klysman08/KokoroKoe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klysman08/KokoroKoe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/klysman08/KokoroKoe/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,6 +30,7 @@
     "licenses:frontend": "node scripts/check-frontend-licenses.mjs",
     "audit:rust": "cargo deny --manifest-path src-tauri/Cargo.toml check licenses bans sources && cargo audit --file src-tauri/Cargo.lock",
     "preview": "vite preview",
+    "screenshots": "node scripts/capture-screenshots.mjs",
     "tauri": "tauri"
   },
   "engines": {

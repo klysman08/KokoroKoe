@@ -161,6 +161,9 @@ fn map_completion_error(error: CompletionError) -> AppError {
         | "completion_provider_failed" => "manual_question_provider_temporarily_unavailable",
         _ => "manual_question_provider_unavailable",
     };
+    if public == "manual_question_provider_unavailable" {
+        return AppError::manual_question_error(public).with_internal_code(error.code);
+    }
     AppError::manual_question_error(public)
 }
 

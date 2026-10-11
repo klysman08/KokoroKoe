@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
@@ -88,10 +88,10 @@ pub(crate) struct GeneratedInsight {
     pub(crate) r#type: InsightType,
     pub(crate) title: String,
     pub(crate) content: String,
-    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(default)]
     pub(crate) rationale: Option<String>,
     pub(crate) related_segment_ids: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(default)]
     pub(crate) confidence: Option<f64>,
 }
 
@@ -111,9 +111,9 @@ pub(crate) struct SessionSummary {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GeneratedActionItem {
     pub(crate) text: String,
-    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(default)]
     pub(crate) owner: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_non_null_optional")]
+    #[serde(default)]
     pub(crate) deadline: Option<String>,
     pub(crate) related_segment_ids: Vec<String>,
 }
@@ -126,12 +126,60 @@ pub(crate) struct ManualAnswer {
     pub(crate) limitations: Vec<String>,
 }
 
-fn deserialize_non_null_optional<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
+/// Line breaks a model writes inside prose.
+///
+/// Models routinely answer in paragraphs, and the version-one validator
+/// refused every control character, so a well-formed answer with a line break
+/// in it was rejected and sent for a repair that would usually be refused the
+/// same way. Insight and answer text is shown as plain text that keeps its
+/// breaks, so a `\n` is kept there and only a carriage return or tab becomes a
+/// space. Summary text is rendered into `summary.md`, where a line break could
+/// start a heading or a list item the model did not mean, so there every break
+/// becomes a space.
+fn normalize_paragraph(value: &mut String) {
+    if value.contains(['\r', '\t']) {
+        *value = value.replace("\r\n", "\n").replace(['\r', '\t'], " ");
+    }
+}
+
+fn normalize_line(value: &mut String) {
+    if value.contains(['\r', '\n', '\t']) {
+        *value = value.replace("\r\n", " ").replace(['\r', '\n', '\t'], " ");
+    }
+}
+
+fn normalize_insight_batch(batch: &mut InsightBatch) {
+    for insight in &mut batch.insights {
+        normalize_line(&mut insight.title);
+        normalize_paragraph(&mut insight.content);
+        if let Some(rationale) = &mut insight.rationale {
+            normalize_paragraph(rationale);
+        }
+    }
+}
+
+fn normalize_summary(summary: &mut SessionSummary) {
+    normalize_line(&mut summary.executive_summary);
+    for list in [
+        &mut summary.main_topics,
+        &mut summary.decisions,
+        &mut summary.risks,
+        &mut summary.open_questions,
+        &mut summary.next_steps,
+    ] {
+        list.iter_mut().for_each(normalize_line);
+    }
+    for item in &mut summary.action_items {
+        normalize_line(&mut item.text);
+        if let Some(owner) = &mut item.owner {
+            normalize_line(owner);
+        }
+    }
+}
+
+fn normalize_manual_answer(answer: &mut ManualAnswer) {
+    normalize_paragraph(&mut answer.answer);
+    answer.limitations.iter_mut().for_each(normalize_paragraph);
 }
 
 impl OpenRouterService {
@@ -224,20 +272,23 @@ fn validate_generated_result(
     let allowed_ids = envelope.selected_segment_ids.iter().copied().collect();
     match envelope.specification.purpose {
         PromptPurpose::Insight => {
-            let value = serde_json::from_str::<InsightBatch>(candidate)
+            let mut value = serde_json::from_str::<InsightBatch>(candidate)
                 .map_err(|_| GeneratedResultError::validation("generated_result_invalid"))?;
+            normalize_insight_batch(&mut value);
             validate_insight_batch(&value, &allowed_ids)?;
             Ok(GeneratedResult::InsightBatch(value))
         }
         PromptPurpose::Summary => {
-            let value = serde_json::from_str::<SessionSummary>(candidate)
+            let mut value = serde_json::from_str::<SessionSummary>(candidate)
                 .map_err(|_| GeneratedResultError::validation("generated_result_invalid"))?;
+            normalize_summary(&mut value);
             validate_summary(&value, &allowed_ids)?;
             Ok(GeneratedResult::SessionSummary(value))
         }
         PromptPurpose::ManualQuestion => {
-            let value = serde_json::from_str::<ManualAnswer>(candidate)
+            let mut value = serde_json::from_str::<ManualAnswer>(candidate)
                 .map_err(|_| GeneratedResultError::validation("generated_result_invalid"))?;
+            normalize_manual_answer(&mut value);
             validate_manual_answer(&value, &allowed_ids)?;
             Ok(GeneratedResult::ManualAnswer(value))
         }
@@ -273,11 +324,11 @@ fn validate_insight_batch(
     }
     for (index, insight) in batch.insights.iter().enumerate() {
         if !valid_text(&insight.title, 160)
-            || !valid_text(&insight.content, 2_000)
+            || !valid_paragraph(&insight.content, 2_000)
             || insight
                 .rationale
                 .as_deref()
-                .is_some_and(|value| !valid_text(value, 1_000))
+                .is_some_and(|value| !valid_paragraph(value, 1_000))
             || insight
                 .confidence
                 .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
@@ -330,9 +381,18 @@ fn validate_manual_answer(
     answer: &ManualAnswer,
     allowed_ids: &HashSet<Uuid>,
 ) -> Result<(), GeneratedResultError> {
-    if !valid_text(&answer.answer, 8_000)
+    if !valid_paragraph(&answer.answer, 8_000)
         || !valid_segment_ids(&answer.related_segment_ids, allowed_ids)
-        || !valid_text_list(&answer.limitations, 16, 1_000)
+        || answer.limitations.len() > 16
+        || !answer
+            .limitations
+            .iter()
+            .all(|value| valid_paragraph(value, 1_000))
+        || !answer
+            .limitations
+            .iter()
+            .enumerate()
+            .all(|(index, value)| !answer.limitations[..index].contains(value))
     {
         return invalid();
     }
@@ -343,6 +403,15 @@ fn valid_text(value: &str, maximum_utf16: usize) -> bool {
     !value.trim().is_empty()
         && value.encode_utf16().count() <= maximum_utf16
         && !value.chars().any(char::is_control)
+}
+
+/// Prose that may keep the line breaks `normalize_paragraph` leaves in it.
+fn valid_paragraph(value: &str, maximum_utf16: usize) -> bool {
+    !value.trim().is_empty()
+        && value.encode_utf16().count() <= maximum_utf16
+        && !value
+            .chars()
+            .any(|character| character.is_control() && character != '\n')
 }
 
 fn valid_text_list(values: &[String], maximum_items: usize, maximum_text: usize) -> bool {
@@ -596,27 +665,31 @@ mod tests {
             "not-json".to_owned(),
             r#"{"insights":[],"insights":[]}"#.to_owned(),
             format!(r#"{{"insights":[],"secret":"{TEST_KEY}"}}"#),
-            r#"{"insights":[{"type":"decision","title":"Title","content":"Content","rationale":null,"relatedSegmentIds":[]}]}"#.to_owned(),
             json!({"insights":[{
-                "type":"decision","title":"bad\ncontrol","content":"Content",
+                "type":"decision","title":"bad\u{0007}control","content":"Content",
                 "relatedSegmentIds":[]
-            }]}).to_string(),
+            }]})
+            .to_string(),
             json!({"insights":[{
                 "type":"decision","title":"Title","content":"Content",
                 "relatedSegmentIds":[OUTSIDE_SEGMENT_ID]
-            }]}).to_string(),
+            }]})
+            .to_string(),
             json!({"insights":[{
                 "type":"decision","title":"Title","content":"Content",
                 "relatedSegmentIds":[SEGMENT_ID, SEGMENT_ID]
-            }]}).to_string(),
+            }]})
+            .to_string(),
             json!({"insights":[{
                 "type":"decision","title":"x".repeat(161),"content":"Content",
                 "relatedSegmentIds":[]
-            }]}).to_string(),
+            }]})
+            .to_string(),
             json!({"insights":[{
                 "type":"decision","title":"Title","content":"Content",
                 "relatedSegmentIds":[],"confidence":1.01
-            }]}).to_string(),
+            }]})
+            .to_string(),
         ];
         for candidate in invalid {
             let error = validate_generated_result(&candidate, &insight_envelope).unwrap_err();
@@ -640,20 +713,75 @@ mod tests {
         );
     }
 
+    /// What strict structured outputs send for an optional field is `null`, and
+    /// what a model writes inside prose is a line break. Version one refused
+    /// both, so a correct answer from a real provider failed validation.
     #[test]
-    fn summary_and_manual_semantics_reject_null_dates_duplicates_and_noncanonical_ids() {
+    fn nulls_and_line_breaks_from_a_strict_provider_are_accepted() {
+        let insight = validate_generated_result(
+            &json!({"insights":[{
+                "type":"decision","title":"Two\nlines","content":"First.\r\n\tSecond.",
+                "rationale":null,"relatedSegmentIds":[SEGMENT_ID],"confidence":null
+            }]})
+            .to_string(),
+            &envelope(PromptPurpose::Insight),
+        )
+        .unwrap();
+        let GeneratedResult::InsightBatch(batch) = insight else {
+            panic!("insight purpose should return an insight batch")
+        };
+        assert_eq!(batch.insights[0].title, "Two lines");
+        assert_eq!(batch.insights[0].content, "First.\n Second.");
+        assert_eq!(batch.insights[0].rationale, None);
+        assert_eq!(batch.insights[0].confidence, None);
+
+        let summary = validate_generated_result(
+            &json!({
+                "executiveSummary":"Line one\n# not a heading","mainTopics":[],"decisions":[],
+                "actionItems":[{"text":"Task","owner":null,"deadline":null,"relatedSegmentIds":[]}],
+                "risks":[],"openQuestions":[],"nextSteps":["Do\nit"]
+            })
+            .to_string(),
+            &envelope(PromptPurpose::Summary),
+        )
+        .unwrap();
+        let GeneratedResult::SessionSummary(summary) = summary else {
+            panic!("summary purpose should return a session summary")
+        };
+        // A break in summary text would reach summary.md, where it could start
+        // a heading the model did not mean; it becomes a space instead.
+        assert_eq!(summary.executive_summary, "Line one # not a heading");
+        assert_eq!(summary.next_steps, ["Do it"]);
+        assert_eq!(summary.action_items[0].owner, None);
+        assert_eq!(summary.action_items[0].deadline, None);
+
+        let answer = validate_generated_result(
+            &json!({"answer":"Yes.\n\nBecause.","relatedSegmentIds":[],"limitations":[]})
+                .to_string(),
+            &envelope(PromptPurpose::ManualQuestion),
+        )
+        .unwrap();
+        let GeneratedResult::ManualAnswer(answer) = answer else {
+            panic!("manual purpose should return a manual answer")
+        };
+        assert_eq!(answer.answer, "Yes.\n\nBecause.");
+    }
+
+    #[test]
+    fn summary_and_manual_semantics_reject_bad_dates_duplicates_and_noncanonical_ids() {
         let summary = envelope(PromptPurpose::Summary);
         for candidate in [
             json!({
                 "executiveSummary":"Summary","mainTopics":["same","same"],"decisions":[],
                 "actionItems":[],"risks":[],"openQuestions":[],"nextSteps":[]
-            }).to_string(),
+            })
+            .to_string(),
             json!({
                 "executiveSummary":"Summary","mainTopics":[],"decisions":[],
                 "actionItems":[{"text":"Task","deadline":"tomorrow","relatedSegmentIds":[]}],
                 "risks":[],"openQuestions":[],"nextSteps":[]
-            }).to_string(),
-            r#"{"executiveSummary":"Summary","mainTopics":[],"decisions":[],"actionItems":[{"text":"Task","owner":null,"relatedSegmentIds":[]}],"risks":[],"openQuestions":[],"nextSteps":[]}"#.to_owned(),
+            })
+            .to_string(),
         ] {
             assert_eq!(
                 validate_generated_result(&candidate, &summary)

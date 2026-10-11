@@ -29,9 +29,7 @@ describe("application routing", () => {
     render(<App />)
 
     expect(
-      screen.getByRole("heading", {
-        name: /keep every meeting grounded in context/i,
-      }),
+      screen.getByRole("heading", { name: "Start a meeting" }),
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole("link", { name: "Settings" }))

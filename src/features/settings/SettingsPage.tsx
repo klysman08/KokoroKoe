@@ -606,7 +606,7 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field data-invalid={!tokensValid}>
                 <FieldLabel htmlFor="max-tokens">
-                  Maximum tokens per request
+                  Maximum answer length (tokens)
                 </FieldLabel>
                 <Input
                   id="max-tokens"
@@ -617,7 +617,9 @@ function PreferencesForm({ settings }: { settings: AppSettings }) {
                   onChange={(event) => setMaxTokens(event.currentTarget.value)}
                 />
                 <FieldDescription id="max-tokens-help">
-                  Enter a whole number from 1 to 1,000,000.
+                  The most a model may write in one answer. It does not limit
+                  how much of the meeting it reads. A whole number from 1 to
+                  1,000,000.
                 </FieldDescription>
               </Field>
               <Field data-invalid={!budgetValid}>

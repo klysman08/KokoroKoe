@@ -3,6 +3,7 @@ mod commands;
 mod domain;
 mod llm;
 mod logging;
+mod metrics;
 mod models;
 mod persistence;
 mod presets;
@@ -18,6 +19,7 @@ use tauri::Manager;
 
 use audio::AudioDeviceTestService;
 use llm::{InsightService, ManualQuestionService, OpenRouterService, SummaryService};
+use metrics::{DashboardService, MetricsStore};
 use models::ModelService;
 #[cfg(windows)]
 use persistence::PersistedSessionLifecycleService;
@@ -89,9 +91,18 @@ pub fn run() {
             let transcripts = TranscriptService::new(settings.clone(), app_data_directory.clone());
             let workspace = WorkspaceService::new(settings.clone(), app_data_directory.clone());
 
+            let metrics = MetricsStore::new(app_data_directory.clone());
+            metrics::install_error_sink(metrics.clone());
+            let dashboard = DashboardService::new(
+                settings.clone(),
+                app_data_directory.clone(),
+                metrics.clone(),
+            );
+
             let credentials = CredentialService::open();
             let openrouter = OpenRouterService::open(credentials.clone())
-                .map_err(|_| io::Error::other("OpenRouter service initialization failed"))?;
+                .map_err(|_| io::Error::other("OpenRouter service initialization failed"))?
+                .with_usage_ledger(metrics);
             let manual_questions =
                 ManualQuestionService::new(transcripts.clone(), openrouter.clone());
             let insights = InsightService::new(transcripts.clone(), openrouter.clone());
@@ -110,6 +121,7 @@ pub fn run() {
             app.manage(sessions);
             app.manage(transcripts);
             app.manage(workspace);
+            app.manage(dashboard);
             app.manage(AudioDeviceTestService::default());
             let detached_windows =
                 DetachedWindowService::new(app.state::<SettingsService>().inner().clone());
@@ -158,6 +170,7 @@ pub fn run() {
             commands::settings::choose_workspace,
             commands::settings::open_workspace_folder,
             commands::settings::rescan_workspace,
+            commands::dashboard::get_dashboard_metrics,
             commands::credentials::get_openrouter_credential_status,
             commands::credentials::set_openrouter_api_key,
             commands::credentials::delete_openrouter_api_key,

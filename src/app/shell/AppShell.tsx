@@ -1,5 +1,6 @@
 import {
   AudioLines,
+  ChartColumn,
   ChevronLeft,
   ChevronRight,
   Home,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { DashboardPage } from "@/features/dashboard/DashboardPage"
 import { HomePage } from "@/features/home/HomePage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
 import { LiveTranscriptPage } from "@/features/transcript/LiveTranscriptPage"
@@ -32,6 +34,7 @@ import { useShellStore } from "@/stores/shell-store"
 
 const navigation = [
   { label: "Home", route: "home", icon: Home },
+  { label: "Dashboard", route: "dashboard", icon: ChartColumn },
   { label: "Live transcript", route: "transcript", icon: MessageSquareText },
   { label: "Settings", route: "settings", icon: Settings },
 ] as const
@@ -161,6 +164,8 @@ export function AppShell() {
             <SettingsPage />
           ) : activeRoute === "transcript" ? (
             <LiveTranscriptPage />
+          ) : activeRoute === "dashboard" ? (
+            <DashboardPage />
           ) : (
             <HomePage />
           )}

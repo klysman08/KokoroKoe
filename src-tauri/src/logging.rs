@@ -31,6 +31,7 @@ pub(crate) fn record_app_error(error: &AppError) {
         retryable = error.retryable,
         "application operation failed"
     );
+    crate::metrics::record_error(error);
 }
 
 #[cfg(test)]

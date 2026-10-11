@@ -20,6 +20,7 @@ function detachedSurfaceFromHash(hash: string) {
 
 function routeFromHash(hash: string) {
   if (hash === "#/settings") return "settings"
+  if (hash === "#/dashboard") return "dashboard"
   if (hash === "#/transcript") return "transcript"
   return "home"
 }

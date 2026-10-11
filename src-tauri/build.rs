@@ -3,6 +3,7 @@ fn main() {
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "get_settings",
             "rescan_workspace",
+            "get_dashboard_metrics",
             "update_settings",
             "choose_workspace",
             "open_workspace_folder",

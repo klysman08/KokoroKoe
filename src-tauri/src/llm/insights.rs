@@ -185,6 +185,12 @@ impl InsightService {
             available_budget_usd: final_usage.available_budget_usd.clone(),
         };
         response.validate().map_err(AppError::insight_error)?;
+        self.openrouter.record_insight_batch(
+            request_id,
+            response.project_id,
+            response.session_id,
+            response.insights.len(),
+        );
         Ok(response)
     }
 }

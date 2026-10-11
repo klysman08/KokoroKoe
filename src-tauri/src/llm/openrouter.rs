@@ -17,6 +17,7 @@ use crate::{
         AppError, CredentialValidation, LlmRoleModels, OpenRouterApiKey, OpenRouterDataCollection,
         OpenRouterModel,
     },
+    metrics::MetricsStore,
     security::CredentialService,
 };
 
@@ -53,6 +54,9 @@ pub(crate) struct OpenRouterService {
     clock: Arc<dyn Clock>,
     catalog: Arc<Mutex<Option<CachedCatalog>>>,
     pub(super) usage_budget: UsageBudgetService,
+    /// Where each reconciled request is also written, so the dashboard can
+    /// report spending after a restart. Absent in unit tests that do not ask.
+    pub(super) usage_ledger: Option<MetricsStore>,
 }
 
 #[derive(Clone)]
@@ -140,7 +144,14 @@ impl OpenRouterService {
             clock,
             catalog: Arc::new(Mutex::new(None)),
             usage_budget: UsageBudgetService::default(),
+            usage_ledger: None,
         })
+    }
+
+    /// Records every reconciled request in the local usage ledger.
+    pub(crate) fn with_usage_ledger(mut self, ledger: MetricsStore) -> Self {
+        self.usage_ledger = Some(ledger);
+        self
     }
 
     pub(crate) fn validate_credential(&self) -> Result<CredentialValidation, AppError> {

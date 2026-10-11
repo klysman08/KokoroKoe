@@ -84,6 +84,8 @@ P6-021 makes the preset a choice. Manifest section 8 names nine presets and the 
 
 P6-022 completes section 8 with the presets a user writes, and ADR 0011 records the decision the two source documents disagreed about: they live in `projects/<project>/presets/`, one Markdown document each, so a project folder still explains itself when it is copied or restored. Every preset command is therefore scoped by a project, and `list_presets` returns the built-ins alone when it is not given one — which is the honest answer for the project-creation form. `PresetStore` reaches those documents only through the pinned project directory the project store already opens, derives each file name from the preset's own record rather than a caller's string, and refuses a document that names a different project even when it is found in this project's folder. Writes reuse the existing publish path: a synced temporary file, an atomic replace with a backup, a revision and a content fingerprint checked before the replacement, and a deletion that moves the document to `trash/` instead of destroying it. A built-in is refused before the workspace is opened, since a compile-time constant has no document to edit. The stored `version` moves only when the instructions move, so renaming a preset does not claim that meetings held under the old name were run on different guidance.
 
+P6-023 builds the section 9.1 dashboard and MVP item 16, and most of the work was giving it something true to read. Session counts, Whisper models, and speech time already lived in the rebuildable indexes, but token use, cost, and insight counts lived nowhere: the P5-006 budget ledger is process-local by design and `Session.usage` never advances, so every figure the Manifest asks for about spending vanished at exit. The new `metrics` module owns `metrics.sqlite3`, the one database in the application that is **not** a projection of Markdown — nothing in the workspace records what a request cost or which operation failed — which is why a corrupt file is quarantined beside its replacement rather than rebuilt. It is a separate file from the settings database on purpose: the settings service holds its operation lock for a whole workspace operation, and a usage row is written from inside an OpenRouter call, so sharing that lock would let recording a cost wait on the operation that incurred it. `OpenRouterService::reconcile_prompt_usage` writes one row per reconciled request — repairs and charged failures included, since those are billed — keyed by request id so a retry of the write cannot count a cost twice, and amounts are stored as integer picodollars so sums stay exact. `InsightService` counts each delivered batch, and `logging::record_app_error`, the choke point every command's failure already passes through, also keeps the sanitized envelope of warnings and worse in a bounded log of 200, without the technical detail. A write that fails is logged and ignored, because the provider has already charged and the caller already holds a valid answer. `get_dashboard_metrics` is exact-`main` and read-only. Speech time is the union of each session's segment intervals, so two sources talking over each other count once. Sessions belong to the period they were created in; disk usage is always all-time, is measured outside the workspace lock, never follows a link or junction, and reports a floor rather than a total past 250,000 entries. Ledger figures are only as old as the ledger, so the reply says when recording began.
+
 P6-009 adds the Manifest section 9.2 per-segment actions the same way, and the same test applies: what does each one require? Copying is view-local. "Explain", "suggest a response", and "summarize" are prefilled questions through the one already-verified `ask_manual_question` path rather than three new prompt specs, so the answer stays inside the schema that path validates and no new command, capability, or prompt version appears.
 
 Prefilling and not sending is the deliberate part. This application sends meeting text to a third party, so a one-click label must not be the thing that transmits: the preset opens the question box with text already in it, and the user reads it, edits it, or abandons it before anything leaves the machine. The panel is keyed by segment and preset so choosing a different one replaces the text rather than leaving a stale question in front of a new label.
@@ -541,17 +543,20 @@ type BootstrapData = {
 
 type MetricsQuery = { from?: Rfc3339Utc; to?: Rfc3339Utc; projectId?: ProjectId }
 type DashboardMetrics = {
+  schemaVersion: 1
   sessions: number
   transcribedMs: number
-  mostUsedProjectIds: ProjectId[]
-  mostUsedTranscriptionModelIds: string[]
-  mostUsedLlmModelIds: string[]
+  projects: { projectId: ProjectId; sessions: number }[]        // at most 5
+  transcriptionModels: { modelId: string; sessions: number }[]  // at most 5
+  llmModels: { modelId: string; requests: number; inputTokens: number; outputTokens: number; actualCostUsd: string }[]
+  llmRequests: number
   inputTokens: number
   outputTokens: number
-  actualCostUsd: string
+  actualCostUsd: string            // twelve-decimal canonical amount
   insightsGenerated: number
-  diskBytes: number
-  recentErrors: AppError[]
+  usageRecordedSince: Rfc3339Utc   // when the local ledger began
+  disk: { workspaceBytes: number; trashBytes: number; modelBytes: number; complete: boolean }
+  recentErrors: { code: string; userMessage: string; severity: "warning" | "error" | "critical"; retryable: boolean; correlationId: string; occurredAt: Rfc3339Utc }[]  // at most 10
 }
 
 type CreateProjectInput = {

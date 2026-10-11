@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -123,6 +124,81 @@ impl TranscriptSearchCatalog {
             }
             result => result,
         }
+    }
+
+    /// Milliseconds of transcribed speech per session, keyed by session id.
+    ///
+    /// Overlapping segments are merged first: when both sources speak at once
+    /// the meeting did not last twice as long, so crosstalk is counted once.
+    /// Only finalized segments that reached `transcript.md` are indexed, so a
+    /// running session counts up to its last materialization.
+    pub(crate) fn speech_ms_by_session(
+        &self,
+    ) -> Result<HashMap<String, u64>, TranscriptStoreError> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| TranscriptStoreError::new("transcript_search_unavailable"))?;
+        match self.speech_ms_locked() {
+            Err(error) if error.code == "transcript_search_corrupt" => {
+                self.quarantine_corrupt_index()?;
+                self.rebuild_index_with_fault(None)?;
+                self.speech_ms_locked()
+            }
+            Err(error) if error.code == "transcript_search_index_invalid" => {
+                self.rebuild_index_with_fault(None)?;
+                self.speech_ms_locked()
+            }
+            result => result,
+        }
+    }
+
+    fn speech_ms_locked(&self) -> Result<HashMap<String, u64>, TranscriptStoreError> {
+        let connection = self.open_connection_without_recovery()?;
+        if !index_has_projection(&connection, &self.workspace_key)? {
+            drop(connection);
+            self.rebuild_index_with_fault(None)?;
+        }
+        let connection = self.open_connection_without_recovery()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT session_id, start_ms, end_ms FROM transcript_index_segments
+                 ORDER BY session_id ASC, start_ms ASC, end_ms ASC",
+            )
+            .map_err(map_read_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(map_read_error)?;
+        let mut totals = HashMap::new();
+        let mut open: Option<(String, u64, u64)> = None;
+        for row in rows {
+            let (session_id, start, end) = row.map_err(map_read_error)?;
+            let start = u64::try_from(start)
+                .map_err(|_| TranscriptStoreError::new("transcript_search_index_invalid"))?;
+            let end = u64::try_from(end)
+                .map_err(|_| TranscriptStoreError::new("transcript_search_index_invalid"))?;
+            match &mut open {
+                Some((current, _, open_end)) if *current == session_id && start <= *open_end => {
+                    *open_end = (*open_end).max(end);
+                }
+                _ => {
+                    if let Some((finished, open_start, open_end)) = open.take() {
+                        *totals.entry(finished).or_insert(0_u64) += open_end - open_start;
+                    }
+                    open = Some((session_id, start, end));
+                }
+            }
+        }
+        if let Some((finished, open_start, open_end)) = open {
+            *totals.entry(finished).or_insert(0_u64) += open_end - open_start;
+        }
+        Ok(totals)
     }
 
     fn search_locked(
@@ -843,6 +919,86 @@ mod tests {
             .unwrap()
             .materialize(&locator, None)
             .unwrap();
+    }
+
+    fn add_timed_transcript(
+        root: &Path,
+        project: &Project,
+        session: &Session,
+        spans: &[(AudioSource, u64, u64)],
+    ) {
+        SessionStore::open(root)
+            .unwrap()
+            .create_session(project, session)
+            .unwrap();
+        let locator = SessionLocator::from_records(project, session).unwrap();
+        let journal = SessionJournal::open(root).unwrap();
+        for (index, (source, start_ms, end_ms)) in spans.iter().enumerate() {
+            journal
+                .append(
+                    &locator,
+                    JournalAppend {
+                        event_id: Uuid::new_v4(),
+                        recorded_at: format!("2026-08-11T10:00:{index:02}Z"),
+                        mutation: JournalMutation::FinalizedTranscriptSegment(
+                            FinalizedTranscriptSegment {
+                                id: Uuid::new_v4(),
+                                source: *source,
+                                start_ms: *start_ms,
+                                end_ms: *end_ms,
+                                text: format!("Spoken words {index}."),
+                                language: "en-GB".to_owned(),
+                            },
+                        ),
+                    },
+                )
+                .unwrap();
+        }
+        TranscriptStore::open(root)
+            .unwrap()
+            .materialize(&locator, None)
+            .unwrap();
+    }
+
+    /// Two sources talking over each other did not make the meeting longer.
+    #[test]
+    fn speech_time_merges_crosstalk_and_stays_per_session() {
+        let workspace = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let (project, base) = initialize_workspace(workspace.path());
+        let first = session(
+            &base,
+            "11111111-1111-4111-8111-111111111111",
+            "First session",
+        );
+        let second = session(
+            &base,
+            "22222222-2222-4222-8222-222222222222",
+            "Second session",
+        );
+        add_timed_transcript(
+            workspace.path(),
+            &project,
+            &first,
+            &[
+                (AudioSource::Microphone, 0, 1_000),
+                (AudioSource::SystemOutput, 500, 1_500),
+                (AudioSource::Microphone, 3_000, 4_000),
+            ],
+        );
+        add_timed_transcript(
+            workspace.path(),
+            &project,
+            &second,
+            &[(AudioSource::Microphone, 200, 700)],
+        );
+
+        let catalog =
+            TranscriptSearchCatalog::open(workspace.path(), app_data.path().to_path_buf()).unwrap();
+        let speech = catalog.speech_ms_by_session().unwrap();
+        assert_eq!(speech.len(), 2);
+        assert_eq!(speech[&first.id.as_uuid().to_string()], 2_500);
+        assert_eq!(speech[&second.id.as_uuid().to_string()], 500);
     }
 
     fn request(

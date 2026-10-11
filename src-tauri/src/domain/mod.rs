@@ -1,4 +1,5 @@
 mod credentials;
+mod dashboard;
 mod error;
 mod insights;
 mod manual_question;
@@ -13,7 +14,12 @@ mod transcripts;
 mod windows;
 
 pub(crate) use credentials::{CredentialStatus, OpenRouterApiKey};
-pub(crate) use error::{AppError, CommandError};
+pub(crate) use dashboard::{
+    DASHBOARD_RANKING_LIMIT, DASHBOARD_RECENT_ERROR_LIMIT, DashboardDiskUsage, DashboardMetrics,
+    DashboardMetricsQuery, LlmModelUsage, MetricsWindow, ProjectSessionCount, RecentErrorView,
+    TranscriptionModelSessionCount, canonical_usd, format_unix_ms, parse_unix_ms,
+};
+pub(crate) use error::{AppError, CommandError, ErrorSeverity};
 pub(crate) use insights::{
     GenerateAlternativeInsightRequest, GenerateRecentInsightsRequest, InsightMoment, InsightUsage,
     RecentInsight, RecentInsightsResponse, SessionInsightsPublication,

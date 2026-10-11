@@ -498,6 +498,7 @@ mod tests {
     fn usage(request_id: RequestId, purpose: PromptPurpose) -> UsageReconciliation {
         UsageReconciliation {
             request_id,
+            project_id: session().project_id,
             session_id: session().id,
             purpose,
             model_id: "example/text-model".to_owned(),

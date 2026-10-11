@@ -729,6 +729,29 @@ impl AppError {
         Self::new(code, user_message, Some(code), severity, retryable)
     }
 
+    /// The dashboard reads the workspace indexes and the local usage ledger,
+    /// so it can fail for any reason either can; the codes are theirs.
+    pub(crate) fn dashboard_error(code: &str) -> Self {
+        let (user_message, severity, retryable) = match code {
+            "dashboard_query_invalid" => (
+                "The dashboard period is not valid.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            "workspace_required" => (
+                "Choose a workspace folder to see its dashboard.",
+                ErrorSeverity::Warning,
+                false,
+            ),
+            _ => (
+                "KokoroKoe could not read its local metrics.",
+                ErrorSeverity::Error,
+                true,
+            ),
+        };
+        Self::new(code, user_message, Some(code), severity, retryable)
+    }
+
     pub(crate) fn project_error(code: &str) -> Self {
         let (user_message, severity, retryable) = match code {
             "project_contract_invalid" | "project_update_invalid" | "project_page_invalid" => (

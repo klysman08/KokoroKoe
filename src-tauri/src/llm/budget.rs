@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::{
-    domain::{OpenRouterModel, RequestId, Session, SessionId},
+    domain::{OpenRouterModel, ProjectId, RequestId, Session, SessionId},
+    metrics::UsageRecord,
     prompts::{PromptEnvelope, PromptPurpose},
 };
 
@@ -40,6 +41,7 @@ pub(crate) struct FinalUsage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UsageReconciliation {
     pub(crate) request_id: RequestId,
+    pub(crate) project_id: ProjectId,
     pub(crate) session_id: SessionId,
     pub(crate) purpose: PromptPurpose,
     pub(crate) model_id: String,
@@ -134,6 +136,7 @@ struct SessionLedger {
 
 #[derive(Debug, Clone)]
 struct PendingReservation {
+    project_id: ProjectId,
     session_id: SessionId,
     purpose: PromptPurpose,
     model_id: String,
@@ -162,7 +165,53 @@ impl OpenRouterService {
         &self,
         usage: FinalUsage,
     ) -> Result<UsageReconciliation, UsageBudgetError> {
-        self.usage_budget.reconcile(usage)
+        let reconciliation = self.usage_budget.reconcile(usage)?;
+        self.record_reconciled_usage(&reconciliation);
+        Ok(reconciliation)
+    }
+
+    /// Writes a reconciled request to the local usage ledger.
+    ///
+    /// A failed write is logged and otherwise ignored: the provider has already
+    /// charged for the request and the caller already holds a valid result, so
+    /// losing a dashboard row is the smaller harm than refusing the answer.
+    fn record_reconciled_usage(&self, reconciliation: &UsageReconciliation) {
+        let Some(ledger) = &self.usage_ledger else {
+            return;
+        };
+        let record = UsageRecord {
+            request_id: reconciliation.request_id,
+            project_id: reconciliation.project_id,
+            session_id: reconciliation.session_id,
+            purpose: reconciliation.purpose,
+            model_id: &reconciliation.model_id,
+            input_tokens: reconciliation.input_tokens,
+            output_tokens: reconciliation.output_tokens,
+            actual_cost_usd: &reconciliation.actual_cost_usd,
+        };
+        if ledger.record_usage(&record).is_err() {
+            tracing::warn!("a reconciled request could not be added to the usage ledger");
+        }
+    }
+
+    /// Counts a delivered insight batch for the dashboard, with the same
+    /// tolerance of a failed write as a usage row.
+    pub(crate) fn record_insight_batch(
+        &self,
+        request_id: RequestId,
+        project_id: ProjectId,
+        session_id: SessionId,
+        insight_count: usize,
+    ) {
+        let Some(ledger) = &self.usage_ledger else {
+            return;
+        };
+        if ledger
+            .record_insight_batch(request_id, project_id, session_id, insight_count)
+            .is_err()
+        {
+            tracing::warn!("a generated insight batch could not be counted");
+        }
     }
 
     pub(crate) fn release_prompt_usage(
@@ -237,6 +286,7 @@ impl UsageBudgetService {
         state.pending.insert(
             request_id,
             PendingReservation {
+                project_id: session.project_id,
                 session_id: session.id,
                 purpose: envelope.specification.purpose,
                 model_id: envelope.model_id.clone(),
@@ -320,6 +370,7 @@ impl UsageBudgetService {
 
         Ok(UsageReconciliation {
             request_id: usage.request_id,
+            project_id: pending.project_id,
             session_id: usage.session_id,
             purpose: pending.purpose,
             model_id: pending.model_id,
@@ -885,5 +936,42 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reconciliation.actual_cost_usd, "0.000200000000");
+    }
+
+    /// The dashboard's spending figures are only true if the one place every
+    /// billed request is reconciled is also the place it is recorded.
+    #[test]
+    fn reconciliation_writes_the_priced_request_to_the_usage_ledger() {
+        let app_data = tempfile::tempdir().unwrap();
+        let ledger = crate::metrics::MetricsStore::new(app_data.path().to_path_buf());
+        let router = OpenRouterService::open(CredentialService::in_memory(None))
+            .unwrap()
+            .with_usage_ledger(ledger.clone());
+        router.seed_catalog_for_test(vec![model("0.000001", "0.000002", 4_096)]);
+        let session = sample_session("dddddddd-dddd-4ddd-8ddd-dddddddddddd", "0.01", "0.00");
+        let request_id = RequestId::new();
+        router
+            .reserve_prompt_usage(request_id, &session, &envelope(1_000, 1_000))
+            .unwrap();
+        let reconciliation = router
+            .reconcile_prompt_usage(FinalUsage {
+                request_id,
+                session_id: session.id,
+                input_tokens: 100,
+                output_tokens: 50,
+            })
+            .unwrap();
+        assert_eq!(reconciliation.project_id, session.project_id);
+
+        let all_time = crate::domain::MetricsWindow {
+            from_ms: None,
+            to_ms: None,
+            project_id: Some(session.project_id),
+        };
+        let summary = ledger.usage_summary(&all_time).unwrap();
+        assert_eq!(summary.requests, 1);
+        assert_eq!(summary.input_tokens, 100);
+        assert_eq!(summary.output_tokens, 50);
+        assert_eq!(summary.actual_cost_usd, "0.000200000000");
     }
 }

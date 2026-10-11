@@ -1,0 +1,47 @@
+{
+  "query": {
+    "from": "2026-10-01T00:00:00Z",
+    "to": "2026-11-01T00:00:00Z",
+    "projectId": "8f8b6f2e-1a7d-4b8e-9f4c-2f2a9e6d1c01"
+  },
+  "metrics": {
+    "schemaVersion": 1,
+    "sessions": 4,
+    "transcribedMs": 5400000,
+    "projects": [
+      { "projectId": "8f8b6f2e-1a7d-4b8e-9f4c-2f2a9e6d1c01", "sessions": 4 }
+    ],
+    "transcriptionModels": [{ "modelId": "whisper-base", "sessions": 3 }],
+    "llmModels": [
+      {
+        "modelId": "openai/gpt-4.1-mini",
+        "requests": 12,
+        "inputTokens": 48000,
+        "outputTokens": 6000,
+        "actualCostUsd": "0.028800000000"
+      }
+    ],
+    "llmRequests": 12,
+    "inputTokens": 48000,
+    "outputTokens": 6000,
+    "actualCostUsd": "0.028800000000",
+    "insightsGenerated": 21,
+    "usageRecordedSince": "2026-10-01T09:00:00Z",
+    "disk": {
+      "workspaceBytes": 1048576,
+      "trashBytes": 4096,
+      "modelBytes": 147951465,
+      "complete": true
+    },
+    "recentErrors": [
+      {
+        "code": "insight_payment_required",
+        "userMessage": "OpenRouter needs credit before it can generate insights.",
+        "severity": "warning",
+        "retryable": false,
+        "correlationId": "4b1f9c2e-7d3a-4e8b-a1c5-9e2d7f6b3a10",
+        "occurredAt": "2026-10-10T14:30:00Z"
+      }
+    ]
+  }
+}

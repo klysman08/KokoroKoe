@@ -66,6 +66,11 @@ to OpenRouter, and only when you ask for it.
   survives a restart, cannot be switched on without the main window, and switches off when the main
   window closes, so pointer control is always recoverable. Both windows are created by Rust and hold
   an event-subscription-only capability: neither can invoke a command or read a file.
+- **Local dashboard.** Sessions, transcribed speech, the most used projects and Whisper and
+  language models, tokens, estimated cost, insights generated, disk space, and recent errors, for
+  the last 7 or 30 days or all time, for one project or all of them. Spending is read from a
+  local ledger that begins on the first run of a version that has it; nothing on the dashboard
+  is sent anywhere.
 
 ## Not implemented yet
 
@@ -76,7 +81,6 @@ to OpenRouter, and only when you ask for it.
 - Sharing a preset between projects, and importing one. A preset belongs to the project it was
   written in; copying its Markdown file into another project's `presets/` folder and rescanning the
   workspace is the manual route.
-- A local dashboard of session counts, transcribed time, token use, estimated cost, and disk usage.
 - A packaged installer. Native whisper.cpp runtimes and model weights are external, unbundled inputs
   staged beside the executable by `scripts/prepare-poc-transcription-runtime.ps1`.
 
